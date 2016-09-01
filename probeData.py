@@ -777,7 +777,6 @@ class probeData():
                 resp[i,j,k,l,np.count_nonzero(np.logical_not(np.isnan(resp[i,j,k,l,:])))] = trialSpikeRate[n]
             meanResp = np.nanmean(resp,axis=4)
             meanResp -= np.nanmean(resp[patchSpeed.size//2,bckgndSpeed.size//2,:,:,:])
-            meanResp /= np.nanstd(resp[patchSpeed.size//2,bckgndSpeed.size//2,:,:,:])
             for k in range(p['patchSize'].size):
                 for l in range(p['patchElevation'].size):
                     meanResp[patchSpeed.size//2,:,k,l] = meanResp[patchSpeed.size//2,:,0,0]
