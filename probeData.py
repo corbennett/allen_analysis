@@ -6,7 +6,7 @@ Created on Fri Jun 17 12:19:20 2016
 """
 
 from __future__ import division
-import datetime, h5py, itertools, json, math, os, shelve, shutil
+import collections, datetime, h5py, itertools, json, math, os, shelve, shutil
 import numpy as np
 import scipy.signal
 import scipy.optimize
@@ -16,10 +16,12 @@ import matplotlib.gridspec as gridspec
 from PyQt4 import QtGui
 
 
+dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
+
+
 class probeData():
     
     def __init__(self):
-        self.dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
         self.recording = 0
         self.TTLChannelLabels = ['VisstimOn', 'CamExposing', 'CamSaving', 'OrangeLaserShutter']
         self.channelMapFile = r'C:\Users\SVC_CCG\Documents\PythonScripts\imec_channel_map.prb'
@@ -271,7 +273,7 @@ class probeData():
         return spikesPerTrial
         
         
-    def findRF(self, spikes, sigma = 2, plot = True, noiseStim = 'sparse', minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=1):
+    def findRF(self, spikes, sigma = 2, plot = True, noiseStim = 'sparse', minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=1, fit=False):
         minLatency *= self.sampleRate
         maxLatency *= self.sampleRate
         if noiseStim == 'sparse':        
@@ -311,6 +313,17 @@ class probeData():
             gridOffSpikes = gridOffSpikes.reshape(xpos.size,ypos.size).T
                         
             gridExtent = self.visstimData[str(protocol)]['gridBoundaries']
+            
+            if fit:
+                fitParams = []
+                pixPerDeg = self.visstimData[str(protocol)]['pixelsPerDeg']
+                for data in (gridOnSpikes_filter,gridOffSpikes_filter):
+                    # params: x0 , y0, sigX, sigY, theta, amplitude
+                    elev, azi = ypos/pixPerDeg, xpos/pixPerDeg
+                    j,i = np.unravel_index(np.argmax(data),data.shape)
+                    initialParams = (azi[j], elev[i], azi[1]-azi[0], elev[1]-elev[0], 0, data.max())
+                    fitParams.append(fitGauss2D(azi,elev,data,initialParams))
+                onFit,offFit = fitParams
             
             if plot:
                 gs = gridspec.GridSpec(1, 2)
@@ -386,8 +399,9 @@ class probeData():
             if fit:
                 fitParams = []
                 pixPerDeg = self.visstimData[str(protocol)]['pixelsPerDeg']
-                for data in (gridOnSpikes_filter,gridOffSpikes_filter):
+                for d in (gridOnSpikes_filter,gridOffSpikes_filter):
                     # params: x0 , y0, sigX, sigY, theta, amplitude
+                    data = np.copy(d)-d.min()
                     elev, azi = ypos/pixPerDeg, xpos/pixPerDeg
                     j,i = np.unravel_index(np.argmax(data),data.shape)
                     initialParams = (azi[j], elev[i], azi[1]-azi[0], elev[1]-elev[0], 0, data.max())
@@ -398,8 +412,8 @@ class probeData():
                 a1 = plt.subplot(gs[index, :2])
                 a1.imshow(gridOnSpikes_filter, clim=(minVal, maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
                 if fit and onFit is not None:
-                    xlim = a1.get_xlim
-                    ylim = a1.get_ylim
+                    xlim = a1.get_xlim()
+                    ylim = a1.get_ylim()
                     a1.plot(onFit[0],onFit[1],'kx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*onFit[:-1])
                     a1.plot(fitX,fitY,'k',linewidth=2)
@@ -412,8 +426,8 @@ class probeData():
                 a2 = plt.subplot(gs[index, 2:])
                 a2.imshow(gridOffSpikes_filter, clim=(minVal, maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
                 if fit and offFit is not None:
-                    xlim = a2.get_xlim
-                    ylim = a2.get_ylim
+                    xlim = a2.get_xlim()
+                    ylim = a2.get_ylim()
                     a2.plot(offFit[0],offFit[1],'kx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*offFit[:-1])
                     a2.plot(fitX,fitY,'k',linewidth=2)
@@ -995,6 +1009,29 @@ class probeData():
         shelf.close()
     
     
+    def getSingleUnits(self, fileDir = None, protocolsToAnalyze = None):
+        if fileDir is None:
+            fileDir = getDir()
+        fileList, nsamps = self.getKwdInfo(fileDir=fileDir)
+        if protocolsToAnalyze is None:
+            self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir)
+        else:
+            self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir, protocolsToAnalyze=protocolsToAnalyze)
+        # order units by position
+        units = [(u,self.units[u]['ypos']) for u in self.units.keys()]
+        units.sort(key=lambda i: i[1], reverse=True)
+        units,_ = zip(*units)
+        unitsDict = collections.OrderedDict()
+        for u in units:
+            unitsDict[u] = self.units[u]
+        self.units = unitsDict
+            
+    
+    def getKwdInfo(self, fileDir=None):
+        fileList, nsamps = getKwdFiles(fileDir)
+        return fileList, nsamps
+    
+    
     def loadClusteredData(self, kwdNsamplesList = None, protocolsToAnalyze = None, fileDir = None):
         from load_phy_template import load_phy_template
                  
@@ -1018,21 +1055,25 @@ class probeData():
             else:
               self.units[unit]['times'] = spikeTimes       
 
-            
-    def getKwdInfo(self, fileDir=None):
-        fileList, nsamps = getKwdFiles(fileDir)
-        return fileList, nsamps
-    
-    
-    def getSingleUnits(self, fileDir = None, protocolsToAnalyze = None):
-        if fileDir is None:
-            fileDir = getDir()
-        fileList, nsamps = self.getKwdInfo(fileDir=fileDir)
-        if protocolsToAnalyze is None:
-            self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir)
-        else:
-            self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir, protocolsToAnalyze=protocolsToAnalyze)
+    def saveHDF5(self, fileOut = None, fileSaveName = None, saveDict = None, grp = None):
+        if fileSaveName is None and fileOut is None:
+            fileOut = h5py.File(saveFile(), 'w')
+        elif fileSaveName is not None and fileOut is None:            
+            fileOut = h5py.File(fileSaveName,'w')
 
+        if saveDict is None:
+            saveDict = self.__dict__
+        if grp is None:    
+            grp = fileOut['/']
+        
+        for key in saveDict:    
+            if type(saveDict[key]) is dict:
+                self.saveHDF5(fileOut=fileOut, saveDict=saveDict[key], grp=grp.create_group(key))
+            else:
+                try:
+                    grp[key] = saveDict[key]
+                except:
+                    print 'Could not save: ', key
 
 # utility functions
 
@@ -1040,14 +1081,21 @@ def getFile():
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getOpenFileName(None,'Choose File')
+    return QtGui.QFileDialog.getOpenFileName(None,'Choose File',dataDir)
     
     
 def getDir():
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory') 
+    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory',dataDir) 
+    
+
+def saveFile():
+    app = QtGui.QApplication.instance()
+    if app is None:
+        app = QtGui.QApplication([])
+    return QtGui.QFileDialog.getSaveFileName(None,'Save As','','*.hdf5')
 
 
 def getKwdFiles(dirPath=None):
