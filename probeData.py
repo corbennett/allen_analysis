@@ -16,106 +16,13 @@ import matplotlib.gridspec as gridspec
 from PyQt4 import QtGui
 
 
-def getFile():
-    app = QtGui.QApplication.instance()
-    if app is None:
-        app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getOpenFileName(None,'Choose File')
-    
-    
-def getDir():
-    app = QtGui.QApplication.instance()
-    if app is None:
-        app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory') 
-
-
-def getKwdFiles(dirPath=None):
-    # kwdFiles,nSamples = getKwdFiles()
-    # returns kwd file paths and number of samples in each file ordered by file start time
-    if dirPath is None:
-        dirPath = getDir()
-        if dirPath == '':
-            return
-    kwdFiles = []
-    startTime = []
-    nSamples = []
-    for item in os.listdir(dirPath):
-        itemPath = os.path.join(dirPath,item)
-        if os.path.isdir(itemPath):
-            for f in os.listdir(itemPath):
-                if f[-4:]=='.kwd':
-                    startTime.append(datetime.datetime.strptime(os.path.basename(itemPath)[0:19],'%Y-%m-%d_%H-%M-%S'))
-                    kwdFiles.append(os.path.join(itemPath,f))
-                    kwd = h5py.File(kwdFiles[-1],'r')
-                    nSamples.append(kwd['recordings']['0']['data'].shape[0])
-    return zip(*[n[1:] for n in sorted(zip(startTime,kwdFiles,nSamples),key=lambda z: z[0])])
-
-
-def makeDat(kwdFiles):
-    dirPath = os.path.dirname(os.path.dirname(kwdFiles[0]))
-    datFilePath = os.path.join(dirPath,os.path.basename(dirPath)+'.dat')
-    datFile = open(datFilePath,'wb')
-    for filePath in kwdFiles:
-        kwd = h5py.File(filePath,'r')
-        dset = kwd['recordings']['0']['data']
-        i = 0
-        while i<dset.shape[0]:
-            (dset[i:i+dset.chunks[0],:128]).tofile(datFile)                        
-            i += dset.chunks[0]
-    datFile.close()
-    shutil.copy(datFilePath,r'\\10.128.38.3\data_local_1\corbett')
-    
-    
-def gauss2D(xyTuple,x0,y0,sigX,sigY,theta,amplitude):
-    x,y = xyTuple # (x,y)
-    y = y[:,None]                                                                                                             
-    a = (math.cos(theta)**2)/(2*sigX**2)+(math.sin(theta)**2)/(2*sigY**2)   
-    b = (math.sin(2*theta))/(4*sigX**2)-(math.sin(2*theta))/(4*sigY**2)    
-    c = (math.sin(theta)**2)/(2*sigX**2)+(math.cos(theta)**2)/(2*sigY**2)   
-    z = amplitude*np.exp(-(a*((x-x0)**2) + 2*b*(x-x0)*(y-y0) + c*((y-y0)**2)))                                   
-    return z.ravel()
-
-
-def fitGauss2D(x,y,data,initialParams):
-    """
-    # test:
-    import probeData
-    from matplotlib import pyplot as plt
-    params = (5,5,1,1,0,1)
-    x = np.arange(11)
-    y = np.arange(11)
-    data = probeData.gauss2D((x,y),*params).reshape(y.size,x.size)
-    fitParams = probeData.fitGauss2D(x,y,data,params)
-    xreal,yreal = probeData.getEllipseXY(*params[:-1])
-    xfit,yfit = probeData.getEllipseXY(*fitParams[:-1])
-    plt.figure()
-    plt.imshow(g,cmap='gray',interpolation='none')
-    plt.plot(xreal,yreal,'m',linewidth=2)
-    plt.plot(xfit,yfit,'y:')
-    plt.xlim([x[0],x[-1]])
-    plt.ylim([y[0],y[-1]])
-    """
-    fitParams,cov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams)
-    # fitData = gauss2D((x,y),*fitParams).reshape(y.size,x.size)
-    return fitParams
-
-
-def getEllipseXY(x,y,a,b,angle):
-    sinx = np.sin(np.arange(0,361)*math.pi/180)
-    cosx = np.cos(np.arange(0,361)*math.pi/180)
-    X = x+a*cosx*math.cos(angle)-b*sinx*math.sin(angle)
-    Y = y+a*cosx*math.sin(angle)+b*sinx*math.cos(angle)
-    return X,Y
-
-
 class probeData():
     
     def __init__(self):
-        self.dataDir = 'C:\Users\SVC_CCG\Desktop\Data'
+        self.dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
         self.recording = 0
         self.TTLChannelLabels = ['VisstimOn', 'CamExposing', 'CamSaving', 'OrangeLaserShutter']
-        self.channelMapFile = 'C:\Users\SVC_CCG\Documents\PythonScripts\imec_channel_map.prb'
+        self.channelMapFile = r'C:\Users\SVC_CCG\Documents\PythonScripts\imec_channel_map.prb'
         self.wheelChannel = 134
         self.diodeChannel = 135
         self.sampleRate = 30000     
@@ -179,9 +86,9 @@ class probeData():
             self.getTTLData(filePath=os.path.join(proPath, ttlFile), protocol=pro)
                     
             if not visStimFound:
-                print 'No vis stim data found for ' + os.path.basename(proPath)
+                print('No vis stim data found for ' + os.path.basename(proPath))
             if not eyeDataFound:
-                print 'No eye tracking data found for ' + os.path.basename(proPath)
+                print('No eye tracking data found for ' + os.path.basename(proPath))
             
         
     def getTTLData(self, filePath=None, protocol=0):
@@ -222,8 +129,6 @@ class probeData():
                 self.visstimData[str(protocol)][params] = dataFile[params][:]
             else:
                 self.visstimData[str(protocol)][params] = dataFile[params][()]   
-        
-        self.visStimDataFile = filePath
     
     
     def getEyeTrackData(self, filePath=None, protocol=0):
@@ -464,12 +369,13 @@ class probeData():
         
         for index in xrange(len(sU)):
             if 'rf_on' in self.units[sU[index][0]].keys():
-                gon = self.units[sU[index][0]]['rf_on']
-                goff = self.units[sU[index][0]]['rf_off']
+                gon = self.units[sU[index][0]]['rf']['on']
+                goff = self.units[sU[index][0]]['rf']['off']
+                xpos = self.units[sU[index][0]]['rf']['xpos']
+                ypos = self.units[sU[index][0]]['rf']['ypos']
             else:
                 gon, goff, xpos, ypos = self.findRF(sU[index][2], sigma=sigma, minLatency = 0.05, maxLatency = 0.15, plot=False, protocol=protocol)
-                self.units[sU[index][0]]['rf_on'] = gon
-                self.units[sU[index][0]]['rf_off'] = goff
+                self.units[sU[index][0]]['rf'] = {'gon':gon,'goff':goff,'xpos':xpos,'ypos':ypos}
                 
             gridOnSpikes_filter = scipy.ndimage.filters.gaussian_filter(gon, sigma)
             gridOffSpikes_filter = scipy.ndimage.filters.gaussian_filter(goff, sigma)
@@ -491,22 +397,28 @@ class probeData():
             if plot:        
                 a1 = plt.subplot(gs[index, :2])
                 a1.imshow(gridOnSpikes_filter, clim=(minVal, maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
-                a1.plot(onFit[0],onFit[1],'kx',markeredgewidth=2)
-                fitX,fitY = getEllipseXY(*onFit[:-1])
-                a1.plot(fitX,fitY,'k',linewidth=2)
-                a1.set_xlim((gridExtent[0],gridExtent[2]))
-                a1.set_ylim((gridExtent[1],gridExtent[3]))
+                if fit and onFit is not None:
+                    xlim = a1.get_xlim
+                    ylim = a1.get_ylim
+                    a1.plot(onFit[0],onFit[1],'kx',markeredgewidth=2)
+                    fitX,fitY = getEllipseXY(*onFit[:-1])
+                    a1.plot(fitX,fitY,'k',linewidth=2)
+                    a1.set_xlim(xlim)
+                    a1.set_ylim(ylim)
                 a1.xaxis.set_visible(False)
                 a1.yaxis.set_visible(False)
                 a1.text(-5.5, 0.5, str(sU[index][0]))
                 
                 a2 = plt.subplot(gs[index, 2:])
                 a2.imshow(gridOffSpikes_filter, clim=(minVal, maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
-                a2.plot(offFit[0],offFit[1],'kx',markeredgewidth=2)
-                fitX,fitY = getEllipseXY(*offFit[:-1])
-                a2.plot(fitX,fitY,'k',linewidth=2)
-                a2.set_xlim((gridExtent[0],gridExtent[2]))
-                a2.set_ylim((gridExtent[1],gridExtent[3]))
+                if fit and offFit is not None:
+                    xlim = a2.get_xlim
+                    ylim = a2.get_ylim
+                    a2.plot(offFit[0],offFit[1],'kx',markeredgewidth=2)
+                    fitX,fitY = getEllipseXY(*offFit[:-1])
+                    a2.plot(fitX,fitY,'k',linewidth=2)
+                    a2.set_xlim(xlim)
+                    a2.set_ylim(ylim)
                 a2.xaxis.set_visible(False)
                 a2.yaxis.set_visible(False)
     
@@ -517,18 +429,18 @@ class probeData():
         trialOri = self.visstimData[str(protocol)]['stimulusHistory_ori']
         trialContrast = self.visstimData[str(protocol)]['stimulusHistory_contrast']
 
-        sfs = np.unique(trialSF)
-        tfs = np.unique(trialTF)
-        oris = np.unique(trialOri)
+        sf = np.unique(trialSF)
+        tf = np.unique(trialTF)
+        ori = np.unique(trialOri)
         
         #spontaneous firing rate taken from interspersed gray trials
         spontRate = 0
         spontCount = 0
         
-        stfMat = np.zeros([tfs.size, sfs.size])
-        stfCountMat = np.zeros([sfs.size, tfs.size])
-        oriVect = np.zeros(oris.size)
-        oriCountVect = np.zeros(oris.size)
+        stfMat = np.zeros([tf.size, sf.size])
+        stfCountMat = np.zeros([sf.size, tf.size])
+        oriVect = np.zeros(ori.size)
+        oriCountVect = np.zeros(ori.size)
         
         responseLatency *= self.sampleRate
         
@@ -551,9 +463,9 @@ class probeData():
             spikeRateThisTrial = self.trialResponse[trial]
             
             if trialContrast[trial] > 0:
-                sfIndex = int(np.where(sfs == trialSF[trial])[0])
-                tfIndex = int(np.where(tfs == trialTF[trial])[0])
-                oriIndex = int(np.where(oris == trialOri[trial])[0])
+                sfIndex = int(np.where(sf == trialSF[trial])[0])
+                tfIndex = int(np.where(tf == trialTF[trial])[0])
+                oriIndex = int(np.where(ori == trialOri[trial])[0])
                     
                 stfMat[tfIndex, sfIndex] += spikeRateThisTrial
                 stfCountMat[tfIndex, sfIndex] += 1
@@ -581,39 +493,34 @@ class probeData():
             im = a1.imshow(stfMat, clim=(0,stfMat.max()), cmap='gray', origin = 'lower', interpolation='none')
             for xypair in xyNan:    
                 a1.text(xypair[1], xypair[0], 'no trials', color='white', ha='center')
-            a1.set_xticklabels(np.insert(sfs, 0, 0))
-            a1.set_yticklabels(np.insert(tfs, 0, 0))
+            a1.set_xticklabels(np.insert(sf, 0, 0))
+            a1.set_yticklabels(np.insert(tf, 0, 0))
             plt.colorbar(im, ax=a1, fraction=0.05, pad=0.04)
             
             a2 = plt.subplot(gs[0,2])
             values = np.mean(stfMat, axis=0)
             error = np.std(stfMat, axis=0)
-            a2.plot(sfs, values)
-            plt.fill_between(sfs, values+error, values-error, alpha=0.3)
+            a2.plot(sf, values)
+            plt.fill_between(sf, values+error, values-error, alpha=0.3)
             plt.xlabel('sf')
             plt.ylabel('spikes')
-            plt.xticks(sfs)
+            plt.xticks(sf)
             
             a3 = plt.subplot(gs[1, 2])
             values = np.mean(stfMat, axis=1)
             error = np.std(stfMat, axis=1)
-            a3.plot(tfs, values)
-            plt.fill_between(tfs, values+error, values-error, alpha=0.3)
+            a3.plot(tf, values)
+            plt.fill_between(tf, values+error, values-error, alpha=0.3)
             plt.xlabel('tf')
             plt.ylabel('spikes')
-            plt.xticks(tfs)
+            plt.xticks(tf)
             
             plt.tight_layout()
         
-        responseDict = {}
-        responseDict['stf'] = stfMat
-        responseDict['sfs'] = sfs
-        responseDict['tfs'] = tfs
-        
-        return responseDict
+        return stfMat, sf, tf
     
     
-    def analyzeGratings_units(self, units = None, protocol=2, trials=None, plot=True):
+    def analyzeGratings_units(self, units = None, protocol=2, trials=None, plot=True, fit=False):
         sortedUnits = [(u[0], u[1]['ypos'], u[1]['times'][str(protocol)]) for u in self.units.iteritems()]
         sortedUnits.sort(key=lambda i: -i[1])    
         
@@ -628,22 +535,36 @@ class probeData():
             
         for index in xrange(len(sU)):
             if 'stf_dict' in self.units[sU[index][0]].keys():
-                stfMat = self.units[sU[index][0]]['stf_dict']['stf']
+                stfMat = self.units[sU[index][0]]['stf']['stfMat']
+                sf = self.units[sU[index][0]]['stf']['sf']
+                tf = self.units[sU[index][0]]['stf']['tf']
             else:
-                responseDict = self.analyzeGratings(sU[index][2], protocol=protocol, plot=False, trials=trials)
-                self.units[sU[index][0]]['stf_dict'] = responseDict
-                stfMat = self.units[sU[index][0]]['stf_dict']['stf']
+                stfMat, sf, tf = self.analyzeGratings(sU[index][2], protocol=protocol, plot=False, trials=trials)
+                self.units[sU[index][0]]['stf'] = {'stfMat':stfMat,'sf':sf,'tf':tf}
+                
+            if fit:
+                # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude
+                j,i = np.unravel_index(np.argmax(stfMat),stfMat.shape)
+                initialParams = (sf[j], tf[i], 1, 1, 0.5, stfMat.max())
+                fitParams = fitStfLogGauss2D(sf,tf,stfMat,initialParams)
 
             if plot:
                 a1 = plt.subplot(gs[index, 0])
         
                 xyNan = np.transpose(np.where(np.isnan(stfMat)))
                 stfMat[np.isnan(stfMat)] = 0
-
-                plt.imshow(stfMat, clim=(stfMat.min(),stfMat.max()),  cmap='bwr', origin = 'lower', interpolation='none')
+                cLim = max(1,np.max(abs(stfMat)))
+                plt.imshow(stfMat, clim=(-cLim,cLim), cmap='bwr', origin = 'lower', interpolation='none')
                 for xypair in xyNan:    
                     a1.text(xypair[1], xypair[0], 'no trials', color='white', ha='center')
-
+                if fit and fitParams is not None:
+                    xlim = a1.get_xlim()
+                    ylim = a1.get_ylim()
+                    a1.plot(np.log2(fitParams[0])-np.log2(sf[0]),np.log2(fitParams[1])-np.log2(tf[0]),'kx',markeredgewidth=2)
+                    fitX,fitY = getStfContour(sf,tf,fitParams)
+                    a1.plot(fitX,fitY,'k',linewidth=2)
+                    a1.set_xlim(xlim)
+                    a1.set_ylim(ylim)
                 a1.xaxis.set_visible(False)
                 a1.yaxis.set_visible(False)
                 a1.text(-3.5, 0.5, str(sU[index][0]))
@@ -798,7 +719,7 @@ class probeData():
                 spotRF = responseDict['spotRF']
             else:
                 responseDict = self.analyzeSpots(sU[index][2], protocol=protocol, plot=False, trials=trials)
-                self.units[sU[index][0]]['spot_responseDict'] = responseDict
+                self.units[sU[index][0]]['spot'] = responseDict
                 spotRF = responseDict['spotRF']
                 
             if plot:
@@ -1015,7 +936,7 @@ class probeData():
                 elif 'spots' in pro:
                     self.analyzeSpots_units(units, protocol=protocol)
                 else:
-                    print "Couldn't find analysis script for protocol type:", pro
+                    print("Couldn't find analysis script for protocol type:", pro)
             else:
                 spikes = self.units[str(units[0])]['times'][str(protocol)]
                 if 'gratings' in pro:
@@ -1031,11 +952,10 @@ class probeData():
                 elif 'checkerboard' in pro:
                     self.analyzeCheckerboard(units, protocol=protocol, plot=True)
                 else:
-                    print "Couldn't find analysis script for protocol type:", pro              
+                    print("Couldn't find analysis script for protocol type:", pro)            
                 
         
     def saveWorkspace(self, variables=None, saveGlobals = False, filename=None, exceptVars = []):
-           
         if filename is None:
             ftemp = self.filePath[:self.filePath.rfind('/')]
             ftemp = ftemp[ftemp.rfind('/')+1:]
@@ -1048,7 +968,6 @@ class probeData():
             else:
                 variables = self.__dict__.keys() + globals().keys()
         
-        print variables
         for key in variables:
 #            if key in exceptVars:
 #                continue
@@ -1068,11 +987,11 @@ class probeData():
     def loadWorkspace(self, fileName = None):
         if fileName is None:        
             fileName = getFile()
+            if fileName=='':
+                return
         shelf = shelve.open(fileName)
-        
         for key in shelf:
             setattr(self, key, shelf[key])
-        
         shelf.close()
     
     
@@ -1114,6 +1033,170 @@ class probeData():
         else:
             self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir, protocolsToAnalyze=protocolsToAnalyze)
 
-     
+
+# utility functions
+
+def getFile():
+    app = QtGui.QApplication.instance()
+    if app is None:
+        app = QtGui.QApplication([])
+    return QtGui.QFileDialog.getOpenFileName(None,'Choose File')
+    
+    
+def getDir():
+    app = QtGui.QApplication.instance()
+    if app is None:
+        app = QtGui.QApplication([])
+    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory') 
+
+
+def getKwdFiles(dirPath=None):
+    # kwdFiles,nSamples = getKwdFiles()
+    # returns kwd file paths and number of samples in each file ordered by file start time
+    if dirPath is None:
+        dirPath = getDir()
+        if dirPath == '':
+            return
+    kwdFiles = []
+    startTime = []
+    nSamples = []
+    for item in os.listdir(dirPath):
+        itemPath = os.path.join(dirPath,item)
+        if os.path.isdir(itemPath):
+            for f in os.listdir(itemPath):
+                if f[-4:]=='.kwd':
+                    startTime.append(datetime.datetime.strptime(os.path.basename(itemPath)[0:19],'%Y-%m-%d_%H-%M-%S'))
+                    kwdFiles.append(os.path.join(itemPath,f))
+                    kwd = h5py.File(kwdFiles[-1],'r')
+                    nSamples.append(kwd['recordings']['0']['data'].shape[0])
+    return zip(*[n[1:] for n in sorted(zip(startTime,kwdFiles,nSamples),key=lambda z: z[0])])
+
+
+def makeDat(kwdFiles):
+    dirPath = os.path.dirname(os.path.dirname(kwdFiles[0]))
+    datFilePath = os.path.join(dirPath,os.path.basename(dirPath)+'.dat')
+    datFile = open(datFilePath,'wb')
+    for filePath in kwdFiles:
+        kwd = h5py.File(filePath,'r')
+        dset = kwd['recordings']['0']['data']
+        i = 0
+        while i<dset.shape[0]:
+            (dset[i:i+dset.chunks[0],:128]).tofile(datFile)                        
+            i += dset.chunks[0]
+    datFile.close()
+    shutil.copy(datFilePath,r'\\10.128.38.3\data_local_1\corbett')
+    
+    
+def gauss2D(xyTuple,x0,y0,sigX,sigY,theta,amplitude):
+    x,y = xyTuple # (x,y)
+    y = y[:,None]                                                                                                             
+    a = (math.cos(theta)**2)/(2*sigX**2)+(math.sin(theta)**2)/(2*sigY**2)   
+    b = (math.sin(2*theta))/(4*sigX**2)-(math.sin(2*theta))/(4*sigY**2)    
+    c = (math.sin(theta)**2)/(2*sigX**2)+(math.cos(theta)**2)/(2*sigY**2)   
+    z = amplitude * np.exp(-(a*((x-x0)**2) + 2*b*(x-x0)*(y-y0) + c*((y-y0)**2)))                                   
+    return z.ravel()
+
+
+def fitGauss2D(x,y,data,initialParams):
+    '''
+    # test:
+    import probeData
+    import numpy as np
+    from matplotlib import pyplot as plt
+    params = (5,5,1,1,0,1)
+    x = np.arange(11)
+    y = np.arange(11)
+    data = probeData.gauss2D((x,y),*params).reshape(y.size,x.size)
+    fitParams = probeData.fitGauss2D(x,y,data,params)
+    xreal,yreal = probeData.getEllipseXY(*params[:-1])
+    xfit,yfit = probeData.getEllipseXY(*fitParams[:-1])
+    plt.figure()
+    ax = plt.subplot(1,1,1)
+    ax.imshow(data,cmap='gray',interpolation='none')
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    ax.plot(xreal,yreal,'m',linewidth=2)
+    ax.plot(xfit,yfit,'y:',linewidth=2)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    '''
+    try:
+        fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams)
+    except RuntimeError:
+        print('fit failed')
+        return
+    # fitData = gauss2D((x,y),*fitParams).reshape(y.size,x.size)
+    return fitParams
+
+
+def getEllipseXY(x,y,a,b,angle):
+    sinx = np.sin(np.arange(0,361)*math.pi/180)
+    cosx = np.cos(np.arange(0,361)*math.pi/180)
+    X = x+a*cosx*math.cos(angle)-b*sinx*math.sin(angle)
+    Y = y+a*cosx*math.sin(angle)+b*sinx*math.cos(angle)
+    return X,Y
+    
+
+def stfLogGauss2D(stfTuple,sf0,tf0,sigSF,sigTF,speedTuningIndex,amplitude):
+    sf,tf = stfTuple
+    tf = tf[:,None]
+    z = amplitude * np.exp(-((np.log2(sf)-np.log2(sf0))**2)/(2*sigSF**2)) * np.exp(-((np.log2(tf)-(speedTuningIndex*(np.log2(sf)-np.log2(sf0))+np.log2(tf0)))**2)/(2*sigTF**2))
+    return z.ravel()
+
+
+def fitStfLogGauss2D(sf,tf,data,initialParams):
+    '''
+    # test:
+    import probeData
+    import numpy as np
+    from matplotlib import pyplot as plt
+    params = (0.08,2,2,2,1,1)
+    sf = np.array([0.01,0.02,0.04,0.08,0.16,0.32])
+    tf = np.array([0.25,0.5,1,2,4,8])
+    data = probeData.stfLogGauss2D((sf,tf),*params).reshape(sf.size,tf.size)
+    fitParams = probeData.fitStfLogGauss2D(sf,tf,data,params)
+    xreal,yreal = probeData.getStfContour(sf,tf,params)
+    xfit,yfit = probeData.getStfContour(sf,tf,fitParams)
+    plt.figure()
+    ax = plt.subplot(1,1,1)
+    ax.imshow(data,cmap='gray',origin='lower',interpolation='none')
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    ax.plot(xreal,yreal,'m',linewidth=2)
+    ax.plot(xfit,yfit,'y:',linewidth=2)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    '''
+    try:
+        fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams)
+    except RuntimeError:
+        print('fit failed')
+        return
+    # fitData = stfLogGauss2D((sf,tf),*fitParams).reshape(tf.size,sf.size)
+    return fitParams
+
+
+def getStfContour(sf,tf,fitParams):
+    intpPts = 100
+    sfIntp = np.logspace(np.log2(sf[0]*0.5),np.log2(sf[-1]*2),intpPts,base=2)
+    tfIntp = np.logspace(np.log2(tf[0]*0.5),np.log2(tf[-1]*2),intpPts,base=2)
+    intpFit = stfLogGauss2D((sfIntp,tfIntp),*fitParams).reshape(intpPts,intpPts)
+    thresh = 0.6065*intpFit.max() # one stdev
+    contourLine = np.full((2*intpPts,2),np.nan)
+    for i in range(len(sfIntp)):
+        c = np.where(intpFit[:,i]>thresh)[0]
+        if len(c)>0:
+            contourLine[i,0] = sfIntp[i]
+            contourLine[i,1] = tfIntp[c[0]]
+            contourLine[-1-i,0] = sfIntp[i]
+            contourLine[-1-i,1] = tfIntp[c[-1]]
+    contourLine = contourLine[np.logical_not(np.isnan(contourLine[:,0])),:]
+    if contourLine.shape[0]>0:
+        contourLine = np.concatenate((contourLine,contourLine[0,:][None,:]),axis=0)
+    x,y = (np.log2(contourLine)-np.log2([sfIntp[0],tfIntp[0]])).T-1
+    return x,y
+
+
+   
 if __name__=="__main__":
     pass       
