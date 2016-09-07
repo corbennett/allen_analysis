@@ -559,7 +559,8 @@ class probeData():
             if fit:
                 # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude
                 j,i = np.unravel_index(np.argmax(stfMat),stfMat.shape)
-                initialParams = (sf[j], tf[i], 1, 1, 0.5, stfMat.max())
+                sigmaGuess = (sf[j]+tf[i])/2
+                initialParams = (sf[j], tf[i], sigmaGuess, sigmaGuess, 0, stfMat.max())
                 fitParams = fitStfLogGauss2D(sf,tf,stfMat,initialParams)
 
             if plot:
@@ -967,8 +968,104 @@ class probeData():
                     self.analyzeCheckerboard(units, protocol=protocol, plot=True)
                 else:
                     print("Couldn't find analysis script for protocol type:", pro)            
-                
+    
+    
+    def getSingleUnits(self, fileDir = None, protocolsToAnalyze = None):
+        if fileDir is None:
+            fileDir = getDir()
+        fileList, nsamps = self.getKwdInfo(fileDir=fileDir)
+        if protocolsToAnalyze is None:
+            self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir)
+        else:
+            self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir, protocolsToAnalyze=protocolsToAnalyze)
+            
+    
+    def getKwdInfo(self, fileDir=None):
+        fileList, nsamps = getKwdFiles(fileDir)
+        return fileList, nsamps
+    
+    
+    def loadClusteredData(self, kwdNsamplesList = None, protocolsToAnalyze = None, fileDir = None):
+        from load_phy_template import load_phy_template
+                 
+        if fileDir is None:
+            fileDir = getDir()
         
+        if protocolsToAnalyze is None:
+            protocolsToAnalyze = np.arange(len(self.d))
+        
+        self.units = load_phy_template(fileDir, sampling_rate = self.sampleRate)
+        for unit in self.units.keys():
+            spikeTimes = (self.units[unit]['times']).astype(int)
+           
+            if kwdNsamplesList is not None:
+                self.units[unit]['times'] = {}
+                protocolEnds = np.cumsum(kwdNsamplesList)
+                protocolStarts = np.insert(protocolEnds, 0, 0)[:-1] - 1
+                for pro in protocolsToAnalyze:                    
+                    self.units[unit]['times'][str(pro)] = spikeTimes[np.logical_and(spikeTimes >= protocolStarts[pro], spikeTimes < protocolEnds[pro])]
+                    self.units[unit]['times'][str(pro)] -= protocolStarts[pro]
+            else:
+              self.units[unit]['times'] = spikeTimes
+              
+              
+    def getOrderedUnits(self,units=None):
+        '''
+        orderedUnits, position = self.getOrderedUnits(units)
+        '''
+        if units is None:
+            units = self.units.keys()
+        if not isinstance(units,list):
+            units = [units]
+        units = [str(u) for u in units]
+        orderedUnits = [(u,self.units[u]['ypos']) for u in self.units.keys() if u in units]
+        orderedUnits.sort(key=lambda i: i[1], reverse=True)
+        return zip(*orderedUnits)
+
+
+    def saveHDF5(self, fileSaveName = None, fileOut = None, saveDict = None, grp = None):
+        if fileSaveName is None and fileOut is None:
+            fileOut = h5py.File(saveFile(), 'w')
+        elif fileSaveName is not None and fileOut is None:            
+            fileOut = h5py.File(fileSaveName,'w')
+
+        if saveDict is None:
+            saveDict = self.__dict__
+        if grp is None:    
+            grp = fileOut['/']
+        
+        for key in saveDict:    
+            if type(saveDict[key]) is dict:
+                self.saveHDF5(fileOut=fileOut, saveDict=saveDict[key], grp=grp.create_group(key))
+            else:
+                try:
+                    grp[key] = saveDict[key]
+                except:
+                    print 'Could not save: ', key
+                    
+                    
+    def loadHDF5(self, fileName=None, grp=None, loadDict=None):
+        if fileName is None and grp is None:        
+            fileName = getFile()
+            if fileName=='':
+                return
+        if grp is None:
+            grp = h5py.File(fileName)
+        for key,val in grp.iteritems():
+            if isinstance(val,h5py._hl.dataset.Dataset):
+                if loadDict is None:
+                    setattr(self,key,val.value)
+                else:
+                    loadDict[key] = val.value
+            elif isinstance(val,h5py._hl.group.Group):
+                if loadDict is None:
+                    setattr(self,key,{})
+                    self.loadHDF5(grp=val,loadDict=getattr(self,key))
+                else:
+                    loadDict[key] = {}
+                    self.loadHDF5(grp=val,loadDict=loadDict[key])
+    
+    
     def saveWorkspace(self, variables=None, saveGlobals = False, filename=None, exceptVars = []):
         if filename is None:
             ftemp = self.filePath[:self.filePath.rfind('/')]
@@ -1007,73 +1104,6 @@ class probeData():
         for key in shelf:
             setattr(self, key, shelf[key])
         shelf.close()
-    
-    
-    def getSingleUnits(self, fileDir = None, protocolsToAnalyze = None):
-        if fileDir is None:
-            fileDir = getDir()
-        fileList, nsamps = self.getKwdInfo(fileDir=fileDir)
-        if protocolsToAnalyze is None:
-            self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir)
-        else:
-            self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir, protocolsToAnalyze=protocolsToAnalyze)
-        # order units by position
-        units = [(u,self.units[u]['ypos']) for u in self.units.keys()]
-        units.sort(key=lambda i: i[1], reverse=True)
-        units,_ = zip(*units)
-        unitsDict = collections.OrderedDict()
-        for u in units:
-            unitsDict[u] = self.units[u]
-        self.units = unitsDict
-            
-    
-    def getKwdInfo(self, fileDir=None):
-        fileList, nsamps = getKwdFiles(fileDir)
-        return fileList, nsamps
-    
-    
-    def loadClusteredData(self, kwdNsamplesList = None, protocolsToAnalyze = None, fileDir = None):
-        from load_phy_template import load_phy_template
-                 
-        if fileDir is None:
-            fileDir = getDir()
-        
-        if protocolsToAnalyze is None:
-            protocolsToAnalyze = np.arange(len(self.d))
-        
-        self.units = load_phy_template(fileDir, sampling_rate = self.sampleRate)
-        for unit in self.units.keys():
-            spikeTimes = (self.units[unit]['times']).astype(int)
-           
-            if kwdNsamplesList is not None:
-                self.units[unit]['times'] = {}
-                protocolEnds = np.cumsum(kwdNsamplesList)
-                protocolStarts = np.insert(protocolEnds, 0, 0)[:-1] - 1
-                for pro in protocolsToAnalyze:                    
-                    self.units[unit]['times'][str(pro)] = spikeTimes[np.logical_and(spikeTimes >= protocolStarts[pro], spikeTimes < protocolEnds[pro])]
-                    self.units[unit]['times'][str(pro)] -= protocolStarts[pro]
-            else:
-              self.units[unit]['times'] = spikeTimes       
-
-    def saveHDF5(self, fileOut = None, fileSaveName = None, saveDict = None, grp = None):
-        if fileSaveName is None and fileOut is None:
-            fileOut = h5py.File(saveFile(), 'w')
-        elif fileSaveName is not None and fileOut is None:            
-            fileOut = h5py.File(fileSaveName,'w')
-
-        if saveDict is None:
-            saveDict = self.__dict__
-        if grp is None:    
-            grp = fileOut['/']
-        
-        for key in saveDict:    
-            if type(saveDict[key]) is dict:
-                self.saveHDF5(fileOut=fileOut, saveDict=saveDict[key], grp=grp.create_group(key))
-            else:
-                try:
-                    grp[key] = saveDict[key]
-                except:
-                    print 'Could not save: ', key
 
 # utility functions
 
@@ -1169,7 +1199,9 @@ def fitGauss2D(x,y,data,initialParams):
     ax.set_ylim(ylim)
     '''
     try:
-        fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams)
+        lowerBounds = np.array([-np.inf,-np.inf,0,0,0,0])
+        upperBounds = np.array([np.inf,np.inf,np.inf,np.inf,2*math.pi,1.5*initialParams[-1]])
+        fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except RuntimeError:
         print('fit failed')
         return
@@ -1216,7 +1248,9 @@ def fitStfLogGauss2D(sf,tf,data,initialParams):
     ax.set_ylim(ylim)
     '''
     try:
-        fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams)
+        lowerBounds = np.array([0,0,0,0,-0.5,0])
+        upperBounds = np.array([1,16,np.inf,np.inf,1.5,1.5*initialParams[-1]])
+        fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except RuntimeError:
         print('fit failed')
         return
