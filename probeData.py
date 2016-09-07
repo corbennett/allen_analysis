@@ -6,7 +6,7 @@ Created on Fri Jun 17 12:19:20 2016
 """
 
 from __future__ import division
-import collections, datetime, h5py, itertools, json, math, os, shelve, shutil
+import datetime, h5py, itertools, json, math, os, shelve, shutil
 import numpy as np
 import scipy.signal
 import scipy.optimize
@@ -522,7 +522,8 @@ class probeData():
                 plt.xticks(tf)
 
                 plt.tight_layout()
-                
+ 
+               
     def analyzeSpots(self, units, protocol = 3, plot=True, trials=None, useCache=True):
         
         if units is None:
@@ -650,7 +651,6 @@ class probeData():
                         a.set_xticks(responseDict[param]['tuningCurve']['paramValues'])
                 
                 plt.tight_layout()
-        
     
                                         
     def analyzeCheckerboard(self, units, protocol=None, trials=None, plot=False):
@@ -664,8 +664,9 @@ class probeData():
             return
         
         if protocol is None:
-            protocol = self.getProtocolIndex('checkerboard')            
-        p = self.visstimData[str(protocol)]
+            protocol = self.getProtocolIndex('checkerboard')
+        protocol = str(protocol)            
+        p = self.visstimData[protocol]
         assert(set(p['bckgndDir'])=={0,180} and set(p['patchDir'])=={0,180} and 0 in p['bckgndSpeed'] and 0 in p['patchSpeed'])
         
         if trials is None:
@@ -686,7 +687,7 @@ class probeData():
         resp = np.full((bckgndSpeed.size,patchSpeed.size,p['patchSize'].size,p['patchElevation'].size),np.nan)
         resp = np.tile(resp[:,:,:,:,None],math.ceil(trials.size/(resp.size-2*p['patchSpeed'].size*p['patchSize'].size))+3)
         for u in units:
-            spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,self.units[str(u)]['times'][str(protocol)])
+            spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,self.units[str(u)]['times'][protocol])
             trialSpikeRate = spikesPerTrial/((1/p['frameRate'])*trialDuration)
             for n in trials:
                 i = patchSpeed==p['trialPatchSpeed'][n] if p['trialPatchDir'][n]==0 else patchSpeed==-p['trialPatchSpeed'][n]
@@ -817,46 +818,20 @@ class probeData():
                 self.analyzeCheckerboard(units, protocol=protocol, plot=True)
             else:
                 print("Couldn't find analysis script for protocol type:", pro)
-
-        
-    def saveWorkspace(self, variables=None, saveGlobals = False, filename=None, exceptVars = []):
-        if filename is None:
-            ftemp = self.filePath[:self.filePath.rfind('/')]
-            ftemp = ftemp[ftemp.rfind('/')+1:]
-            filename = self.filePath[:self.filePath.rfind('/')+1] + ftemp + '.out' 
-        shelf = shelve.open(filename, 'n')
-        
-        if variables is None:
-            if not saveGlobals:
-                variables = self.__dict__.keys()
-            else:
-                variables = self.__dict__.keys() + globals().keys()
-        
-        for key in variables:
-#            if key in exceptVars:
-#                continue
-            try:
-                if key in self.__dict__.keys():
-                    shelf[key] = self.__dict__[key]
-                else:
-                    shelf[key] = globals()[key]    
-            except TypeError:
-                #
-                # __builtins__, my_shelf, and imported modules can not be shelved.
-                #
-                print('ERROR shelving: {0}'.format(key))
-        shelf.close()
-
-
-    def loadWorkspace(self, fileName = None):
-        if fileName is None:        
-            fileName = getFile()
-            if fileName=='':
-                return
-        shelf = shelve.open(fileName)
-        for key in shelf:
-            setattr(self, key, shelf[key])
-        shelf.close()
+                
+                
+    def getOrderedUnits(self,units=None):
+        '''
+        orderedUnits, position = self.getOrderedUnits(units)
+        '''
+        if units is None:
+            units = self.units.keys()
+        if not isinstance(units,list):
+            units = [units]
+        units = [str(u) for u in units]
+        orderedUnits = [(u,self.units[u]['ypos']) for u in self.units.keys() if u in units]
+        orderedUnits.sort(key=lambda i: i[1], reverse=True)
+        return zip(*orderedUnits)
     
     
     def getSingleUnits(self, fileDir = None, protocolsToAnalyze = None):
@@ -867,14 +842,6 @@ class probeData():
             self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir)
         else:
             self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir, protocolsToAnalyze=protocolsToAnalyze)
-        # order units by position
-        units = [(u,self.units[u]['ypos']) for u in self.units.keys()]
-        units.sort(key=lambda i: i[1], reverse=True)
-        units,_ = zip(*units)
-        unitsDict = collections.OrderedDict()
-        for u in units:
-            unitsDict[u] = self.units[u]
-        self.units = unitsDict
             
     
     def getKwdInfo(self, fileDir=None):
@@ -905,7 +872,8 @@ class probeData():
             else:
               self.units[unit]['times'] = spikeTimes       
 
-    def saveHDF5(self, fileOut = None, fileSaveName = None, saveDict = None, grp = None):
+
+    def saveHDF5(self, fileSaveName = None, fileOut = None, saveDict = None, grp = None):
         if fileSaveName is None and fileOut is None:
             fileOut = h5py.File(saveFile(), 'w')
         elif fileSaveName is not None and fileOut is None:            
@@ -924,6 +892,65 @@ class probeData():
                     grp[key] = saveDict[key]
                 except:
                     print 'Could not save: ', key
+                    
+                    
+    def loadHDF5(self, fileName=None, grp=None, loadDict=None):
+        if fileName is None and grp is None:        
+            fileName = getFile()
+            if fileName=='':
+                return
+        if grp is None:
+            grp = h5py.File(fileName)
+        for key,val in grp.iteritems():
+            if isinstance(val,h5py._hl.dataset.Dataset):
+                if loadDict is None:
+                    setattr(self,key,val.value)
+                else:
+                    loadDict[key] = val.value
+            elif isinstance(val,h5py._hl.group.Group):
+                if loadDict is None:
+                    setattr(self,key,{})
+                    self.loadHDF5(grp=val,loadDict=getattr(self,key))
+                else:
+                    loadDict[key] = {}
+                    self.loadHDF5(grp=val,loadDict=loadDict[key])
+                    
+    
+    def saveWorkspace(self, variables=None, saveGlobals = False, filename=None, exceptVars = []):
+        if filename is None:
+            ftemp = self.filePath[:self.filePath.rfind('/')]
+            ftemp = ftemp[ftemp.rfind('/')+1:]
+            filename = self.filePath[:self.filePath.rfind('/')+1] + ftemp + '.out' 
+        shelf = shelve.open(filename, 'n')
+        
+        if variables is None:
+            if not saveGlobals:
+                variables = self.__dict__.keys()
+            else:
+                variables = self.__dict__.keys() + globals().keys()
+        
+        for key in variables:
+            try:
+                if key in self.__dict__.keys():
+                    shelf[key] = self.__dict__[key]
+                else:
+                    shelf[key] = globals()[key]    
+            except TypeError:
+                # __builtins__, my_shelf, and imported modules can not be shelved.
+                print('ERROR shelving: {0}'.format(key))
+        shelf.close()
+
+
+    def loadWorkspace(self, fileName = None):
+        if fileName is None:        
+            fileName = getFile()
+            if fileName=='':
+                return
+        shelf = shelve.open(fileName)
+        for key in shelf:
+            setattr(self, key, shelf[key])
+        shelf.close()
+
 
 # utility functions
 
@@ -1019,7 +1046,9 @@ def fitGauss2D(x,y,data,initialParams):
     ax.set_ylim(ylim)
     '''
     try:
-        fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams)
+        lowerBounds = np.array([-np.inf,-np.inf,0,0,0,0])
+        upperBounds = np.array([np.inf,np.inf,np.inf,np.inf,2*math.pi,1.5*initialParams[-1]])
+        fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except RuntimeError:
         print('fit failed')
         return
@@ -1066,7 +1095,9 @@ def fitStfLogGauss2D(sf,tf,data,initialParams):
     ax.set_ylim(ylim)
     '''
     try:
-        fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams)
+        lowerBounds = np.array([0,0,0,0,-0.5,0])
+        upperBounds = np.array([1,16,np.inf,np.inf,1.5,1.5*initialParams[-1]])
+        fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except RuntimeError:
         print('fit failed')
         return
