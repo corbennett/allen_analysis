@@ -6,7 +6,7 @@ Created on Fri Jun 17 12:19:20 2016
 """
 
 from __future__ import division
-import datetime, h5py, itertools, json, math, os, shelve, shutil
+import datetime, h5py, itertools, json, math, ntpath, os, shelve, shutil
 import numpy as np
 import scipy.signal
 import scipy.optimize
@@ -253,7 +253,7 @@ class probeData():
         if trialStarts is not None:
             self.runningTrials = []
             self.stationaryTrials = []
-            for trial in xrange(trialStarts.size):
+            for trial in range(trialStarts.size):
                 trialSpeed = np.mean(self.wheelData[trialStarts[trial]:trialEnds[trial]])
                 if trialSpeed >= runThresh:
                     self.runningTrials.append(trial)
@@ -264,7 +264,7 @@ class probeData():
     def findSpikesPerTrial(self, trialStarts, trialEnds, spikes):
         
         spikesPerTrial = np.zeros(trialStarts.size)
-        for trialNum in xrange(trialStarts.size):
+        for trialNum in range(trialStarts.size):
             trialSamples = np.arange(trialStarts[trialNum], trialEnds[trialNum])    
             spikesPerTrial[trialNum] = np.intersect1d(trialSamples, spikes).size
         
@@ -439,7 +439,7 @@ class probeData():
         
                 #find and record spikes for every trial
                 trialResponse = np.zeros(trialSF.size)
-                for trial in xrange(trialSF.size-1):
+                for trial in range(trialSF.size-1):
                     trialStartFrame = self.visstimData[str(protocol)]['stimStartFrames'][trial]
                     trialEndFrame = trialStartFrame + self.visstimData[str(protocol)]['stimTime']
                     trialSamples = np.arange(self.visstimData[str(protocol)]['frameSamples'][trialStartFrame] + responseLatency, self.visstimData[str(protocol)]['frameSamples'][trialEndFrame] + responseLatency)    
@@ -586,7 +586,7 @@ class probeData():
                 elevSpikeRate = np.zeros(elevs.size)
                 azimuthTrialCount = np.zeros(azimuths.size)        
                 elevTrialCount = np.zeros(elevs.size)
-                for trial in xrange(trialPos.size):
+                for trial in range(trialPos.size):
                     if horTrials[trial]:
                         elevIndex = np.where(trialPos[trial]==elevs)[0]
                         elevSpikeRate[elevIndex] += trialSpikeRate[trial]
@@ -804,7 +804,7 @@ class probeData():
     
     def getProtocolIndex(self, label):
         protocol = []
-        protocol.extend([i for i,f in enumerate(self.kwdFileList) if os.path.dirname(f).endswith(label)])
+        protocol.extend([i for i,f in enumerate(self.kwdFileList) if ntpath.dirname(f).endswith(label)])
         if len(protocol)<1:
             raise ValueError('No protocols found matching: '+label)
         elif len(protocol)>1:
@@ -913,12 +913,15 @@ class probeData():
                 return
         if grp is None:
             grp = h5py.File(fileName)
-        for key,val in grp.iteritems():
+        for key,val in grp.items():
             if isinstance(val,h5py._hl.dataset.Dataset):
+                v = val.value
+                if isinstance(v,np.ndarray) and v.dtype==np.object:
+                    v = v.astype('U')
                 if loadDict is None:
-                    setattr(self,key,val.value)
+                    setattr(self,key,v)
                 else:
-                    loadDict[key] = val.value
+                    loadDict[key] = v
             elif isinstance(val,h5py._hl.group.Group):
                 if loadDict is None:
                     setattr(self,key,{})
@@ -970,14 +973,14 @@ def getFile():
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getOpenFileName(None,'Choose File',dataDir)
+    return QtGui.QFileDialog.getOpenFileName(None,'Choose File')
     
     
 def getDir():
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory',dataDir) 
+    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory') 
     
 
 def saveFile():
