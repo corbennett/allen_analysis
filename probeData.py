@@ -48,7 +48,7 @@ class probeData():
         
         
     def loadExperiment(self):
-        self.kwdFileList, nsamps = self.getKwdInfo()
+        self.kwdFileList, nsamps = getKwdInfo()
         filelist = self.kwdFileList
         filePaths = [os.path.dirname(f) for f in filelist]        
         
@@ -273,11 +273,14 @@ class probeData():
         return spikesPerTrial
         
             
-    def findRF(self, units, sigma = 2, plot = True, minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=1, fit=False, useCache=True):
+    def findRF(self, units=None, sigma = 2, plot = True, minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=None, fit=True, useCache=True):
         if units is None:
             units = self.units.keys()
         if type(units) is int:
-            units = [units]        
+            units = [units]      
+        if protocol is None:
+            protocol = self.getProtocolIndex('sparseNoise')
+        protocol = str(protocol)
         if plot:        
             plt.figure(figsize = (7.1, 3*len(units)))
             gs = gridspec.GridSpec(len(units), 2)
@@ -344,7 +347,7 @@ class probeData():
                         # params: x0 , y0, sigX, sigY, theta, amplitude
                         data = np.copy(d)-d.min()
                         elev, azi = ypos/pixPerDeg, xpos/pixPerDeg
-                        j,i = np.unravel_index(np.argmax(data),data.shape)
+                        i,j = np.unravel_index(np.argmax(data),data.shape)
                         initialParams = (azi[j], elev[i], azi[1]-azi[0], elev[1]-elev[0], 0, data.max())
                         fitParams.append(fitGauss2D(azi,elev,data,initialParams))
                     onFit,offFit = fitParams
@@ -365,38 +368,43 @@ class probeData():
                 a1 = plt.subplot(gs[uindex, 0])
                 a1.imshow(gridOnSpikes_filter, clim=[minVal, maxVal], interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]] )
                 if fit and onFit is not None:
-                    xlim = a1.get_xlim()
-                    ylim = a1.get_ylim()
                     a1.plot(onFit[0],onFit[1],'kx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*onFit[:-1])
                     a1.plot(fitX,fitY,'k',linewidth=2)
-                    a1.set_xlim(xlim)
-                    a1.set_ylim(ylim)
+                    a1.set_xlim([gridExtent[0]-0.5,gridExtent[2]-0.5])
+                    a1.set_ylim([gridExtent[1]-0.5,gridExtent[3]-0.5])
                 a1.set_ylabel(str(unit),fontsize='x-small')
            
                 a2 = plt.subplot(gs[uindex, 1])
                 im = a2.imshow(gridOffSpikes_filter, clim=[minVal, maxVal], interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
                 if fit and offFit is not None:
-                    xlim = a2.get_xlim()
-                    ylim = a2.get_ylim()
                     a2.plot(offFit[0],offFit[1],'kx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*offFit[:-1])
                     a2.plot(fitX,fitY,'k',linewidth=2)
-                    a2.set_xlim(xlim)
-                    a2.set_ylim(ylim)
+                    a2.set_xlim([gridExtent[0]-0.5,gridExtent[2]-0.5])
+                    a2.set_ylim([gridExtent[1]-0.5,gridExtent[3]-0.5])
                 if uindex == 0:
                     a1.set_title('on response')
                     a2.set_title('off response')
                 plt.colorbar(im, ax= [a1, a2], fraction=0.05, shrink=0.5, pad=0.05)
                 a2.yaxis.set_visible(False)
+                
+                plt.tight_layout()
     
     
-    def analyzeGratings(self, units, trials = None, responseLatency = 0.05, plot=True, protocol=3, fit = True, useCache=True):
+    def analyzeGratings(self, units=None, trials = None, responseLatency = 0.05, plot=True, protocol=None, protocolType='stf', fit = True, useCache=True):
         
         if units is None:
             units = self.units.keys()
         if type(units) is int:
-            units = [units]        
+            units = [units]
+        if protocol is None:
+            if protocolType=='stf':
+                label = 'gratings'
+            elif protocolType=='ori':
+                label = 'gratings_ori'
+            protocol = self.getProtocolIndex(label)
+        protocol = str(protocol)
         if plot:        
             plt.figure(figsize = (7.1, 3*len(units)))
             gs = gridspec.GridSpec(len(units), 3)                
@@ -469,9 +477,12 @@ class probeData():
             
                 if fit:
                     # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude
-                    j,i = np.unravel_index(np.argmax(stfMat),stfMat.shape)
-                    initialParams = (sf[j], tf[i], 1, 1, 0.5, stfMat.max())
-                    fitParams = fitStfLogGauss2D(sf,tf,stfMat,initialParams)
+                    if stfMat.max()<0:
+                        fitParams = None
+                    else:
+                        i,j = np.unravel_index(np.argmax(stfMat),stfMat.shape)
+                        initialParams = (sf[j], tf[i], 1, 1, 0.5, stfMat.max())
+                        fitParams = fitStfLogGauss2D(sf,tf,stfMat,initialParams)
                     self.units[str(unit)]['stf']['fitParams'] = fitParams
                     
                 self.units[str(unit)]['stf']['stfMat'] = stfMat
@@ -491,13 +502,11 @@ class probeData():
                 for xypair in xyNan:    
                     a1.text(xypair[1], xypair[0], 'no trials', color='white', ha='center')
                 if fit and fitParams is not None:
-                    xlim = a1.get_xlim()
-                    ylim = a1.get_ylim()
                     a1.plot(np.log2(fitParams[0])-np.log2(sf[0]),np.log2(fitParams[1])-np.log2(tf[0]),'kx',markeredgewidth=2)
                     fitX,fitY = getStfContour(sf,tf,fitParams)
                     a1.plot(fitX,fitY,'k',linewidth=2)
-                    a1.set_xlim(xlim)
-                    a1.set_ylim(ylim)                
+                    a1.set_xlim([-0.5,sf.size-0.5])
+                    a1.set_ylim([-0.5,tf.size-0.5])                
                 
                 a1.set_xticklabels(np.insert(sf, 0, 0))
                 a1.set_yticklabels(np.insert(tf, 0, 0))
@@ -522,14 +531,18 @@ class probeData():
                 plt.xticks(tf)
 
                 plt.tight_layout()
+            
  
                
-    def analyzeSpots(self, units, protocol = 3, plot=True, trials=None, useCache=True):
+    def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=True):
         
         if units is None:
             units = self.units.keys()
         if type(units) is int:
-            units = [units]        
+            units = [units]
+        if protocol is None:
+            protocol = self.getProtocolIndex('spots')
+        protocol = str(protocol)
         if plot:        
             plt.figure(figsize = (11, 3*len(units)))
             gs = gridspec.GridSpec(len(units), 4)                        
@@ -653,7 +666,9 @@ class probeData():
                 plt.tight_layout()
     
                                         
-    def analyzeCheckerboard(self, units, protocol=None, trials=None, plot=False):
+    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True):
+        if units is None:
+            units = self.units.keys()
         if not isinstance(units,list):
             units = [units]
         for u in units[:]:
@@ -811,19 +826,17 @@ class probeData():
             if 'gratings' in pro:
                 self.analyzeGratings(units, protocol = protocol, useCache=useCache)
             elif 'sparseNoise' in pro:
-                self.findRF(units, protocol=protocol, fit=True, useCache=useCache)
+                self.findRF(units, protocol=protocol, useCache=useCache)
             elif 'spots' in pro:
                 self.analyzeSpots(units, protocol=protocol, useCache=useCache)
             elif 'checkerboard' in pro:
-                self.analyzeCheckerboard(units, protocol=protocol, plot=True)
+                self.analyzeCheckerboard(units, protocol=protocol)
             else:
                 print("Couldn't find analysis script for protocol type:", pro)
                 
                 
     def getOrderedUnits(self,units=None):
-        '''
-        orderedUnits, position = self.getOrderedUnits(units)
-        '''
+        # orderedUnits, position = self.getOrderedUnits(units)
         if units is None:
             units = self.units.keys()
         if not isinstance(units,list):
@@ -837,16 +850,11 @@ class probeData():
     def getSingleUnits(self, fileDir = None, protocolsToAnalyze = None):
         if fileDir is None:
             fileDir = getDir()
-        fileList, nsamps = self.getKwdInfo(fileDir=fileDir)
+        fileList, nsamps = getKwdInfo(dirPath=fileDir)
         if protocolsToAnalyze is None:
             self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir)
         else:
             self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir, protocolsToAnalyze=protocolsToAnalyze)
-            
-    
-    def getKwdInfo(self, fileDir=None):
-        fileList, nsamps = getKwdFiles(fileDir)
-        return fileList, nsamps
     
     
     def loadClusteredData(self, kwdNsamplesList = None, protocolsToAnalyze = None, fileDir = None):
@@ -875,7 +883,10 @@ class probeData():
 
     def saveHDF5(self, fileSaveName = None, fileOut = None, saveDict = None, grp = None):
         if fileSaveName is None and fileOut is None:
-            fileOut = h5py.File(saveFile(), 'w')
+            fileSaveName = saveFile()
+            if fileSaveName=='':
+                return
+            fileOut = h5py.File(fileSaveName, 'w')
         elif fileSaveName is not None and fileOut is None:            
             fileOut = h5py.File(fileSaveName,'w')
 
@@ -891,7 +902,10 @@ class probeData():
                 try:
                     grp[key] = saveDict[key]
                 except:
-                    print 'Could not save: ', key
+                    try:
+                        grp.create_dataset(key,data=np.array(saveDict[key],dtype=object),dtype=h5py.special_dtype(vlen=str))
+                    except:
+                        print('Could not save: ', key)
                     
                     
     def loadHDF5(self, fileName=None, grp=None, loadDict=None):
@@ -916,12 +930,12 @@ class probeData():
                     self.loadHDF5(grp=val,loadDict=loadDict[key])
                     
     
-    def saveWorkspace(self, variables=None, saveGlobals = False, filename=None, exceptVars = []):
-        if filename is None:
-            ftemp = self.filePath[:self.filePath.rfind('/')]
-            ftemp = ftemp[ftemp.rfind('/')+1:]
-            filename = self.filePath[:self.filePath.rfind('/')+1] + ftemp + '.out' 
-        shelf = shelve.open(filename, 'n')
+    def saveWorkspace(self, variables=None, saveGlobals = False, fileName=None, exceptVars = []):
+        if fileName is None:
+            fileName = saveFile()
+            if fileName=='':
+                return
+        shelf = shelve.open(fileName, 'n')
         
         if variables is None:
             if not saveGlobals:
@@ -972,10 +986,10 @@ def saveFile():
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getSaveFileName(None,'Save As','','*.hdf5')
+    return QtGui.QFileDialog.getSaveFileName(None,'Save As')
 
 
-def getKwdFiles(dirPath=None):
+def getKwdInfo(dirPath=None):
     # kwdFiles,nSamples = getKwdFiles()
     # returns kwd file paths and number of samples in each file ordered by file start time
     if dirPath is None:
