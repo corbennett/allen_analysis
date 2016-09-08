@@ -282,7 +282,8 @@ class probeData():
         if plot:        
             plt.figure(figsize = (7.1, 3*len(units)))
             gs = gridspec.GridSpec(len(units), 2)
-            
+        units, pos = self.getOrderedUnits(units) 
+        
         minLatency *= self.sampleRate
         maxLatency *= self.sampleRate
    
@@ -403,6 +404,7 @@ class probeData():
                 label = 'gratings_ori'
             protocol = self.getProtocolIndex(label)
         protocol = str(protocol)
+        units, pos = self.getOrderedUnits(units)        
         if plot:        
             plt.figure(figsize = (7.1, 3*len(units)))
             gs = gridspec.GridSpec(len(units), 3)                
@@ -419,13 +421,15 @@ class probeData():
         responseLatency *= self.sampleRate
         
         for uindex, unit in enumerate(units):
-            if ('stf' in self.units[str(unit)].keys()) and useCache:
+            if ('stf' in self.units[str(unit)].keys()) and protocolType=='stf' and useCache:
                 stfMat = self.units[str(unit)]['stf']['stfMat']
                 sf = self.units[str(unit)]['stf']['sf']
                 tf = self.units[str(unit)]['stf']['tf']
                 fitParams = self.units[str(unit)]['stf']['fitParams']
+            elif ('ori' in self.units[str(unit)].keys()) and protocolType=='ori' and useCache:
+                oriList = self.units[str(unit)]['ori']['tuningCurve']
             else:
-                self.units[str(unit)]['stf'] = {}
+                self.units[str(unit)][protocolType] = {}
                 spikes = self.units[str(unit)]['times'][str(protocol)]
                 
                 #spontaneous firing rate taken from interspersed gray trials
@@ -434,9 +438,8 @@ class probeData():
                 
                 stfMat = np.zeros([tf.size, sf.size])
                 stfCountMat = np.zeros([sf.size, tf.size])
-                oriVect = np.zeros(ori.size)
-                oriCountVect = np.zeros(ori.size)
-        
+                oriList = [[] for i in range(ori.size)]
+                
                 #find and record spikes for every trial
                 trialResponse = np.zeros(trialSF.size)
                 for trial in range(trialSF.size-1):
@@ -463,8 +466,7 @@ class probeData():
                         stfMat[tfIndex, sfIndex] += spikeRateThisTrial
                         stfCountMat[tfIndex, sfIndex] += 1
                         
-                        oriVect[oriIndex] += spikeRateThisTrial
-                        oriCountVect[oriIndex] += 1        
+                        oriList[oriIndex].append(spikeRateThisTrial)
                     else:
                         spontRate += spikeRateThisTrial
                         spontCount += 1
@@ -472,8 +474,15 @@ class probeData():
                 spontRate /= spontCount
                 stfMat /= stfCountMat
                 stfMat -= spontRate
-            
-                if fit:
+                
+                oriMean = np.zeros(len(oriList))                
+                oriError = np.zeros(len(oriList))
+                for oindex in range(len(oriList)):
+                    oriMean[oindex] = np.mean(np.array(oriList[oindex]))
+                    oriError[oindex] = np.std(np.array(oriList[oindex]))
+                
+                oriMean -= spontRate
+                if fit and protocolType=='stf':
                     # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude
                     if stfMat.max()<0:
                         fitParams = None
@@ -483,55 +492,71 @@ class probeData():
                         fitParams = fitStfLogGauss2D(sf,tf,stfMat,initialParams)
                     self.units[str(unit)]['stf']['fitParams'] = fitParams
                     
-                self.units[str(unit)]['stf']['stfMat'] = stfMat
-                self.units[str(unit)]['stf']['sf'] = sf
-                self.units[str(unit)]['stf']['tf'] = tf
+                if protocolType=='stf':
+                    self.units[str(unit)]['stf']['stfMat'] = stfMat
+                    self.units[str(unit)]['stf']['sf'] = sf
+                    self.units[str(unit)]['stf']['tf'] = tf
         
             if plot:
-                xyNan = np.transpose(np.where(np.isnan(stfMat)))
-                stfMat[np.isnan(stfMat)] = 0
-               
-                a1 = plt.subplot(gs[uindex, 0])
-                plt.xlabel('sf')
-                plt.ylabel('tf')
-                plt.title(str(unit))
-                cLim = max(1,np.max(abs(stfMat)))
-                im = a1.imshow(stfMat, clim=(-cLim,cLim), cmap='bwr', origin = 'lower', interpolation='none')
-                for xypair in xyNan:    
-                    a1.text(xypair[1], xypair[0], 'no trials', color='white', ha='center')
-                if fit and fitParams is not None:
-                    a1.plot(np.log2(fitParams[0])-np.log2(sf[0]),np.log2(fitParams[1])-np.log2(tf[0]),'kx',markeredgewidth=2)
-                    fitX,fitY = getStfContour(sf,tf,fitParams)
-                    a1.plot(fitX,fitY,'k',linewidth=2)
-                    a1.set_xlim([-0.5,sf.size-0.5])
-                    a1.set_ylim([-0.5,tf.size-0.5])                
+                if protocolType=='stf':                
+                    xyNan = np.transpose(np.where(np.isnan(stfMat)))
+                    stfMat[np.isnan(stfMat)] = 0
+                   
+                    a1 = plt.subplot(gs[uindex, 0])
+                    plt.xlabel('sf')
+                    plt.ylabel('tf')
+                    plt.title(str(unit))
+                    cLim = max(1,np.max(abs(stfMat)))
+                    im = a1.imshow(stfMat, clim=(-cLim,cLim), cmap='bwr', origin = 'lower', interpolation='none')
+                    for xypair in xyNan:    
+                        a1.text(xypair[1], xypair[0], 'no trials', color='white', ha='center')
+                    if fit and fitParams is not None:
+                        a1.plot(np.log2(fitParams[0])-np.log2(sf[0]),np.log2(fitParams[1])-np.log2(tf[0]),'kx',markeredgewidth=2)
+                        fitX,fitY = getStfContour(sf,tf,fitParams)
+                        a1.plot(fitX,fitY,'k',linewidth=2)
+                        a1.set_xlim([-0.5,sf.size-0.5])
+                        a1.set_ylim([-0.5,tf.size-0.5])                
+                    
+                    a1.set_xticklabels(np.insert(sf, 0, 0))
+                    a1.set_yticklabels(np.insert(tf, 0, 0))
+                    plt.colorbar(im, ax=a1, fraction=0.05, shrink=0.5, pad=0.05)
+                    
+                    a2 = plt.subplot(gs[uindex,1])
+                    values = np.mean(stfMat, axis=0)
+                    error = np.std(stfMat, axis=0)
+                    a2.plot(sf, values)
+                    plt.fill_between(sf, values+error, values-error, alpha=0.3)
+                    plt.xlabel('sf')
+                    plt.ylabel('spikes')
+                    plt.xticks(sf)
+                    
+                    a3 = plt.subplot(gs[uindex, 2])
+                    values = np.mean(stfMat, axis=1)
+                    error = np.std(stfMat, axis=1)
+                    a3.plot(tf, values)
+                    plt.fill_between(tf, values+error, values-error, alpha=0.3)
+                    plt.xlabel('tf')
+                    plt.ylabel('spikes')
+                    plt.xticks(tf)
+    
+                    plt.tight_layout()
                 
-                a1.set_xticklabels(np.insert(sf, 0, 0))
-                a1.set_yticklabels(np.insert(tf, 0, 0))
-                plt.colorbar(im, ax=a1, fraction=0.05, shrink=0.5, pad=0.05)
-                
-                a2 = plt.subplot(gs[uindex,1])
-                values = np.mean(stfMat, axis=0)
-                error = np.std(stfMat, axis=0)
-                a2.plot(sf, values)
-                plt.fill_between(sf, values+error, values-error, alpha=0.3)
-                plt.xlabel('sf')
-                plt.ylabel('spikes')
-                plt.xticks(sf)
-                
-                a3 = plt.subplot(gs[uindex, 2])
-                values = np.mean(stfMat, axis=1)
-                error = np.std(stfMat, axis=1)
-                a3.plot(tf, values)
-                plt.fill_between(tf, values+error, values-error, alpha=0.3)
-                plt.xlabel('tf')
-                plt.ylabel('spikes')
-                plt.xticks(tf)
+                elif protocolType=='ori':
+                    a1 = plt.subplot(gs[uindex, :2])
+                    plt.xlabel('ori')
+                    plt.ylabel('spike rate: ' + str(unit))
+                    a1.plot(ori, oriMean)
+                    plt.fill_between(ori, oriMean+oriError, oriMean - oriError, alpha=0.3)
+                    plt.xticks(ori)
+                    
+                    a2 = plt.subplot(gs[uindex, 2:], projection='polar')
+                    theta = ori * (np.pi/180.0)
+                    theta = np.append(theta, theta[0])
+                    rho = np.append(oriMean, oriMean[0]) + spontRate
+                    a2.plot(theta, rho)
+                    
 
-                plt.tight_layout()
-            
- 
-               
+
     def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=True):
         
         if units is None:
@@ -541,6 +566,7 @@ class probeData():
         if protocol is None:
             protocol = self.getProtocolIndex('spots')
         protocol = str(protocol)
+        units, pos = self.getOrderedUnits(units) 
         if plot:        
             plt.figure(figsize = (11, 3*len(units)))
             gs = gridspec.GridSpec(len(units), 4)                        
@@ -675,10 +701,10 @@ class probeData():
                 print(str(u)+' not in units.keys()')
         if len(units)<1:
             return
-        
+        units, pos = self.getOrderedUnits(units) 
         if protocol is None:
             protocol = self.getProtocolIndex('checkerboard')
-        protocol = str(protocol)            
+        protocol = str(protocol)          
         p = self.visstimData[protocol]
         assert(set(p['bckgndDir'])=={0,180} and set(p['patchDir'])=={0,180} and 0 in p['bckgndSpeed'] and 0 in p['patchSpeed'])
         
