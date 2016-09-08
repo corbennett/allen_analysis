@@ -16,9 +16,6 @@ import matplotlib.gridspec as gridspec
 from PyQt4 import QtGui
 
 
-dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
-
-
 class probeData():
     
     def __init__(self):
@@ -48,7 +45,8 @@ class probeData():
         
         
     def loadExperiment(self):
-        self.kwdFileList, nsamps = getKwdInfo()
+        dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
+        self.kwdFileList, nsamps = getKwdInfo(dirPath=dataDir)
         filelist = self.kwdFileList
         filePaths = [os.path.dirname(f) for f in filelist]        
         
