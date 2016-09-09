@@ -409,7 +409,7 @@ class probeData():
                 onLinFitElev = scipy.stats.linregress(unitsYPos[onIncluded],onCenters[onIncluded,1])
             if np.count_nonzero(offIncluded)>1:
                 offLinFitAzim = scipy.stats.linregress(unitsYPos[offIncluded],offCenters[offIncluded,0])
-                offLinFitElev = scipy.stats.linregress(unitsYPos[offIncluded],offCenters[offIncluded,1])
+                offLinFitElev = scipy.stats.linregress(unitsYPos[offIncluded],offCenters[offIncluded,1]) 
             
             probePos = [self.units[n]['ypos'] for n in self.units.keys()]
             xlim = np.array([min(probePos)-10,max(probePos)+10])            
@@ -803,6 +803,7 @@ class probeData():
         if plot:
             plt.figure(figsize=(10,3*len(units)),facecolor='w')
             gs = gridspec.GridSpec(2*len(units),4)
+            row = 0
         bckgndSpeed = np.concatenate((-p['bckgndSpeed'][:0:-1],p['bckgndSpeed']))
         patchSpeed = np.concatenate((-p['patchSpeed'][:0:-1],p['patchSpeed']))
         resp = np.full((bckgndSpeed.size,patchSpeed.size,p['patchSize'].size,p['patchElevation'].size),np.nan)
@@ -831,7 +832,7 @@ class probeData():
             
             if plot:
                 # plot response vs background and patch speed (averaging over patch size and elevation)
-                ax = plt.subplot(gs[uindex:uindex+2,0:2])
+                ax = plt.subplot(gs[row:row+2,0:2])
                 respMat = np.nanmean(np.nanmean(meanResp,axis=3),axis=2)
                 cLim = max(1,np.max(abs(respMat)))
                 plt.imshow(respMat,cmap='bwr',clim=(-cLim,cLim),interpolation='none',origin='lower')
@@ -852,7 +853,7 @@ class probeData():
                 cb.ax.tick_params(length=0,labelsize='xx-small')
                 
                 # plot mean response across background and patch speed axes
-                ax = plt.subplot(gs[uindex,2])
+                ax = plt.subplot(gs[row,2])
                 bck = np.nanmean(respMat,axis=0)
                 pch = np.nanmean(respMat,axis=1)
                 plt.plot(bckgndSpeed,bck,color='0.6',label='bckgnd mean')
@@ -869,7 +870,7 @@ class probeData():
                 plt.legend(loc='upper right',frameon=False,fontsize='x-small')
                 
                 # plot response to background or patch alone
-                ax = plt.subplot(gs[uindex+1,2])
+                ax = plt.subplot(gs[row+1,2])
                 bck = respMat[patchSpeed.size//2,:]
                 pch = respMat[:,bckgndSpeed.size//2]
                 plt.plot(bckgndSpeed,bck,color='0.6',label='bcknd only')
@@ -884,7 +885,7 @@ class probeData():
                 plt.legend(loc='upper right',frameon=False,fontsize='x-small')
                 
                 # plot response vs patch size (averaging across patch speed and elevation)
-                ax = plt.subplot(gs[uindex,3])
+                ax = plt.subplot(gs[row,3])
                 r = [np.nanmean(meanResp[patchSpeed!=0,bckgndSpeed.size//2,k,:]) for k in range(p['patchSize'].size)]
                 plt.plot(p['patchSize'],r,color='0')
                 ax.spines['right'].set_visible(False)
@@ -895,7 +896,7 @@ class probeData():
                 ax.set_yticks([int(min(r)),int(max(r))])
                 
                 # plot response vs patch elevation (averaging across patch speed and size)
-                ax = plt.subplot(gs[uindex+1,3])
+                ax = plt.subplot(gs[row+1,3])
                 r = [np.nanmean(meanResp[patchSpeed!=0,bckgndSpeed.size//2,:,l]) for l in range(p['patchElevation'].size)]
                 plt.plot(p['patchElevation'],r,color='0')
                 ax.spines['right'].set_visible(False)
@@ -904,6 +905,8 @@ class probeData():
                 ax.set_xticks(p['patchElevation'])
                 ax.set_xlabel('Patch Elevation',fontsize='x-small')
                 ax.set_yticks([int(min(r)),int(max(r))])
+                
+                row += 2
     
     
     def getProtocolIndex(self, label):
