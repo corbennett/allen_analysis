@@ -838,7 +838,7 @@ class probeData():
         return protocol[0]
     
     
-    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'gratings', 'spots', 'checkerboard'], useCache=False):
+    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'gratings', 'gratings_ori', 'spots', 'checkerboard'], useCache=False):
         if units is None:
             units = self.units.keys()
         if type(units) is int:
@@ -847,8 +847,10 @@ class probeData():
         for pro in protocolsToRun:
             protocol = self.getProtocolIndex(pro)
      
-            if 'gratings' in pro:
-                self.analyzeGratings(units, protocol = protocol, useCache=useCache)
+            if 'gratings'==pro:
+                self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf')
+            elif 'gratings_ori'==pro:
+                self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori')
             elif 'sparseNoise' in pro:
                 self.findRF(units, protocol=protocol, useCache=useCache)
             elif 'spots' in pro:
