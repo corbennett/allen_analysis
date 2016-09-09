@@ -8,9 +8,10 @@ Created on Fri Jun 17 12:19:20 2016
 from __future__ import division
 import datetime, h5py, itertools, json, math, ntpath, os, shelve, shutil
 import numpy as np
-import scipy.signal
-import scipy.optimize
 import scipy.ndimage.filters
+import scipy.optimize
+import scipy.signal
+import scipy.stats
 from matplotlib import pyplot as plt 
 import matplotlib.gridspec as gridspec
 from PyQt4 import QtGui
@@ -296,8 +297,8 @@ class probeData():
         gridExtent = self.visstimData[str(protocol)]['gridBoundaries']
         
         if fit:
-            onCenter = np.full((len(units),2),np.nan)
-            offCenter = np.copy(onCenter)
+            onCenters = np.full((len(units),2),np.nan)
+            offCenters = np.copy(onCenters)
         
         for uindex, unit in enumerate(units):
             if ('rf' in self.units[str(unit)].keys()) and useCache:
@@ -350,15 +351,15 @@ class probeData():
                     for d in (gridOnSpikes_filter,gridOffSpikes_filter):
                         # params: x0 , y0, sigX, sigY, theta, amplitude
                         data = np.copy(d)-d.min()
-                        elev, azi = ypos/pixPerDeg, xpos/pixPerDeg
+                        elev, azim = ypos/pixPerDeg, xpos/pixPerDeg
                         i,j = np.unravel_index(np.argmax(data),data.shape)
-                        initialParams = (azi[j], elev[i], azi[1]-azi[0], elev[1]-elev[0], 0, data.max())
-                        fitParams.append(fitGauss2D(azi,elev,data,initialParams))
+                        initialParams = (azim[j], elev[i], azim[1]-azim[0], elev[1]-elev[0], 0, data.max())
+                        fitParams.append(fitGauss2D(azim,elev,data,initialParams))
                     onFit,offFit = fitParams
                     if onFit is not None and gridExtent[0]<onFit[0]<gridExtent[2] and gridExtent[1]<onFit[1]<gridExtent[3]:
-                        onCenter[uindex,:] = onFit[0:2]
+                        onCenters[uindex,:] = onFit[0:2]
                     if offFit is not None and gridExtent[0]<offFit[0]<gridExtent[2] and gridExtent[1]<offFit[1]<gridExtent[3]:
-                        offCenter[uindex,:] = offFit[0:2]
+                        offCenters[uindex,:] = offFit[0:2]
                     self.units[str(unit)]['rf']['onFit'] = onFit
                     self.units[str(unit)]['rf']['offFit'] = offFit
                                         
@@ -398,45 +399,78 @@ class probeData():
                 a2.yaxis.set_visible(False)
                 
         if plot and fit:
-            plt.figure()
+            # comparison of RF and probe position
+            onIncluded = np.logical_not(np.isnan(onCenters[:,0]))
+            offIncluded = np.logical_not(np.isnan(offCenters[:,0]))
+            unitsYPos = np.array(unitsYPos)
+            # __LinFit__ = (slope, intercept, r-value, p-value, stderror)
+            if np.count_nonzero(onIncluded)>1:
+                onLinFitAzim = scipy.stats.linregress(unitsYPos[onIncluded],onCenters[onIncluded,0])
+                onLinFitElev = scipy.stats.linregress(unitsYPos[onIncluded],onCenters[onIncluded,1])
+            if np.count_nonzero(offIncluded)>1:
+                offLinFitAzim = scipy.stats.linregress(unitsYPos[offIncluded],offCenters[offIncluded,0])
+                offLinFitElev = scipy.stats.linregress(unitsYPos[offIncluded],offCenters[offIncluded,1])
+            
+            probePos = [self.units[n]['ypos'] for n in self.units.keys()]
+            xlim = np.array([min(probePos)-10,max(probePos)+10])            
+            
+            # on azimuth
+            plt.figure(facecolor='w')
             ax = plt.subplot(2,2,1)
-            ax.plot(unitsYPos,onCenter[:,0],'ro')
+            if np.count_nonzero(onIncluded)>1:
+                ax.plot(xlim,onLinFitAzim[0]*xlim+onLinFitAzim[1],color='0.6')
+                ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(onLinFitAzim[2]**2,2))+', p = '+str(round(onLinFitAzim[3],2)),
+                        transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
+            ax.plot(unitsYPos,onCenters[:,0],'ro')
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
-            probePos = [self.units[n]['ypos'] for n in self.units.keys()]
-            xlim = [min(probePos),max(probePos)]
             ax.set_xlim(xlim)
-            ax.set_ylim(gridExtent[[0,2]])
+            ax.set_ylim(gridExtent[[0,2]]+[-5,5])
             ax.set_ylabel('Azimuth',fontsize='medium')
             ax.set_title('On',fontsize='medium')
             
+            # off azimuth
             ax = plt.subplot(2,2,2)
-            ax.plot(unitsYPos,offCenter[:,0],'bo')
+            if np.count_nonzero(offIncluded)>1:
+                ax.plot(xlim,offLinFitAzim[0]*xlim+offLinFitAzim[1],color='0.6')
+                ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(offLinFitAzim[2]**2,2))+', p = '+str(round(offLinFitAzim[3],2)),
+                        transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
+            ax.plot(unitsYPos,offCenters[:,0],'bo')
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
             ax.set_xlim(xlim)
-            ax.set_ylim(gridExtent[[0,2]])
+            ax.set_ylim(gridExtent[[0,2]]+[-5,5])
             ax.set_title('Off',fontsize='medium')
             
+            # on elevation
             ax = plt.subplot(2,2,3)
-            ax.plot(unitsYPos,onCenter[:,1],'ro')
+            if np.count_nonzero(onIncluded)>1:
+                ax.plot(xlim,onLinFitElev[0]*xlim+onLinFitElev[1],color='0.6')
+                ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(onLinFitElev[2]**2,2))+', p = '+str(round(onLinFitElev[3],2)),
+                        transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
+            ax.plot(unitsYPos,onCenters[:,1],'ro')
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
             ax.set_xlim(xlim)
-            ax.set_ylim(gridExtent[[1,3]])
+            ax.set_ylim(gridExtent[[1,3]]+[-5,5])
             ax.set_xlabel('Probe Y Pos',fontsize='medium')
             ax.set_ylabel('Elevation',fontsize='medium')
             
+            # off elevation
             ax = plt.subplot(2,2,4)
-            ax.plot(unitsYPos,offCenter[:,1],'bo')
+            if np.count_nonzero(offIncluded)>1:
+                ax.plot(xlim,offLinFitElev[0]*xlim+offLinFitElev[1],color='0.6')
+                ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(offLinFitElev[2]**2,2))+', p = '+str(round(offLinFitElev[3],2)),
+                        transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
+            ax.plot(unitsYPos,offCenters[:,1],'bo')
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
             ax.set_xlim(xlim)
-            ax.set_ylim(gridExtent[[1,3]])
+            ax.set_ylim(gridExtent[[1,3]]+[-5,5])
             ax.set_xlabel('Probe Y Pos',fontsize='medium')
     
     
