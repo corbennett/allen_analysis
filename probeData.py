@@ -275,14 +275,15 @@ class probeData():
         if units is None:
             units = self.units.keys()
         if type(units) is int:
-            units = [units]      
+            units = [units]
+        units, unitsYPos = self.getOrderedUnits(units)
+        
         if protocol is None:
             protocol = self.getProtocolIndex('sparseNoise')
         protocol = str(protocol)
         if plot:        
             plt.figure(figsize = (7.1, 3*len(units)))
-            gs = gridspec.GridSpec(len(units), 2)
-        units, pos = self.getOrderedUnits(units) 
+            gs = gridspec.GridSpec(len(units), 2) 
         
         minLatency *= self.sampleRate
         maxLatency *= self.sampleRate
@@ -293,6 +294,10 @@ class probeData():
         posHistory = self.visstimData[str(protocol)]['boxPositionHistory'][:]
         colorHistory = self.visstimData[str(protocol)]['boxColorHistory'][:, 0:1]        
         gridExtent = self.visstimData[str(protocol)]['gridBoundaries']
+        
+        if fit:
+            onCenter = np.full((len(units),2),np.nan)
+            offCenter = np.copy(onCenter)
         
         for uindex, unit in enumerate(units):
             if ('rf' in self.units[str(unit)].keys()) and useCache:
@@ -350,6 +355,10 @@ class probeData():
                         initialParams = (azi[j], elev[i], azi[1]-azi[0], elev[1]-elev[0], 0, data.max())
                         fitParams.append(fitGauss2D(azi,elev,data,initialParams))
                     onFit,offFit = fitParams
+                    if onFit is not None:
+                        onCenter[uindex,:] = onFit[0:2]
+                    if offFit is not None:
+                        offCenter[uindex,:] = offFit[0:2]
                     self.units[str(unit)]['rf']['onFit'] = onFit
                     self.units[str(unit)]['rf']['offFit'] = offFit
                                         
@@ -370,9 +379,9 @@ class probeData():
                     a1.plot(onFit[0],onFit[1],'kx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*onFit[:-1])
                     a1.plot(fitX,fitY,'k',linewidth=2)
-                    a1.set_xlim([gridExtent[0]-0.5,gridExtent[2]-0.5])
-                    a1.set_ylim([gridExtent[1]-0.5,gridExtent[3]-0.5])
-                a1.set_ylabel(str(unit),fontsize='x-small')
+                    a1.set_xlim(gridExtent[[0,2]]-0.5)
+                    a1.set_ylim(gridExtent[[1,3]]-0.5)
+                a1.set_ylabel(str(unit)+', ypos = '+str(round(unitsYPos[uindex])), fontsize='x-small')
            
                 a2 = plt.subplot(gs[uindex, 1])
                 im = a2.imshow(gridOffSpikes_filter, clim=[minVal, maxVal], interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
@@ -380,15 +389,49 @@ class probeData():
                     a2.plot(offFit[0],offFit[1],'kx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*offFit[:-1])
                     a2.plot(fitX,fitY,'k',linewidth=2)
-                    a2.set_xlim([gridExtent[0]-0.5,gridExtent[2]-0.5])
-                    a2.set_ylim([gridExtent[1]-0.5,gridExtent[3]-0.5])
+                    a2.set_xlim(gridExtent[[0,2]]-0.5)
+                    a2.set_ylim(gridExtent[[1,3]]-0.5)
                 if uindex == 0:
                     a1.set_title('on response')
                     a2.set_title('off response')
                 plt.colorbar(im, ax= [a1, a2], fraction=0.05, shrink=0.5, pad=0.05)
                 a2.yaxis.set_visible(False)
                 
-                plt.tight_layout()
+        if plot and fit:
+            plt.figure()
+            ax = plt.subplot(2,2,1)
+            ax.plot(unitsYPos,onCenter[:,0],'ro')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_ylim(gridExtent[[0,2]])
+            ax.set_ylabel('Azimuth',fontsize='medium')
+            ax.set_title('On',fontsize='medium')
+            
+            ax = plt.subplot(2,2,2)
+            ax.plot(unitsYPos,offCenter[:,0],'bo')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_ylim(gridExtent[[0,2]])
+            ax.set_title('Off',fontsize='medium')
+            
+            ax = plt.subplot(2,2,3)
+            ax.plot(unitsYPos,onCenter[:,1],'ro')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_ylim(gridExtent[[1,3]])
+            ax.set_xlabel('Probe Y Pos',fontsize='medium')
+            ax.set_ylabel('Elevation',fontsize='medium')
+            
+            ax = plt.subplot(2,2,4)
+            ax.plot(unitsYPos,offCenter[:,1],'bo')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_ylim(gridExtent[[1,3]])
+            ax.set_xlabel('Probe Y Pos',fontsize='medium')
     
     
     def analyzeGratings(self, units=None, trials = None, responseLatency = 0.05, plot=True, protocol=None, protocolType='stf', fit = True, useCache=True):
@@ -397,6 +440,8 @@ class probeData():
             units = self.units.keys()
         if type(units) is int:
             units = [units]
+        units, unitsYPos = self.getOrderedUnits(units) 
+            
         if protocol is None:
             if protocolType=='stf':
                 label = 'gratings'
@@ -404,7 +449,7 @@ class probeData():
                 label = 'gratings_ori'
             protocol = self.getProtocolIndex(label)
         protocol = str(protocol)
-        units, pos = self.getOrderedUnits(units)        
+               
         if plot:        
             plt.figure(figsize = (7.1, 3*len(units)))
             gs = gridspec.GridSpec(len(units), 3)                
@@ -538,9 +583,7 @@ class probeData():
                     plt.xlabel('tf')
                     plt.ylabel('spikes')
                     plt.xticks(tf)
-    
-                    plt.tight_layout()
-                
+              
                 elif protocolType=='ori':
                     a1 = plt.subplot(gs[uindex, :2])
                     plt.xlabel('ori')
@@ -553,8 +596,7 @@ class probeData():
                     theta = ori * (np.pi/180.0)
                     theta = np.append(theta, theta[0])
                     rho = np.append(oriMean, oriMean[0]) + spontRate
-                    a2.plot(theta, rho)
-                    
+                    a2.plot(theta, rho)                   
 
 
     def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=True):
@@ -563,10 +605,12 @@ class probeData():
             units = self.units.keys()
         if type(units) is int:
             units = [units]
+        units, unitsYPos = self.getOrderedUnits(units) 
+        
         if protocol is None:
             protocol = self.getProtocolIndex('spots')
         protocol = str(protocol)
-        units, pos = self.getOrderedUnits(units) 
+        
         if plot:        
             plt.figure(figsize = (11, 3*len(units)))
             gs = gridspec.GridSpec(len(units), 4)                        
@@ -686,8 +730,6 @@ class probeData():
                         plt.ylim(min(-0.1, np.min(values - error)), max(np.max(values + error), 0.1))
                         plt.locator_params(axis = 'y', nbins = 3)
                         a.set_xticks(responseDict[param]['tuningCurve']['paramValues'])
-                
-                plt.tight_layout()
     
                                         
     def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True):
@@ -701,7 +743,8 @@ class probeData():
                 print(str(u)+' not in units.keys()')
         if len(units)<1:
             return
-        units, pos = self.getOrderedUnits(units) 
+        units, unitsYPos = self.getOrderedUnits(units)
+        
         if protocol is None:
             protocol = self.getProtocolIndex('checkerboard')
         protocol = str(protocol)          
@@ -718,14 +761,13 @@ class probeData():
         trialEndSamples = p['frameSamples'][trialStartFrame+trialDuration]
         
         if plot:
-            plt.figure(facecolor='w')
+            plt.figure(figsize=(10,3*len(units)),facecolor='w')
             gs = gridspec.GridSpec(2*len(units),4)
-            row = 0
         bckgndSpeed = np.concatenate((-p['bckgndSpeed'][:0:-1],p['bckgndSpeed']))
         patchSpeed = np.concatenate((-p['patchSpeed'][:0:-1],p['patchSpeed']))
         resp = np.full((bckgndSpeed.size,patchSpeed.size,p['patchSize'].size,p['patchElevation'].size),np.nan)
         resp = np.tile(resp[:,:,:,:,None],math.ceil(trials.size/(resp.size-2*p['patchSpeed'].size*p['patchSize'].size))+3)
-        for u in units:
+        for uindex,u in enumerate(units):
             spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,self.units[str(u)]['times'][protocol])
             trialSpikeRate = spikesPerTrial/((1/p['frameRate'])*trialDuration)
             for n in trials:
@@ -749,7 +791,7 @@ class probeData():
             
             if plot:
                 # plot response vs background and patch speed (averaging over patch size and elevation)
-                ax = plt.subplot(gs[row:row+2,0:2])
+                ax = plt.subplot(gs[uindex:uindex+2,0:2])
                 respMat = np.nanmean(np.nanmean(meanResp,axis=3),axis=2)
                 cLim = max(1,np.max(abs(respMat)))
                 plt.imshow(respMat,cmap='bwr',clim=(-cLim,cLim),interpolation='none',origin='lower')
@@ -770,7 +812,7 @@ class probeData():
                 cb.ax.tick_params(length=0,labelsize='xx-small')
                 
                 # plot mean response across background and patch speed axes
-                ax = plt.subplot(gs[row,2])
+                ax = plt.subplot(gs[uindex,2])
                 bck = np.nanmean(respMat,axis=0)
                 pch = np.nanmean(respMat,axis=1)
                 plt.plot(bckgndSpeed,bck,color='0.6',label='bckgnd mean')
@@ -787,7 +829,7 @@ class probeData():
                 plt.legend(loc='upper right',frameon=False,fontsize='x-small')
                 
                 # plot response to background or patch alone
-                ax = plt.subplot(gs[row+1,2])
+                ax = plt.subplot(gs[uindex+1,2])
                 bck = respMat[patchSpeed.size//2,:]
                 pch = respMat[:,bckgndSpeed.size//2]
                 plt.plot(bckgndSpeed,bck,color='0.6',label='bcknd only')
@@ -802,7 +844,7 @@ class probeData():
                 plt.legend(loc='upper right',frameon=False,fontsize='x-small')
                 
                 # plot response vs patch size (averaging across patch speed and elevation)
-                ax = plt.subplot(gs[row,3])
+                ax = plt.subplot(gs[uindex,3])
                 r = [np.nanmean(meanResp[patchSpeed!=0,bckgndSpeed.size//2,k,:]) for k in range(p['patchSize'].size)]
                 plt.plot(p['patchSize'],r,color='0')
                 ax.spines['right'].set_visible(False)
@@ -813,7 +855,7 @@ class probeData():
                 ax.set_yticks([int(min(r)),int(max(r))])
                 
                 # plot response vs patch elevation (averaging across patch speed and size)
-                ax = plt.subplot(gs[row+1,3])
+                ax = plt.subplot(gs[uindex+1,3])
                 r = [np.nanmean(meanResp[patchSpeed!=0,bckgndSpeed.size//2,:,l]) for l in range(p['patchElevation'].size)]
                 plt.plot(p['patchElevation'],r,color='0')
                 ax.spines['right'].set_visible(False)
@@ -822,10 +864,6 @@ class probeData():
                 ax.set_xticks(p['patchElevation'])
                 ax.set_xlabel('Patch Elevation',fontsize='x-small')
                 ax.set_yticks([int(min(r)),int(max(r))])
-
-                row += 2
-        if plot:
-            plt.tight_layout()
     
     
     def getProtocolIndex(self, label):
@@ -862,7 +900,7 @@ class probeData():
                 
                 
     def getOrderedUnits(self,units=None):
-        # orderedUnits, position = self.getOrderedUnits(units)
+        # orderedUnits, yPosition = self.getOrderedUnits(units)
         if units is None:
             units = self.units.keys()
         if not isinstance(units,list):
@@ -1019,7 +1057,7 @@ def saveFile():
 
 
 def getKwdInfo(dirPath=None):
-    # kwdFiles,nSamples = getKwdFiles()
+    # kwdFiles, nSamples = getKwdInfo()
     # returns kwd file paths and number of samples in each file ordered by file start time
     if dirPath is None:
         dirPath = getDir()
