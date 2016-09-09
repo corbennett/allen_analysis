@@ -355,9 +355,9 @@ class probeData():
                         initialParams = (azi[j], elev[i], azi[1]-azi[0], elev[1]-elev[0], 0, data.max())
                         fitParams.append(fitGauss2D(azi,elev,data,initialParams))
                     onFit,offFit = fitParams
-                    if onFit is not None:
+                    if onFit is not None and gridExtent[0]<onFit[0]<gridExtent[2] and gridExtent[1]<onFit[1]<gridExtent[3]:
                         onCenter[uindex,:] = onFit[0:2]
-                    if offFit is not None:
+                    if offFit is not None and gridExtent[0]<offFit[0]<gridExtent[2] and gridExtent[1]<offFit[1]<gridExtent[3]:
                         offCenter[uindex,:] = offFit[0:2]
                     self.units[str(unit)]['rf']['onFit'] = onFit
                     self.units[str(unit)]['rf']['offFit'] = offFit
@@ -404,6 +404,9 @@ class probeData():
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            probePos = [self.units[n]['ypos'] for n in self.units.keys()]
+            xlim = [min(probePos),max(probePos)]
+            ax.set_xlim(xlim)
             ax.set_ylim(gridExtent[[0,2]])
             ax.set_ylabel('Azimuth',fontsize='medium')
             ax.set_title('On',fontsize='medium')
@@ -413,6 +416,7 @@ class probeData():
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_xlim(xlim)
             ax.set_ylim(gridExtent[[0,2]])
             ax.set_title('Off',fontsize='medium')
             
@@ -421,6 +425,7 @@ class probeData():
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_xlim(xlim)
             ax.set_ylim(gridExtent[[1,3]])
             ax.set_xlabel('Probe Y Pos',fontsize='medium')
             ax.set_ylabel('Elevation',fontsize='medium')
@@ -430,6 +435,7 @@ class probeData():
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_xlim(xlim)
             ax.set_ylim(gridExtent[[1,3]])
             ax.set_xlabel('Probe Y Pos',fontsize='medium')
     
