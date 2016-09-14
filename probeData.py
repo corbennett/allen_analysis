@@ -17,6 +17,8 @@ import matplotlib.gridspec as gridspec
 from PyQt4 import QtGui
 
 
+dataDir = 'C:\Users\SVC_CCG\Desktop\Data'
+
 class probeData():
     
     def __init__(self):
@@ -26,7 +28,7 @@ class probeData():
         self.wheelChannel = 134
         self.diodeChannel = 135
         self.sampleRate = 30000     
-   
+
 
     def loadKwd(self, filePath):
                 
@@ -46,8 +48,7 @@ class probeData():
         
         
     def loadExperiment(self):
-        dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
-        self.kwdFileList, nsamps = getKwdInfo(dirPath=dataDir)
+        self.kwdFileList, nsamps = getKwdInfo()
         filelist = self.kwdFileList
         filePaths = [os.path.dirname(f) for f in filelist]        
         
@@ -565,8 +566,13 @@ class probeData():
                 for oindex in range(len(oriList)):
                     oriMean[oindex] = np.mean(np.array(oriList[oindex]))
                     oriError[oindex] = np.std(np.array(oriList[oindex]))
-                
                 oriMean -= spontRate
+                
+                if protocolType=='ori':
+                    dsi,prefDir = getDSI(oriMean+spontRate,ori)
+                    osi,prefOri = getDSI(oriMean+spontRate,2*ori)
+                    prefOri /= 2
+                
                 if fit and protocolType=='stf':
                     # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude
                     if stfMat.max()<0:
@@ -636,7 +642,8 @@ class probeData():
                     theta = ori * (np.pi/180.0)
                     theta = np.append(theta, theta[0])
                     rho = np.append(oriMean, oriMean[0]) + spontRate
-                    a2.plot(theta, rho)                   
+                    a2.plot(theta, rho)
+                    a2.set_title('DSI = '+str(round(dsi,2))+', prefDir = '+str(round(prefDir))+'\n'+', OSI = '+str(round(osi,2))+', prefOri = '+str(round(prefOri)),fontsize='x-small')
 
 
     def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=True):
@@ -1085,11 +1092,11 @@ def getFile():
     return QtGui.QFileDialog.getOpenFileName(None,'Choose File')
     
     
-def getDir():
+def getDir(rootDir=''):
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory') 
+    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory',rootDir) 
     
 
 def saveFile():
@@ -1102,8 +1109,8 @@ def saveFile():
 def getKwdInfo(dirPath=None):
     # kwdFiles, nSamples = getKwdInfo()
     # returns kwd file paths and number of samples in each file ordered by file start time
-    if dirPath is None:
-        dirPath = getDir()
+    if dirPath is None:    
+        dirPath = getDir(dataDir)
         if dirPath == '':
             return
     kwdFiles = []
@@ -1248,6 +1255,25 @@ def getStfContour(sf,tf,fitParams):
         contourLine = np.concatenate((contourLine,contourLine[0,:][None,:]),axis=0)
     x,y = (np.log2(contourLine)-np.log2([sfIntp[0],tfIntp[0]])).T-1
     return x,y
+    
+    
+def getDSI(resp,theta):
+    theta = np.copy(theta)*math.pi/180
+    sumX = np.sum(resp*np.cos(theta))
+    sumY = np.sum(resp*np.sin(theta))
+    dsi = np.sqrt(sumX**2+sumY**2)/resp.sum()
+    # corbett's beautiful method
+    prefTheta = ((math.atan2(sumY,sumX)*180/math.pi) + 360)%360
+# sam's eqivalent ugly method
+#    prefTheta = math.atan(sumY/sumX)*180/math.pi
+#    if sumX<0:
+#        if sumY>0:
+#            prefTheta += 180
+#        else:
+#            prefTheta += 180
+#    elif sumY<0:
+#        prefTheta += 360
+    return dsi, prefTheta
 
 
    
