@@ -32,6 +32,7 @@ class makeGratings(VisStimControl):
         self.sf = [0.02, 0.04, 0.08, 0.16, 0.32]            #cycLes per degree
         self.contrast = [1]
         self.interleavedGrayScreen = True
+        
        
     def checkParameterValues(self):
         for param in ['ori', 'tf', 'sf', 'contrast', 'phase', 'size', 'posx', 'posy']:
@@ -75,9 +76,9 @@ class makeGratings(VisStimControl):
                 while nframes < self.preTime + self.laserPreFrames + self.stimTime + self.laserPostFrames + self.postTime:
                     if nframes == self.preTime:
                         self.setLaserOn(self._parameterCombos[nsweeps][-1])
-                    if nframes == self.preTime + self.preLaserFrames:
+                    if nframes == self.preTime + self.laserPreFrames:
                         self.stimStartFrames.append(nTotalFrames)
-                    if (self.preTime + self.preLaserFrames <= nframes < self.preTime + self.preLaserFrames + self.stimTime):
+                    if (self.preTime + self.laserPreFrames <= nframes < self.preTime + self.laserPreFrames + self.stimTime):
                         self._grating.draw()
                         phase_advance = self._grating.tf/self.frameRate #fractions of a cycle to advance every refresh
                         self._grating.setPhase(phase_advance, '+')

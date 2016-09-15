@@ -18,13 +18,13 @@ class MovingCheckerboard(VisStimControl):
         VisStimControl.__init__(self)
         self.setDefaultImageSizeAndPosition()
         self.moveLikeOpticFlow = True # left/right bckgnd move oppositely for horizontal motion
-        self.squareSize = 2 # degrees
+        self.squareSize = 1 # degrees
         self.bckgndSpeed = [0,10,30,90] # degrees/s
         self.bckgndDir = [0,180] # list containing any of [0,90,180,270]
-        self.patchSize = [8,16] # degrees; even multiple of squareSize
+        self.patchSize = [10] # degrees; even multiple of squareSize
         self.patchSpeed = [0,10,30,90] # degrees/s
         self.patchDir = [0,180] # list containing any of [0,90,180,270]
-        self.patchElevation = [0] # for horizontal motion trials
+        self.patchElevation = [0,40] # for horizontal motion trials
         self.patchAzimuth = [50] # for vertical motion trials
         self.interTrialInterval = [0.5,0.5] # [min,max] seconds
         self.numLoops = 5

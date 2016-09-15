@@ -162,7 +162,11 @@ class VisStimControl():
         self._digOutputs.WriteBit(0,level)
         
     def initLaser(self):
-        if self.laser=='Blue':
+        if self.laser is None:
+            self.laserPower = [0]
+            self.laserPreFrames = 0
+            self.laserPostFrames = 0
+        elif self.laser=='Blue':
             if min(self.laserPower<0) or max(self.laserPower)>1:
                 raise ValueError('blue laser power must be 0 to 1 V')
             self._laserPort = serial.Serial()
@@ -185,6 +189,8 @@ class VisStimControl():
             self._laserPort.parity = serial.PARITY_NONE
             self._laserPort.open()
             self.setLaserOff()
+        else:
+            raise ValueError('laser must be Blue, Orange, or None')
     
     def closeLaser(self):
         if self.laser is not None:
