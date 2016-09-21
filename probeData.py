@@ -47,7 +47,7 @@ class probeData():
         return datDict
         
         
-    def loadExperiment(self):
+    def loadExperiment(self, loadRunningData=False):
         self.kwdFileList, nsamps = getKwdInfo()
         filelist = self.kwdFileList
         filePaths = [os.path.dirname(f) for f in filelist]        
@@ -72,6 +72,7 @@ class probeData():
             
             visStimFound = False
             eyeDataFound = False
+            self.behaviorData[str(pro)] = {}
             for f in files:
                 if 'VisStim' in f:
                     self.getVisStimData(os.path.join(proPath, f), protocol=pro)
@@ -86,7 +87,10 @@ class probeData():
                 
             ttlFile = [f for f in files if f.endswith('kwe')][0]             
             self.getTTLData(filePath=os.path.join(proPath, ttlFile), protocol=pro)
-                    
+            
+            if loadRunningData:
+                self.behaviorData[str(pro)]['running'] = self.decodeWheel(self.d[pro]['data'][::500, self.wheelChannel]*self.d[pro]['gains'][self.wheelChannel])
+            
             if not visStimFound:
                 print('No vis stim data found for ' + os.path.basename(proPath))
             if not eyeDataFound:
@@ -137,7 +141,6 @@ class probeData():
         if filePath is None:        
             filePath = getFile()
         
-        self.behaviorData[str(protocol)] = {}        
         dataFile = h5py.File(filePath)
         frameTimes = dataFile['frameTimes'][:]
         frameInt = 1/60.0
@@ -181,24 +184,25 @@ class probeData():
         self.channelMapping = self.channelMapping[np.where(self.channelMapping > 0)] - 1
     
     
-    def decodeWheel(self, kernelLength = 0.5, protocol=0):
-        wheelData = -self.data[str(protocol)]['data'][:, self.wheelChannel] * self.gains[self.wheelChannel]
+    def decodeWheel(self, wheelData, kernelLength = 0.5, wheelSampleRate = 60.0):
+    
+        sampleRate = wheelSampleRate
         wheelData = wheelData - np.min(wheelData)
         wheelData = 2*np.pi*wheelData/np.max(wheelData)
-      
-        smoothFactor = 500.0       
-
-        wD = wheelData
-        angularWheelData = np.arctan2(np.sin(wD), np.cos(wD))
+          
+        smoothFactor = sampleRate/60.0       
+        angularWheelData = np.arctan2(np.sin(wheelData), np.cos(wheelData))
         angularWheelData = np.convolve(angularWheelData, np.ones(smoothFactor), 'same')/smoothFactor
-       
+        
+        artifactThreshold = (100.0/sampleRate)/7.6      #reasonable bound for how far (in radians) a mouse could move in one sample point (assumes top speed of 100 cm/s)
         angularDisplacement = (np.diff(angularWheelData) + np.pi)%(2*np.pi) - np.pi
-        angularDisplacement[np.abs(angularDisplacement) > 0.001] = 0
-        self.wheelData = np.convolve(angularDisplacement, np.ones(kernelLength*self.sampleRate), 'same')/(kernelLength*self.sampleRate)
-        self.wheelData *= 7.6*self.sampleRate
-        self.wheelData = np.insert(self.wheelData, 0, self.wheelData[0])
-
-
+        angularDisplacement[np.abs(angularDisplacement) > artifactThreshold ] = 0
+        wheelData = np.convolve(angularDisplacement, np.ones(kernelLength*sampleRate), 'same')/(kernelLength*sampleRate)
+        wheelData *= 7.6*sampleRate
+        wheelData = np.insert(wheelData, 0, wheelData[0])
+        
+        return wheelData
+        
     def filterChannel(self, chan, cutoffFreqs, protocol=0):
         Wn = np.array(cutoffFreqs)/(self.sampleRate/2)        
         b,a = scipy.signal.butter(4, Wn, btype='bandpass')
@@ -276,9 +280,14 @@ class probeData():
     def findRF(self, units=None, sigma = 2, plot = True, minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=None, fit=True, useCache=True):
         if units is None:
             units = self.units.keys()
-        if type(units) is int:
+        if not isinstance(units,list):
             units = [units]
-        units, unitsYPos = self.getOrderedUnits(units)
+        for u in units[:]:
+            if str(u) not in self.units.keys():
+                units.remove(u)
+                print(str(u)+' not in units.keys()')
+        if len(units)<1:
+            return
         
         if protocol is None:
             protocol = self.getProtocolIndex('sparseNoise')
@@ -399,7 +408,7 @@ class probeData():
                 plt.colorbar(im, ax= [a1, a2], fraction=0.05, shrink=0.5, pad=0.05)
                 a2.yaxis.set_visible(False)
                 
-        if plot and fit:
+        if plot and fit and len(units)>1:
             # comparison of RF and probe position
             onIncluded = np.logical_not(np.isnan(onCenters[:,0]))
             offIncluded = np.logical_not(np.isnan(offCenters[:,0]))
@@ -479,8 +488,15 @@ class probeData():
         
         if units is None:
             units = self.units.keys()
-        if type(units) is int:
+        if not isinstance(units,list):
             units = [units]
+        for u in units[:]:
+            if str(u) not in self.units.keys():
+                units.remove(u)
+                print(str(u)+' not in units.keys()')
+        if len(units)<1:
+            return
+            
         units, unitsYPos = self.getOrderedUnits(units) 
             
         if protocol is None:
@@ -647,11 +663,17 @@ class probeData():
 
 
     def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=True):
-        
         if units is None:
             units = self.units.keys()
-        if type(units) is int:
+        if not isinstance(units,list):
             units = [units]
+        for u in units[:]:
+            if str(u) not in self.units.keys():
+                units.remove(u)
+                print(str(u)+' not in units.keys()')
+        if len(units)<1:
+            return
+            
         units, unitsYPos = self.getOrderedUnits(units) 
         
         if protocol is None:
@@ -915,7 +937,41 @@ class probeData():
                 
                 row += 2
     
-    
+    def analyzeRunning(self, units, protocol):
+        if units is None:
+            units = self.units.keys()
+        if not isinstance(units,list):
+            units = [units]
+        for u in units[:]:
+            if str(u) not in self.units.keys():
+                units.remove(u)
+                print(str(u)+' not in units.keys()')
+        if len(units)<1:
+            return
+        
+        kernelWidth=500.0
+        for uindex, u in enumerate(units):
+            spikes = self.units[str(u)]['times'][str(protocol)]
+            wd = -self.behaviorData[str(protocol)]['running']
+            fh, _ = np.histogram(spikes, np.arange(0, (wd.size+1)*int(kernelWidth), int(kernelWidth)))
+            frc = np.convolve(fh, np.ones(kernelWidth),'same')/kernelWidth
+            
+            speedBins = [0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
+            binnedSpeed = np.digitize(wd, speedBins)
+            fr_binned = []
+            fr_std = []
+            for sbin, _ in enumerate(speedBins):
+                binIndices = binnedSpeed==sbin
+                #print binIndices
+                fr_thisbin = np.mean(frc[binIndices])
+                fr_stdThisBin = np.std(frc[binIndices])
+                fr_binned.append(fr_thisbin)
+                fr_std.append(fr_stdThisBin)
+            
+            self.units[str(u)]['runModulation'] = {}
+            self.units[str(u)]['runModulation'][str(protocol)] = [speedBins, np.array(fr_binned), np.array(fr_std)] 
+                        
+        
     def getProtocolIndex(self, label):
         protocol = []
         protocol.extend([i for i,f in enumerate(self.kwdFileList) if ntpath.dirname(f).endswith(label)])
@@ -1132,15 +1188,18 @@ def makeDat(kwdFiles):
     dirPath = os.path.dirname(os.path.dirname(kwdFiles[0]))
     datFilePath = os.path.join(dirPath,os.path.basename(dirPath)+'.dat')
     datFile = open(datFilePath,'wb')
-    for filePath in kwdFiles:
+    for filenum, filePath in enumerate(kwdFiles):
         kwd = h5py.File(filePath,'r')
         dset = kwd['recordings']['0']['data']
         i = 0
         while i<dset.shape[0]:
             (dset[i:i+dset.chunks[0],:128]).tofile(datFile)                        
             i += dset.chunks[0]
+        print('Completed file ' + str(filenum) + ' of ' + str(len(kwdFiles)))
     datFile.close()
-    shutil.copy(datFilePath,r'\\10.128.38.3\data_local_1\corbett')
+    copyPath = r'\\10.128.38.3\data_local_1\corbett'
+    print('copying dat file to ' + copyPath)
+    shutil.copy(datFilePath,copyPath)
     
     
 def gauss2D(xyTuple,x0,y0,sigX,sigY,theta,amplitude):
