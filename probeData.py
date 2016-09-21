@@ -289,6 +289,8 @@ class probeData():
         if len(units)<1:
             return
         
+        units, unitsYPos = self.getOrderedUnits(units)
+        
         if protocol is None:
             protocol = self.getProtocolIndex('sparseNoise')
         protocol = str(protocol)
