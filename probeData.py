@@ -249,22 +249,22 @@ class probeData():
         return aligned
                 
             
-    def parseRunning(self, runThresh = 5.0, statThresh = 1.0, trialStarts = None, trialEnds = None):
-        if not hasattr(self, 'wheelData'):
-            self.decodeWheel()
-            
-        self.runningPoints = np.where(np.abs(self.wheelData) > runThresh)[0]
-        self.stationaryPoints = np.where(np.abs(self.wheelData) < statThresh)[0]
+    def parseRunning(self, protocol, runThresh = 5.0, statThresh = 1.0, trialStarts = None, trialEnds = None):
+        if not 'running' in self.behaviorData[str(protocol)]:
+            self.decodeWheel(self.d[protocol]['data'][::500, self.wheelChannel]*self.d[protocol]['gains'][self.wheelChannel])
+        
+        wheelData = self.behaviorData[str(protocol)]['running']
         
         if trialStarts is not None:
-            self.runningTrials = []
-            self.stationaryTrials = []
+            runningTrials = []
+            stationaryTrials = []
             for trial in range(trialStarts.size):
-                trialSpeed = np.mean(self.wheelData[trialStarts[trial]:trialEnds[trial]])
+                trialSpeed = np.mean(wheelData[trialStarts[trial]:trialEnds[trial]])
                 if trialSpeed >= runThresh:
-                    self.runningTrials.append(trial)
+                    runningTrials.append(trial)
                 elif trialSpeed <= statThresh:
-                    self.stationaryTrials.append(trial)
+                    stationaryTrials.append(trial)
+        return stationaryTrials, runningTrials
      
                
     def findSpikesPerTrial(self, trialStarts, trialEnds, spikes): 
@@ -936,7 +936,7 @@ class probeData():
                 
                 row += 2
     
-    def analyzeRunning(self, units, protocol):
+    def analyzeRunning(self, units, protocol, plot=True):
         if units is None:
             units = self.units.keys()
         if not isinstance(units,list):
@@ -948,6 +948,10 @@ class probeData():
         if len(units)<1:
             return
         
+        if plot:
+            plt.figure(figsize=(10,3*len(units)),facecolor='w')
+            gs = gridspec.GridSpec(len(units),1)
+                        
         kernelWidth=500.0
         for uindex, u in enumerate(units):
             spikes = self.units[str(u)]['times'][str(protocol)]
@@ -967,8 +971,16 @@ class probeData():
                 fr_binned.append(fr_thisbin)
                 fr_std.append(fr_stdThisBin)
             
+            fr_binned = np.array(fr_binned)
+            fr_std = np.array(fr_std)
             self.units[str(u)]['runModulation'] = {}
-            self.units[str(u)]['runModulation'][str(protocol)] = [speedBins, np.array(fr_binned), np.array(fr_std)]
+            self.units[str(u)]['runModulation'][str(protocol)] = [speedBins, fr_binned, fr_std] 
+            
+            if plot:
+                ax = plt.subplot(gs[uindex, 0])
+                ax.plot(speedBins, fr_binned)
+#                ax.set_xscale('log', basex=2)
+                plt.fill_between(speedBins, fr_binned+fr_std, fr_binned-fr_std, alpha=0.3)
             
     
     def plotRaster(self,unit,protocol,startSamples=None,windowDur=None,paramNames=None):
@@ -1037,7 +1049,7 @@ class probeData():
         return protocol[0]
     
     
-    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'gratings', 'gratings_ori', 'spots', 'checkerboard'], useCache=False):
+    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'gratings', 'gratings_ori', 'spots', 'checkerboard'], splitRunning = False, useCache=False):
         if units is None:
             units = self.units.keys()
         if type(units) is int:
@@ -1045,17 +1057,71 @@ class probeData():
         
         for pro in protocolsToRun:
             protocol = self.getProtocolIndex(pro)
-     
+            
             if 'gratings'==pro:
-                self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf')
+                if splitRunning:
+                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames']
+                    trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['stimTime']
+                    trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
+                    trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
+                    statTrials, runTrials = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                    
+                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials)
+                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials)
+                else:
+                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf')
+
             elif 'gratings_ori'==pro:
-                self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori')
+                if splitRunning:
+                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames']
+                    trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['stimTime']
+                    trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
+                    trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
+                    statTrials, runTrials = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                    
+                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials)
+                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials)
+                else:
+                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori')
+
             elif 'sparseNoise' in pro:
-                self.findRF(units, protocol=protocol, useCache=useCache)
+                if splitRunning:
+                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames']
+                    trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['boxDuration']
+                    trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
+                    trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
+                    statTrials, runTrials = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                    
+                    self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials)
+                    self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials)
+                else:                    
+                    self.findRF(units, protocol=protocol, useCache=useCache)
             elif 'spots' in pro:
-                self.analyzeSpots(units, protocol=protocol, useCache=useCache)
+                if splitRunning:
+                    trialStartFrames = self.visstimData[str(protocol)]['trialStartFrame']
+                    trialDuration = (self.visstimData[str(protocol)]['trialNumFrames']).astype(np.int)
+                    trialEndFrames = trialStartFrames + trialDuration
+                    frameSamples = self.visstimData[str(protocol)]['frameSamples']     
+                    trialStarts = frameSamples[trialStartFrames]
+                    trialEnds = frameSamples[trialEndFrames]
+                    statTrials, runTrials = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                    
+                    self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=statTrials)
+                    self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials)
+                else:
+                    self.analyzeSpots(units, protocol=protocol, useCache=useCache)
             elif 'checkerboard' in pro:
-                self.analyzeCheckerboard(units, protocol=protocol)
+                if splitRunning:
+                    trialStartFrame = self.visstimData[str(protocol)]['trialStartFrame']
+                    trialDuration = (self.visstimData[str(protocol)]['trialNumFrames']).astype(int)
+                    trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame]
+                    trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame+trialDuration]
+                    statTrials, runTrials = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                    
+                    self.analyzeCheckerboard(units, protocol=protocol, trials=statTrials)
+                    self.analyzeCheckerboard(units, protocol=protocol, trials=runTrials)
+                else:
+                    self.analyzeCheckerboard(units, protocol=protocol)
             else:
                 print("Couldn't find analysis script for protocol type:", pro)
                 
