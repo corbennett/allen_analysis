@@ -267,13 +267,10 @@ class probeData():
                     self.stationaryTrials.append(trial)
      
                
-    def findSpikesPerTrial(self, trialStarts, trialEnds, spikes):
-        
+    def findSpikesPerTrial(self, trialStarts, trialEnds, spikes): 
         spikesPerTrial = np.zeros(trialStarts.size)
         for trialNum in range(trialStarts.size):
-            trialSamples = np.arange(trialStarts[trialNum], trialEnds[trialNum])    
-            spikesPerTrial[trialNum] = np.intersect1d(trialSamples, spikes).size
-        
+            spikesPerTrial[trialNum] = np.count_nonzero(np.logical_and(spikes>=trialStarts[trialNum],spikes<=trialEnds[trialNum]))
         return spikesPerTrial
         
             
@@ -343,10 +340,12 @@ class probeData():
                     posOffSamples = self.visstimData[str(protocol)]['frameSamples'][posOffFrames]
                     
                     for p in posOnSamples:
-                        gridOnSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
+                        # gridOnSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
+                        gridOnSpikes[index] += np.count_nonzero(np.logical_and(spikes>=p+minLatency,spikes<p+maxLatency))
                     
                     for p in posOffSamples:
-                        gridOffSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
+                        # gridOffSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
+                        gridOffSpikes[index] += np.count_nonzero(np.logical_and(spikes>=p+minLatency,spikes<p+maxLatency))
                     
                     gridOnSpikes[index] = gridOnSpikes[index]/float(posOnTrials.size)
                     gridOffSpikes[index] = gridOffSpikes[index]/float(posOffTrials.size)
@@ -522,7 +521,15 @@ class probeData():
         tf = np.unique(trialTF)
         ori = np.unique(trialOri)
                 
-        responseLatency *= self.sampleRate
+        responseLatency = int(responseLatency*self.sampleRate)
+        
+        if trials is None:
+            trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
+        
+        trialStartFrame = self.visstimData[str(protocol)]['stimStartFrames'][trials]
+        trialDuration = self.visstimData[str(protocol)]['stimTime']
+        trialStartSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame]+responseLatency
+        trialEndSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame + trialDuration]+responseLatency
         
         for uindex, unit in enumerate(units):
             if ('stf' in self.units[str(unit)].keys()) and protocolType=='stf' and useCache:
@@ -534,30 +541,20 @@ class probeData():
                 oriList = self.units[str(unit)]['ori']['tuningCurve']
             else:
                 self.units[str(unit)][protocolType] = {}
-                spikes = self.units[str(unit)]['times'][str(protocol)]
                 
                 #spontaneous firing rate taken from interspersed gray trials
                 spontRate = 0
                 spontCount = 0
                 
                 stfMat = np.zeros([tf.size, sf.size])
-                stfCountMat = np.zeros([sf.size, tf.size])
+                stfCountMat = np.zeros([tf.size, sf.size])
                 oriList = [[] for i in range(ori.size)]
-                
-                #find and record spikes for every trial
-                trialResponse = np.zeros(trialSF.size)
-                for trial in range(trialSF.size-1):
-                    trialStartFrame = self.visstimData[str(protocol)]['stimStartFrames'][trial]
-                    trialEndFrame = trialStartFrame + self.visstimData[str(protocol)]['stimTime']
-                    trialSamples = np.arange(self.visstimData[str(protocol)]['frameSamples'][trialStartFrame] + responseLatency, self.visstimData[str(protocol)]['frameSamples'][trialEndFrame] + responseLatency)    
                     
-                    spikesThisTrial = np.intersect1d(spikes, trialSamples).size
-                    trialResponse[trial] = self.sampleRate*spikesThisTrial/(float(trialSamples.size))
+                spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,self.units[str(unit)]['times'][protocol])
+                trialResponse = spikesPerTrial/((trialEndSamples-trialStartSamples)/self.sampleRate)
                 
                 
                 #make STF mat for specified trials (default all trials)
-                if trials is None:
-                    trials = np.arange(trialSF.size - 1)
                 
                 for trial in trials:
                     spikeRateThisTrial = trialResponse[trial]
@@ -971,7 +968,63 @@ class probeData():
                 fr_std.append(fr_stdThisBin)
             
             self.units[str(u)]['runModulation'] = {}
-            self.units[str(u)]['runModulation'][str(protocol)] = [speedBins, np.array(fr_binned), np.array(fr_std)] 
+            self.units[str(u)]['runModulation'][str(protocol)] = [speedBins, np.array(fr_binned), np.array(fr_std)]
+            
+    
+    def plotRaster(self,unit,protocol,startSamples=None,windowDur=None,paramNames=None):
+        protocol = str(protocol)
+        params = []
+        if startSamples is None:
+            p = self.visstimData[str(protocol)]
+            try:
+                trialStartFrame = p['trialStartFrame']
+            except:
+                trialStartFrame = p['stimStartFrames']
+            startSamples = p['frameSamples'][trialStartFrame]
+            if windowDur is None:
+                windowDur = np.diff(startSamples)
+            startSamples = startSamples[:-1]
+            if paramNames is not None:
+                for name in paramNames:
+                    params.append(p[name][:-1])
+        else:
+            windowDur = [windowDur for _ in startSamples]
+        spikes = self.units[str(unit)]['times'][protocol]
+        
+        plt.figure()
+        ax = plt.subplot(1,1,1)
+        if len(params)<1:
+            self.appendToRaster(ax,spikes,startSamples,windowDur)
+        else:
+            self.parseRaster(ax,spikes,startSamples,windowDur,params)
+        ax.set_xlim([0,max(windowDur)/self.sampleRate])
+        ax.set_ylim([-0.5,startSamples.size+0.5])
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel('Trial')
+        ax.set_title('Unit '+str(unit))
+        return ax
+        
+        
+    def parseRaster(self,ax,spikes,startSamples,windowDur,params,paramIndex=0,trialsIn=None,row=0):
+        if trialsIn is None:
+            trialsIn = range(len(startSamples))
+        for val in np.unique(params[paramIndex]):
+            trialIndex = np.intersect1d(trialsIn,np.where(params[paramIndex]==val)[0])
+            if paramIndex<len(params)-1:
+                row = self.parseRaster(ax,spikes,startSamples,windowDur,params,paramIndex+1,trialIndex,row)
+            else:
+                row = self.appendToRaster(ax,spikes,startSamples,windowDur,trialIndex,row)
+        return row
+
+
+    def appendToRaster(self,ax,spikes,startSamples,windowDur,trialIndex=None,row=0):
+        if trialIndex is None:
+            trialIndex = range(len(startSamples))
+        for i in trialIndex:
+            spikeTimes = (spikes[np.logical_and(spikes>startSamples[i],spikes<startSamples[i]+windowDur[i])]-startSamples[i])/self.sampleRate
+            ax.vlines(spikeTimes,row-0.4,row+0.4,'k')
+            row += 1
+        return row
                         
         
     def getProtocolIndex(self, label):
