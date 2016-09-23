@@ -276,17 +276,7 @@ class probeData():
         
             
     def findRF(self, units=None, sigma = 2, plot = True, minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=None, fit=True, useCache=True):
-        if units is None:
-            units = self.units.keys()
-        if not isinstance(units,list):
-            units = [units]
-        for u in units[:]:
-            if str(u) not in self.units.keys():
-                units.remove(u)
-                print(str(u)+' not in units.keys()')
-        if len(units)<1:
-            return
-        
+
         units, unitsYPos = self.getOrderedUnits(units)
         
         if protocol is None:
@@ -487,17 +477,6 @@ class probeData():
     
     
     def analyzeGratings(self, units=None, trials = None, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', fit = True, useCache=True):
-        
-        if units is None:
-            units = self.units.keys()
-        if not isinstance(units,list):
-            units = [units]
-        for u in units[:]:
-            if str(u) not in self.units.keys():
-                units.remove(u)
-                print(str(u)+' not in units.keys()')
-        if len(units)<1:
-            return
             
         units, unitsYPos = self.getOrderedUnits(units) 
             
@@ -663,17 +642,7 @@ class probeData():
 
 
     def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=True):
-        if units is None:
-            units = self.units.keys()
-        if not isinstance(units,list):
-            units = [units]
-        for u in units[:]:
-            if str(u) not in self.units.keys():
-                units.remove(u)
-                print(str(u)+' not in units.keys()')
-        if len(units)<1:
-            return
-            
+        
         units, unitsYPos = self.getOrderedUnits(units) 
         
         if protocol is None:
@@ -802,16 +771,7 @@ class probeData():
     
                                         
     def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True):
-        if units is None:
-            units = self.units.keys()
-        if not isinstance(units,list):
-            units = [units]
-        for u in units[:]:
-            if str(u) not in self.units.keys():
-                units.remove(u)
-                print(str(u)+' not in units.keys()')
-        if len(units)<1:
-            return
+        
         units, unitsYPos = self.getOrderedUnits(units)
         
         if protocol is None:
@@ -938,16 +898,8 @@ class probeData():
                 row += 2
     
     def analyzeRunning(self, units, protocol, plot=True):
-        if units is None:
-            units = self.units.keys()
-        if not isinstance(units,list):
-            units = [units]
-        for u in units[:]:
-            if str(u) not in self.units.keys():
-                units.remove(u)
-                print(str(u)+' not in units.keys()')
-        if len(units)<1:
-            return
+        
+        units, unitsYPos = self.getOrderedUnits(units)
         
         if plot:
             plt.figure(figsize=(10,3*len(units)),facecolor='w')
@@ -982,10 +934,103 @@ class probeData():
                 ax.plot(speedBins, fr_binned)
 #                ax.set_xscale('log', basex=2)
                 plt.fill_between(speedBins, fr_binned+fr_std, fr_binned-fr_std, alpha=0.3)
+    
+    
+    def plotISIHist(self,units=None,protocol=None,binWidth=0.001,maxInterval=0.02):
+        units,unitsYPos = self.getOrderedUnits(units)
+        if protocol is None:
+            protocol = range(len(self.kwdFileList))
+        elif not isinstance(protocol,list):
+            protocol = [protocol]
+        bins = np.arange(0,maxInterval+binWidth,binWidth)
+        plt.figure(facecolor='w')
+        gs = gridspec.GridSpec(len(units),len(protocol))
+        for i,u in enumerate(units):
+            ax = []
+            ymax = 0
+            for j,p in enumerate(protocol):
+                spikeTimes = self.units[u]['times'][str(p)]/self.sampleRate
+                isiHist,_ = np.histogram(np.diff(spikeTimes),bins)
+                isiProb = isiHist/spikeTimes.size
+                ymax = max(ymax,max(isiProb))
+                ax.append(plt.subplot(gs[i,j]))
+                ax[-1].bar(bins[:-1],isiProb,binWidth,color='b',edgecolor='b')
+                ax[-1].set_xlim([0,maxInterval])
+                ax[-1].spines['right'].set_visible(False)
+                ax[-1].spines['top'].set_visible(False)
+                ax[-1].tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+                if i==0:
+                    protocolName = os.path.dirname(self.kwdFileList[j])
+                    ax[-1].set_title(protocolName[protocolName.rfind('_')+1:],fontsize='x-small')
+                if i==len(units)-1 and j==len(protocol)-1:
+                    ax[-1].set_xticks([0,maxInterval])
+                    ax[-1].set_xlabel('ISI (s)',fontsize='x-small')
+                else:
+                    ax[-1].set_xticks([])
+            for j,a in enumerate(ax):
+                a.set_ylim([0,ymax])
+                if j==0:
+                    a.set_yticks([int(ymax*100)/100])
+                    a.set_ylabel(u,fontsize='x-small')
+                else:
+                    a.set_yticks([])
+                    
+    
+    def plotSDF(self,unit,protocol,startSamples=None,offset=0,windowDur=None,sigma=0.02,sampInt=0.001,paramNames=None):
+        if paramNames is not None and len(paramNames)>2:
+            raise ValueError('plotSDF does not accept more than 2 parameters')
+        offset = int(offset*self.sampleRate)
+        if windowDur is not None:
+            windowDur = int(windowDur*self.sampleRate)
+        params = []
+        if startSamples is None:
+            p = self.visstimData[str(protocol)]
+            try:
+                trialStartFrame = p['trialStartFrame']
+            except:
+                trialStartFrame = p['stimStartFrames']
+            startSamples = p['frameSamples'][trialStartFrame]
+            if windowDur is None:
+                windowDur = np.diff(startSamples)
+            startSamples = startSamples[:-1]
+            if paramNames is not None:
+                for name in paramNames:
+                    params.append(p[name][:-1])
+        else:
+            windowDur = [windowDur for _ in startSamples]
+        paramSet = [np.unique(param) for param in params]
+        startSamples += offset
+        spikes = self.units[str(unit)]['times'][protocol]
+        
+        if len(params)<1:
+            rows = cols = [0]
+        elif len(params)<2:
+            rows = range(len(set(params[0])))
+            cols = [0]
+        else:
+            cols,rows = [range(len(set(params[i]))) for i in (0,1)]
+        plt.figure(facecolor='w')
+        gs = gridspec.GridSpec(len(rows),len(cols))
+        trialIndex = range(len(startSamples))
+        for i in reversed(rows):
+            if len(params)>1:
+                trialIndex = np.intersect1d(trialIndex,np.where(params[1]==paramSet[1][i])[0])
+            for j in cols:
+                if len(params)>0:
+                    trialIndex = np.intersect1d(trialIndex,np.where(params[0]==paramSet[0][j])[0])
+                bins = range(max(windowDur[trialIndex])/self.sampleRate/sampInt)
+                sdf = np.zeros((len(trialIndex),len(bins)))
+                for trial in trialIndex:
+                    spikeTimes = spikes[np.logical_and(spikes>startSamples[trial],spikes<startSamples[trial]+windowDur[trial])]-startSamples[trial]] = 1
+                ax = plt.subplot(gs[i,j])
+                np.mean(scipy.ndimage.filters.gaussian_filter1d(raster,sigma*self.sampleRate,axis=1),axis=0)
             
     
     def plotRaster(self,unit,protocol,startSamples=None,offset=0,windowDur=None,paramNames=None,paramColors=None,grid=False):
         protocol = str(protocol)
+        offset = int(offset*self.sampleRate)
+        if windowDur is not None:
+            windowDur = int(windowDur*self.sampleRate)
         params = []
         if startSamples is None:
             p = self.visstimData[str(protocol)]
@@ -1072,24 +1117,10 @@ class probeData():
             spikeTimes = (spikes[np.logical_and(spikes>startSamples[i],spikes<startSamples[i]+windowDur[i])]-startSamples[i]+offset)/self.sampleRate
             axes[-1].vlines(spikeTimes,rows[-1]-0.4,rows[-1]+0.4,color=color)
             rows[-1] += 1
-                        
-        
-    def getProtocolIndex(self, label):
-        protocol = []
-        protocol.extend([i for i,f in enumerate(self.kwdFileList) if ntpath.dirname(f).endswith(label)])
-        if len(protocol)<1:
-            raise ValueError('No protocols found matching: '+label)
-        elif len(protocol)>1:
-            raise ValueError('Multiple protocols found matching: '+label)
-        return protocol[0]
     
     
     def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'gratings', 'gratings_ori', 'spots', 'checkerboard'], splitRunning = False, useCache=False):
-        if units is None:
-            units = self.units.keys()
-        if type(units) is int:
-            units = [units]
-        
+
         for pro in protocolsToRun:
             protocol = self.getProtocolIndex(pro)
             
@@ -1160,13 +1191,29 @@ class probeData():
             else:
                 print("Couldn't find analysis script for protocol type:", pro)
                 
-                
+     
+    def getProtocolIndex(self, label):
+        protocol = []
+        protocol.extend([i for i,f in enumerate(self.kwdFileList) if ntpath.dirname(f).endswith(label)])
+        if len(protocol)<1:
+            raise ValueError('No protocols found matching: '+label)
+        elif len(protocol)>1:
+            raise ValueError('Multiple protocols found matching: '+label)
+        return protocol[0]
+        
+          
     def getOrderedUnits(self,units=None):
         # orderedUnits, yPosition = self.getOrderedUnits(units)
         if units is None:
             units = self.units.keys()
         if not isinstance(units,list):
             units = [units]
+        for u in units[:]:
+            if str(u) not in self.units.keys():
+                units.remove(u)
+                print(str(u)+' not in units.keys()')
+        if len(units)<1:
+            raise ValueError('Found no matching units')
         units = [str(u) for u in units]
         orderedUnits = [(u,self.units[u]['ypos']) for u in self.units.keys() if u in units]
         orderedUnits.sort(key=lambda i: i[1], reverse=True)
