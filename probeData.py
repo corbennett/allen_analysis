@@ -13,7 +13,8 @@ import scipy.optimize
 import scipy.signal
 import scipy.stats
 from matplotlib import pyplot as plt 
-import matplotlib.gridspec as gridspec
+from matplotlib import gridspec
+from matplotlib import cm
 from PyQt4 import QtGui
 
 
@@ -485,7 +486,7 @@ class probeData():
             ax.set_xlabel('Probe Y Pos',fontsize='medium')
     
     
-    def analyzeGratings(self, units=None, trials = None, responseLatency = 0.05, plot=True, protocol=None, protocolType='stf', fit = True, useCache=True):
+    def analyzeGratings(self, units=None, trials = None, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', fit = True, useCache=True):
         
         if units is None:
             units = self.units.keys()
@@ -529,7 +530,7 @@ class probeData():
         trialStartFrame = self.visstimData[str(protocol)]['stimStartFrames'][trials]
         trialDuration = self.visstimData[str(protocol)]['stimTime']
         trialStartSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame]+responseLatency
-        trialEndSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame + trialDuration]+responseLatency
+        trialEndSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame+trialDuration]
         
         for uindex, unit in enumerate(units):
             if ('stf' in self.units[str(unit)].keys()) and protocolType=='stf' and useCache:
@@ -983,7 +984,7 @@ class probeData():
                 plt.fill_between(speedBins, fr_binned+fr_std, fr_binned-fr_std, alpha=0.3)
             
     
-    def plotRaster(self,unit,protocol,startSamples=None,windowDur=None,paramNames=None):
+    def plotRaster(self,unit,protocol,startSamples=None,offset=0,windowDur=None,paramNames=None,paramColors=None,grid=False):
         protocol = str(protocol)
         params = []
         if startSamples is None:
@@ -1001,42 +1002,76 @@ class probeData():
                     params.append(p[name][:-1])
         else:
             windowDur = [windowDur for _ in startSamples]
+        startSamples += offset
         spikes = self.units[str(unit)]['times'][protocol]
         
-        plt.figure()
-        ax = plt.subplot(1,1,1)
-        if len(params)<1:
-            self.appendToRaster(ax,spikes,startSamples,windowDur)
+        if paramColors is None:
+            paramColors = [None]*len(params)
         else:
-            self.parseRaster(ax,spikes,startSamples,windowDur,params)
-        ax.set_xlim([0,max(windowDur)/self.sampleRate])
-        ax.set_ylim([-0.5,startSamples.size+0.5])
-        ax.set_xlabel('Time (s)')
-        ax.set_ylabel('Trial')
-        ax.set_title('Unit '+str(unit))
-        return ax
-        
-        
-    def parseRaster(self,ax,spikes,startSamples,windowDur,params,paramIndex=0,trialsIn=None,row=0):
-        if trialsIn is None:
-            trialsIn = range(len(startSamples))
-        for val in np.unique(params[paramIndex]):
-            trialIndex = np.intersect1d(trialsIn,np.where(params[paramIndex]==val)[0])
-            if paramIndex<len(params)-1:
-                row = self.parseRaster(ax,spikes,startSamples,windowDur,params,paramIndex+1,trialIndex,row)
+            for i,c in enumerate(paramColors):
+                if c=='auto' and i<len(params):
+                    paramColors[i] = cm.Dark2(range(0,256,int(256/len(set(params[i])))))
+                    break
+        grid = True if grid and len(paramNames)==2 else False
+         
+        plt.figure(facecolor='w')
+        if grid:
+            axes = []
+            rows = []
+            gs = gridspec.GridSpec(len(set(params[1])),len(set(params[0])))
+        else:
+            axes = [plt.subplot(1,1,1)]
+            rows = [0]
+            gs = None
+        if len(params)<1:
+            self.appendToRaster(axes,spikes,startSamples,offset,windowDur)
+        else:
+            self.parseRaster(axes,spikes,startSamples,offset,windowDur,params,paramColors,rows=rows,grid=grid,gs=gs)
+        for ax,r in zip(axes,rows):
+            ax.set_xlim([0+offset/self.sampleRate,(max(windowDur)+offset)/self.sampleRate])
+            ax.set_ylim([-0.5,r+0.5])
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False)
+            if grid:
+                ax.set_xticks([])
+                ax.set_yticks([])
             else:
-                row = self.appendToRaster(ax,spikes,startSamples,windowDur,trialIndex,row)
-        return row
-
-
-    def appendToRaster(self,ax,spikes,startSamples,windowDur,trialIndex=None,row=0):
+                ax.set_xlabel('Time (s)')
+                ax.set_ylabel('Trial')
+        axes[-1].set_title('Unit '+str(unit))
+         
+         
+    def parseRaster(self,axes,spikes,startSamples,offset,windowDur,params,paramColors,paramIndex=0,trialsIn=None,rows=[0],grid=False,gs=None,grow=None,gcol=0):
+        paramVals = np.unique(params[paramIndex])
+        if grid and grow is None:
+            grow = gs.get_geometry()[0]-1
+        for i,val in enumerate(paramVals):
+            if grid:
+                axes.append(plt.subplot(gs[grow,gcol]))
+                rows.append(0)
+                grow -= 1
+            trialIndex = np.where(params[paramIndex]==val)[0]
+            if trialsIn is not None:
+                trialIndex = np.intersect1d(trialsIn,trialIndex)
+            if paramIndex<len(params)-1:
+                if paramColors[paramIndex] is not None:
+                    paramColors[paramIndex+1] = [paramColors[paramIndex][i]]*len(set(params[paramIndex+1]))
+                self.parseRaster(axes,spikes,startSamples,offset,windowDur,params,paramColors,paramIndex+1,trialIndex,rows,grid,gs,None,gcol)
+                if grid:
+                    gcol += 1
+            else:
+                color = 'k' if paramColors[paramIndex] is None else paramColors[paramIndex][i]
+                self.appendToRaster(axes,spikes,startSamples,offset,windowDur,trialIndex,rows,color)
+ 
+ 
+    def appendToRaster(self,axes,spikes,startSamples,offset,windowDur,trialIndex=None,rows=[0],color='k'):
         if trialIndex is None:
             trialIndex = range(len(startSamples))
         for i in trialIndex:
-            spikeTimes = (spikes[np.logical_and(spikes>startSamples[i],spikes<startSamples[i]+windowDur[i])]-startSamples[i])/self.sampleRate
-            ax.vlines(spikeTimes,row-0.4,row+0.4,'k')
-            row += 1
-        return row
+            spikeTimes = (spikes[np.logical_and(spikes>startSamples[i],spikes<startSamples[i]+windowDur[i])]-startSamples[i]+offset)/self.sampleRate
+            axes[-1].vlines(spikeTimes,rows[-1]-0.4,rows[-1]+0.4,color=color)
+            rows[-1] += 1
                         
         
     def getProtocolIndex(self, label):
