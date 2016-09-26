@@ -18,7 +18,7 @@ from matplotlib import cm
 from PyQt4 import QtGui
 
 
-dataDir = 'C:\Users\SVC_CCG\Desktop\Data'
+dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
 
 class probeData():
     
@@ -120,7 +120,7 @@ class probeData():
             self.TTL[str(protocol)][self.TTLChannelLabels[chan]]['rising'] = timeSamples[np.intersect1d(eventsForChan, np.where(edges == 1))] - self.d[protocol]['firstAnalogSample']
             self.TTL[str(protocol)][self.TTLChannelLabels[chan]]['falling'] = timeSamples[np.intersect1d(eventsForChan, np.where(edges ==0))] - self.d[protocol]['firstAnalogSample']
         
-        if str(protocol) in self.visstimData.keys():
+        if str(protocol) in self.visstimData:
             if not hasattr(self, 'frameSamples'):
                 self.alignFramesToDiode(protocol=protocol)
     
@@ -131,7 +131,7 @@ class probeData():
         
         dataFile = h5py.File(filePath)        
         self.visstimData[str(protocol)] = {}
-        for params in dataFile.keys():
+        for params in dataFile:
             if dataFile[params].size > 1:
                 self.visstimData[str(protocol)][params] = dataFile[params][:]
             else:
@@ -283,7 +283,7 @@ class probeData():
             offCenters = np.copy(onCenters)
         
         for uindex, unit in enumerate(units):
-            if ('rf' in self.units[str(unit)].keys()) and useCache:
+            if 'rf' in self.units[str(unit)] and useCache:
                 gridOnSpikes = self.units[str(unit)]['rf']['on']
                 gridOffSpikes = self.units[str(unit)]['rf']['off']
                 gridOnSpikes_filter = self.units[str(unit)]['rf']['on_filter']
@@ -320,14 +320,18 @@ class probeData():
                         # gridOffSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
                         gridOffSpikes[index] += np.count_nonzero(np.logical_and(spikes>=p+minLatency,spikes<p+maxLatency))
                     
-                    gridOnSpikes[index] = gridOnSpikes[index]/float(posOnTrials.size)
-                    gridOffSpikes[index] = gridOffSpikes[index]/float(posOffTrials.size)
+                    gridOnSpikes[index] /= posOnTrials.size
+                    gridOffSpikes[index] /= posOffTrials.size
                     
-                gridOnSpikes = gridOnSpikes.reshape(xpos.size,ypos.size).T    
-                gridOffSpikes = gridOffSpikes.reshape(xpos.size,ypos.size).T  
+                # convert spike count to spike rate
+                gridOnSpikes = gridOnSpikes/(maxLatency-minLatency)*self.sampleRate
+                gridOffSpikes = gridOffSpikes/(maxLatency-minLatency)*self.sampleRate
+                 
+                # reshape and filter response
+                gridOnSpikes = gridOnSpikes.reshape(xpos.size,ypos.size).T  
+                gridOffSpikes = gridOffSpikes.reshape(xpos.size,ypos.size).T
                 gridOnSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOnSpikes, sigma)
                 gridOffSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOffSpikes, sigma)
-               
                                 
                 if fit:
                     fitParams = []
@@ -359,7 +363,7 @@ class probeData():
                 minVal = min(np.min(gridOnSpikes_filter), np.min(gridOffSpikes_filter))
                 
                 a1 = plt.subplot(gs[uindex, 0])
-                a1.imshow(gridOnSpikes_filter, clim=[minVal, maxVal], interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]] )
+                a1.imshow(gridOnSpikes_filter, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]] )
                 if fit and onFit is not None:
                     a1.plot(onFit[0],onFit[1],'kx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*onFit[:-1])
@@ -369,7 +373,7 @@ class probeData():
                 a1.set_ylabel(str(unit)+', ypos = '+str(round(unitsYPos[uindex])), fontsize='x-small')
            
                 a2 = plt.subplot(gs[uindex, 1])
-                im = a2.imshow(gridOffSpikes_filter, clim=[minVal, maxVal], interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
+                im = a2.imshow(gridOffSpikes_filter, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
                 if fit and offFit is not None:
                     a2.plot(offFit[0],offFit[1],'kx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*offFit[:-1])
@@ -395,7 +399,7 @@ class probeData():
                 offLinFitAzim = scipy.stats.linregress(unitsYPos[offIncluded],offCenters[offIncluded,0])
                 offLinFitElev = scipy.stats.linregress(unitsYPos[offIncluded],offCenters[offIncluded,1]) 
             
-            probePos = [self.units[n]['ypos'] for n in self.units.keys()]
+            probePos = [self.units[n]['ypos'] for n in self.units]
             xlim = np.array([min(probePos)-10,max(probePos)+10])            
             
             # on azimuth
@@ -505,12 +509,12 @@ class probeData():
         trialEndSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame+trialDuration]
         
         for uindex, unit in enumerate(units):
-            if ('stf' in self.units[str(unit)].keys()) and protocolType=='stf' and useCache:
+            if 'stf' in self.units[str(unit)] and protocolType=='stf' and useCache:
                 stfMat = self.units[str(unit)]['stf']['stfMat']
                 sf = self.units[str(unit)]['stf']['sf']
                 tf = self.units[str(unit)]['stf']['tf']
                 fitParams = self.units[str(unit)]['stf']['fitParams']
-            elif ('ori' in self.units[str(unit)].keys()) and protocolType=='ori' and useCache:
+            elif 'ori' in self.units[str(unit)] and protocolType=='ori' and useCache:
                 oriList = self.units[str(unit)]['ori']['tuningCurve']
             else:
                 self.units[str(unit)][protocolType] = {}
@@ -667,7 +671,7 @@ class probeData():
         elevs = np.unique(trialPos[horzTrials])
          
         for uindex, unit in enumerate(units):
-            if ('spotResponse' in self.units[str(unit)].keys()) and useCache:
+            if 'spotResponse' in self.units[str(unit)] and useCache:
                 responseDict = self.units[str(unit)]['spotResponse']['spot_responseDict']
                 spotRF = responseDict['spotRF']
             else:
@@ -1242,17 +1246,17 @@ class probeData():
     def getOrderedUnits(self,units=None):
         # orderedUnits, yPosition = self.getOrderedUnits(units)
         if units is None:
-            units = self.units.keys()
+            units = [u for u in self.units]
         if not isinstance(units,list):
             units = [units]
-        for u in units[:]:
-            if str(u) not in self.units.keys():
+        for u in units:
+            if u not in self.units:
                 units.remove(u)
-                print(str(u)+' not in units.keys()')
+                print(str(u)+' not in units')
         if len(units)<1:
             raise ValueError('Found no matching units')
         units = [str(u) for u in units]
-        orderedUnits = [(u,self.units[u]['ypos']) for u in self.units.keys() if u in units]
+        orderedUnits = [(u,self.units[u]['ypos']) for u in self.units if u in units]
         orderedUnits.sort(key=lambda i: i[1], reverse=True)
         return zip(*orderedUnits)
     
@@ -1277,7 +1281,7 @@ class probeData():
             protocolsToAnalyze = np.arange(len(self.d))
         
         self.units = load_phy_template(fileDir, sampling_rate = self.sampleRate)
-        for unit in self.units.keys():
+        for unit in self.units:
             spikeTimes = (self.units[unit]['times']).astype(int)
            
             if kwdNsamplesList is not None:
