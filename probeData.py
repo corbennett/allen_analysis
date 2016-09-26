@@ -1247,15 +1247,16 @@ class probeData():
         # orderedUnits, yPosition = self.getOrderedUnits(units)
         if units is None:
             units = [u for u in self.units]
-        if not isinstance(units,list):
-            units = [units]
+        elif isinstance(units,list):
+            units = [str(u) for u in units]
+        else:
+            units = [str(units)]
         for u in units:
             if u not in self.units:
                 units.remove(u)
                 print(str(u)+' not in units')
         if len(units)<1:
             raise ValueError('Found no matching units')
-        units = [str(u) for u in units]
         orderedUnits = [(u,self.units[u]['ypos']) for u in self.units if u in units]
         orderedUnits.sort(key=lambda i: i[1], reverse=True)
         return zip(*orderedUnits)
