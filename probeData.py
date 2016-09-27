@@ -476,10 +476,12 @@ class probeData():
                
         if plot:        
             plt.figure(figsize = (7.1, 3*len(units)))
-            gs = gridspec.GridSpec(len(units), 3)
+            gs = gridspec.GridSpec(len(units), 2)
 
         if trials is None:
             trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
+            
+        latencySamples = int(responseLatency*self.sampleRate)
         
         #ignore trials with bogus sf or tf
         trialContrast = self.visstimData[str(protocol)]['stimulusHistory_contrast'][trials]
@@ -505,7 +507,7 @@ class probeData():
         
         trialStartFrame = self.visstimData[str(protocol)]['stimStartFrames'][trials]
         trialDuration = self.visstimData[str(protocol)]['stimTime']
-        trialStartSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame] + int(responseLatency*self.sampleRate)
+        trialStartSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame] + latencySamples
         trialEndSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame+trialDuration]
         
         for uindex, unit in enumerate(units):
@@ -550,6 +552,17 @@ class probeData():
                 stfMat /= stfCountMat
                 stfMat -= spontRate
                 
+                spikes = self.units[str(unit)]['times'][protocol]
+                f1f0 = np.zeros((len(tf),len(sf)))
+                for i,tfi in enumerate(tf):
+                    for j,sfj in enumerate(sf):
+                        trialIndex = np.where(np.logical_and(trialContrast>0.1,np.logical_and(trialTF==tfi,trialSF==sfj)))[0]
+                        sdf,bins = self.getMeanSDF(spikes,trialStartSamples[trialIndex],max(trialEndSamples[trialIndex]-trialStartSamples[trialIndex]))
+                        f,pwr = scipy.signal.welch(sdf,1/bins[1],nperseg=sdf.size,detrend='constant',scaling='spectrum')
+                        pwr **= 0.5
+                        f1Ind = np.argmin(np.absolute(f-tfi))
+                        f1f0[i,j] = pwr[f1Ind-1:f1Ind+2].max()/sdf.mean()
+                
                 oriMean = np.zeros(len(oriList))                
                 oriError = np.zeros(len(oriList))
                 for oindex in range(len(oriList)):
@@ -582,7 +595,7 @@ class probeData():
                     xyNan = np.transpose(np.where(np.isnan(stfMat)))
                     stfMat[np.isnan(stfMat)] = 0
                    
-                    a1 = plt.subplot(gs[uindex, 0])
+                    a1 = plt.subplot(gs[uindex,0])
                     plt.xlabel('sf')
                     plt.ylabel('tf')
                     plt.title(str(unit))
@@ -603,32 +616,41 @@ class probeData():
                     plt.colorbar(im, ax=a1, fraction=0.05, shrink=0.5, pad=0.05)
                     
                     a2 = plt.subplot(gs[uindex,1])
-                    values = np.mean(stfMat, axis=0)
-                    error = np.std(stfMat, axis=0)
-                    a2.plot(sf, values)
-                    plt.fill_between(sf, values+error, values-error, alpha=0.3)
                     plt.xlabel('sf')
-                    plt.ylabel('spikes')
-                    plt.xticks(sf)
+                    im2 = a2.imshow(f1f0, clim=(0,f1f0.max()), cmap='gray', origin = 'lower', interpolation='none')
+                    a2.set_xticks(range(sf.size))
+                    a2.set_yticks(range(tf.size))
+                    a2.set_xticklabels(sf)
+                    a2.set_yticklabels([])
+                    plt.colorbar(im2, ax=a2, fraction=0.05, shrink=0.5, pad=0.05)
                     
-                    a3 = plt.subplot(gs[uindex, 2])
-                    values = np.mean(stfMat, axis=1)
-                    error = np.std(stfMat, axis=1)
-                    a3.plot(tf, values)
-                    plt.fill_between(tf, values+error, values-error, alpha=0.3)
-                    plt.xlabel('tf')
-                    plt.ylabel('spikes')
-                    plt.xticks(tf)
+#                    a2 = plt.subplot(gs[uindex,2])
+#                    values = np.mean(stfMat, axis=0)
+#                    error = np.std(stfMat, axis=0)
+#                    a2.plot(sf, values)
+#                    plt.fill_between(sf, values+error, values-error, alpha=0.3)
+#                    plt.xlabel('sf')
+#                    plt.ylabel('spikes')
+#                    plt.xticks(sf)
+#                    
+#                    a3 = plt.subplot(gs[uindex,3])
+#                    values = np.mean(stfMat, axis=1)
+#                    error = np.std(stfMat, axis=1)
+#                    a3.plot(tf, values)
+#                    plt.fill_between(tf, values+error, values-error, alpha=0.3)
+#                    plt.xlabel('tf')
+#                    plt.ylabel('spikes')
+#                    plt.xticks(tf)
               
                 elif protocolType=='ori':
-                    a1 = plt.subplot(gs[uindex, :2])
+                    a1 = plt.subplot(gs[uindex,0])
                     plt.xlabel('ori')
                     plt.ylabel('spike rate: ' + str(unit))
                     a1.plot(ori, oriMean)
                     plt.fill_between(ori, oriMean+oriError, oriMean - oriError, alpha=0.3)
                     plt.xticks(ori)
                     
-                    a2 = plt.subplot(gs[uindex, 2:], projection='polar')
+                    a2 = plt.subplot(gs[uindex,1], projection='polar')
                     theta = ori * (np.pi/180.0)
                     theta = np.append(theta, theta[0])
                     rho = np.append(oriMean, oriMean[0]) + spontRate
@@ -1014,7 +1036,6 @@ class probeData():
         paramSet = [np.unique(param) for param in params]
         startSamples += int(offset*self.sampleRate)
         spikes = self.units[str(unit)]['times'][protocol]
-        binSamples = sampInt*self.sampleRate
         
         if len(params)==0:
             rows = cols = [0]
@@ -1038,14 +1059,10 @@ class probeData():
                     trialIndex = np.intersect1d(trials,np.where(params[0]==paramSet[0][j])[0])
                 else:
                     trialIndex = trials
-                bins = np.arange(0,max(windowDur[trialIndex])+binSamples,binSamples)
-                binnedSpikeCount = np.zeros((len(trialIndex),len(bins)-1))
-                for ind,trial in enumerate(trialIndex):
-                    binnedSpikeCount[ind],_ = np.histogram(spikes[np.logical_and(spikes>startSamples[trial],spikes<startSamples[trial]+windowDur[trial])]-startSamples[trial],bins)
-                sdf = np.mean(scipy.ndimage.filters.gaussian_filter1d(binnedSpikeCount,sigma/sampInt,axis=1),axis=0)/sampInt
+                sdf,bins = self.getMeanSDF(spikes,startSamples[trialIndex],max(windowDur[trialIndex]))
                 ymax = max(ymax,sdf.max())
                 ax.append(plt.subplot(gs[i,j]))
-                ax[-1].plot(bins[:-1]/self.sampleRate+offset,sdf)
+                ax[-1].plot(bins+offset,sdf)
         ymax *= 1.05
         for ind,a in enumerate(ax):
             a.spines['right'].set_visible(False)
@@ -1064,6 +1081,16 @@ class probeData():
                 a.set_title('Unit '+str(unit),fontsize='small')
             else:
                 a.set_yticks([])
+                
+                
+    def getMeanSDF(self,spikes,startSamples,windowSamples,sigma=0.02,sampInt=0.001):
+        binSamples = sampInt*self.sampleRate
+        bins = np.arange(0,windowSamples+binSamples,binSamples)
+        binnedSpikeCount = np.zeros((len(startSamples),len(bins)-1))
+        for i,start in enumerate(startSamples):
+            binnedSpikeCount[i],_ = np.histogram(spikes[np.logical_and(spikes>=start,spikes<=start+windowSamples)]-start,bins)
+        sdf = np.mean(scipy.ndimage.filters.gaussian_filter1d(binnedSpikeCount,sigma/sampInt,axis=1),axis=0)/sampInt
+        return sdf,bins[:-1]/self.sampleRate
             
     
     def plotRaster(self,unit,protocol,startSamples=None,offset=0,windowDur=None,paramNames=None,paramColors=None,grid=False):
