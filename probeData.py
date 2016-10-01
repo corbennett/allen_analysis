@@ -16,6 +16,8 @@ from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib import cm
 from PyQt4 import QtGui
+from astropy.convolution import Gaussian2DKernel, convolve
+
 
 
 dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
@@ -257,7 +259,7 @@ class probeData():
         return spikesPerTrial
         
             
-    def findRF(self, units=None, sigma = 2, plot = True, minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=None, fit=True, useCache=True):
+    def findRF(self, units=None, sigma = 2, plot = True, minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=None, fit=True, useCache=False, saveTag=''):
 
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -283,17 +285,17 @@ class probeData():
             offCenters = np.copy(onCenters)
         
         for uindex, unit in enumerate(units):
-            if 'rf' in self.units[str(unit)] and useCache:
-                gridOnSpikes = self.units[str(unit)]['rf']['on']
-                gridOffSpikes = self.units[str(unit)]['rf']['off']
-                gridOnSpikes_filter = self.units[str(unit)]['rf']['on_filter']
-                gridOffSpikes_filter = self.units[str(unit)]['rf']['off_filter']
-                xpos = self.units[str(unit)]['rf']['xpos']
-                ypos = self.units[str(unit)]['rf']['ypos']
-                onFit = self.units[str(unit)]['rf']['onFit']
-                offFit = self.units[str(unit)]['rf']['offFit']
+            if ('rf' + saveTag) in self.units[str(unit)] and useCache:
+                gridOnSpikes = self.units[str(unit)]['rf' + saveTag]['on']
+                gridOffSpikes = self.units[str(unit)]['rf' + saveTag]['off']
+                gridOnSpikes_filter = self.units[str(unit)]['rf' + saveTag]['on_filter']
+                gridOffSpikes_filter = self.units[str(unit)]['rf' + saveTag]['off_filter']
+                xpos = self.units[str(unit)]['rf' + saveTag]['xpos']
+                ypos = self.units[str(unit)]['rf' + saveTag]['ypos']
+                onFit = self.units[str(unit)]['rf' + saveTag]['onFit']
+                offFit = self.units[str(unit)]['rf' + saveTag]['offFit']
             else:
-                self.units[str(unit)]['rf'] = {}
+                self.units[str(unit)]['rf' + saveTag] = {}
                 spikes = self.units[str(unit)]['times'][str(protocol)]
                 grid = list(itertools.product(xpos,ypos))
                 gridOnSpikes = np.zeros(len(grid))
@@ -330,8 +332,12 @@ class probeData():
                 # reshape and filter response
                 gridOnSpikes = gridOnSpikes.reshape(xpos.size,ypos.size).T  
                 gridOffSpikes = gridOffSpikes.reshape(xpos.size,ypos.size).T
-                gridOnSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOnSpikes, sigma)
-                gridOffSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOffSpikes, sigma)
+                
+                gaussianKernel = Gaussian2DKernel(stddev=sigma)
+                gridOnSpikes_filter = convolve(gridOnSpikes, gaussianKernel, boundary='extend')
+                gridOffSpikes_filter = convolve(gridOffSpikes, gaussianKernel, boundary='extend')
+#                gridOnSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOnSpikes, sigma)
+#                gridOffSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOffSpikes, sigma)
                                 
                 if fit:
                     fitParams = []
@@ -342,25 +348,31 @@ class probeData():
                         elev, azim = ypos/pixPerDeg, xpos/pixPerDeg
                         i,j = np.unravel_index(np.argmax(data),data.shape)
                         initialParams = (azim[j], elev[i], azim[1]-azim[0], elev[1]-elev[0], 0, data.max())
-                        fitParams.append(fitGauss2D(azim,elev,data,initialParams))
-                    onFit,offFit = fitParams
-                    if onFit is not None and gridExtent[0]<onFit[0]<gridExtent[2] and gridExtent[1]<onFit[1]<gridExtent[3]:
-                        onCenters[uindex,:] = onFit[0:2]
-                    if offFit is not None and gridExtent[0]<offFit[0]<gridExtent[2] and gridExtent[1]<offFit[1]<gridExtent[3]:
-                        offCenters[uindex,:] = offFit[0:2]
-                    self.units[str(unit)]['rf']['onFit'] = onFit
-                    self.units[str(unit)]['rf']['offFit'] = offFit
+                        try:
+                            fitParams.append(fitGauss2D(azim,elev,data,initialParams))
+                            onFit,offFit = fitParams
+                            if onFit is not None and gridExtent[0]<onFit[0]<gridExtent[2] and gridExtent[1]<onFit[1]<gridExtent[3]:
+                                onCenters[uindex,:] = onFit[0:2]
+                            if offFit is not None and gridExtent[0]<offFit[0]<gridExtent[2] and gridExtent[1]<offFit[1]<gridExtent[3]:
+                                offCenters[uindex,:] = offFit[0:2]
+                        except:
+                            onFit, offFit = [None, None]
+                            print('fit failed')
+                   
+                    self.units[str(unit)]['rf' + saveTag]['onFit'] = onFit
+                    self.units[str(unit)]['rf' + saveTag]['offFit'] = offFit
                                         
-                self.units[str(unit)]['rf']['on'] = gridOnSpikes
-                self.units[str(unit)]['rf']['off'] = gridOffSpikes
-                self.units[str(unit)]['rf']['on_filter'] = gridOnSpikes_filter
-                self.units[str(unit)]['rf']['off_filter'] = gridOffSpikes_filter
-                self.units[str(unit)]['rf']['xpos'] = xpos
-                self.units[str(unit)]['rf']['ypos'] = ypos
+                self.units[str(unit)]['rf' + saveTag]['on'] = gridOnSpikes
+                self.units[str(unit)]['rf' + saveTag]['off'] = gridOffSpikes
+                self.units[str(unit)]['rf' + saveTag]['on_filter'] = gridOnSpikes_filter
+                self.units[str(unit)]['rf' + saveTag]['off_filter'] = gridOffSpikes_filter
+                self.units[str(unit)]['rf' + saveTag]['xpos'] = xpos
+                self.units[str(unit)]['rf' + saveTag]['ypos'] = ypos
                 
+#            return gridOnSpikes, gridOffSpikes, gridOnSpikes_filter, gridOffSpikes_filter
             if plot:
-                maxVal = max(np.max(gridOnSpikes_filter), np.max(gridOffSpikes_filter))
-                minVal = min(np.min(gridOnSpikes_filter), np.min(gridOffSpikes_filter))
+                maxVal = max(np.nanmax(gridOnSpikes_filter), np.nanmax(gridOffSpikes_filter))
+                minVal = min(np.nanmin(gridOnSpikes_filter), np.nanmin(gridOffSpikes_filter))
                 
                 a1 = plt.subplot(gs[uindex, 0])
                 a1.imshow(gridOnSpikes_filter, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]] )
@@ -462,7 +474,7 @@ class probeData():
             ax.set_xlabel('Probe Y Pos',fontsize='medium')
     
     
-    def analyzeGratings(self, units=None, trials = None, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', fit = True, useCache=True):
+    def analyzeGratings(self, units=None, trials = None, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', fit = True, useCache=False, saveTag=''):
     
         units, unitsYPos = self.getOrderedUnits(units) 
             
@@ -480,19 +492,23 @@ class probeData():
 
         if trials is None:
             trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
-            
+        
+        trials = np.array(trials)
         latencySamples = int(responseLatency*self.sampleRate)
         
         #ignore trials with bogus sf or tf
         trialContrast = self.visstimData[str(protocol)]['stimulusHistory_contrast'][trials]
         trialSF = self.visstimData[str(protocol)]['stimulusHistory_sf'][trials]
         trialTF = self.visstimData[str(protocol)]['stimulusHistory_tf'][trials]
-        tol = 10*np.finfo(trialSF.dtype).eps
+        tol = 1e-9
+        sf = np.copy(self.visstimData[protocol]['sf'])
+        sf = sf[np.logical_and(sf>0.01-tol,sf<0.32+tol)]
+        tf = np.copy(self.visstimData[protocol]['tf'])
+        tf = tf[np.logical_and(sf>0.01-tol,sf<0.32+tol)]
         stfTrialsToUse = np.logical_and(np.logical_and(trialSF>0.01-tol,trialSF<0.32+tol),
-                                        np.logical_and(trialTF>0.5-tol,trialTF<8+tol))  
-        sf = np.unique(trialSF[stfTrialsToUse])
-        tf = np.unique(trialTF[stfTrialsToUse])
+                                        np.logical_and(trialTF>0.5-tol,trialTF<8+tol))
         trialsToUse = np.logical_or(np.isclose(trialContrast,0),stfTrialsToUse)
+
         trials = trials[trialsToUse]         
         
         trialContrast = trialContrast[trialsToUse]
@@ -501,9 +517,11 @@ class probeData():
         
         # as presented ori 0 is rightward moving vertical bars and ori 90 is downward moving horizontal bars
         # change to more typical convention (90 up)
-        trialOri = self.visstimData[str(protocol)]['stimulusHistory_ori'][trials]
+        trialOri = np.copy(self.visstimData[str(protocol)]['stimulusHistory_ori'][trials])
         trialOri[trialOri>0] = -(trialOri[trialOri>0]-360)
-        ori = np.unique(trialOri)
+        ori = np.copy(self.visstimData[protocol]['ori'])
+        ori[ori>0] = -(ori[ori>0]-360)
+        ori = np.sort(ori)        
         
         trialStartFrame = self.visstimData[str(protocol)]['stimStartFrames'][trials]
         trialDuration = self.visstimData[str(protocol)]['stimTime']
@@ -511,15 +529,15 @@ class probeData():
         trialEndSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame+trialDuration]
         
         for uindex, unit in enumerate(units):
-            if 'stf' in self.units[str(unit)] and protocolType=='stf' and useCache:
-                stfMat = self.units[str(unit)]['stf']['stfMat']
-                sf = self.units[str(unit)]['stf']['sf']
-                tf = self.units[str(unit)]['stf']['tf']
-                fitParams = self.units[str(unit)]['stf']['fitParams']
-            elif 'ori' in self.units[str(unit)] and protocolType=='ori' and useCache:
-                oriList = self.units[str(unit)]['ori']['tuningCurve']
+            if ('stf' + saveTag) in self.units[str(unit)] and protocolType=='stf' and useCache:
+                stfMat = self.units[str(unit)]['stf' + saveTag]['stfMat']
+                sf = self.units[str(unit)]['stf' + saveTag]['sf']
+                tf = self.units[str(unit)]['stf' + saveTag]['tf']
+                fitParams = self.units[str(unit)]['stf' + saveTag]['fitParams']
+            elif ('ori' + saveTag) in self.units[str(unit)] and protocolType=='ori' and useCache:
+                oriList = self.units[str(unit)]['ori' + saveTag]['tuningCurve']
             else:
-                self.units[str(unit)][protocolType] = {}
+                self.units[str(unit)][protocolType + saveTag] = {}
                 
                 #spontaneous firing rate taken from interspersed gray trials
                 spontRate = 0
@@ -537,43 +555,55 @@ class probeData():
                     spikeRateThisTrial = trialResponse[trial]
                     
                     if trialContrast[trial] > 0:
-                        sfIndex = np.where(sf == trialSF[trial])[0]
-                        tfIndex = np.where(tf == trialTF[trial])[0]                  
+                
+                        sfIndex = np.where(np.isclose(sf, trialSF[trial]))[0]
+                        tfIndex = np.where(np.isclose(tf, trialTF[trial]))[0]
+ 
                         stfMat[tfIndex, sfIndex] += spikeRateThisTrial
                         stfCountMat[tfIndex, sfIndex] += 1
-                        
-                        oriIndex = np.where(ori == trialOri[trial])[0]
+                        oriIndex = np.where(np.isclose(ori,trialOri[trial]))[0]
                         oriList[oriIndex].append(spikeRateThisTrial)
                     else:
                         spontRate += spikeRateThisTrial
                         spontCount += 1
                 
-                spontRate /= spontCount
+                if spontCount>0:
+                    spontRate /= spontCount
+                else:
+                    spontRate = np.nan
+                
+                self.units[str(unit)][protocolType + saveTag]['spontRate'] = spontRate
+                stfCountMat[stfCountMat==0] = np.nan
+                
                 stfMat /= stfCountMat
-                stfMat -= spontRate
+#                stfMat -= spontRate
                 
                 spikes = self.units[str(unit)]['times'][protocol]
                 f1f0 = np.zeros((len(tf),len(sf)))
                 for i,tfi in enumerate(tf):
                     for j,sfj in enumerate(sf):
-                        trialIndex = np.where(np.logical_and(trialContrast>0.1,np.logical_and(trialTF==tfi,trialSF==sfj)))[0]
-                        sdf,bins = self.getMeanSDF(spikes,trialStartSamples[trialIndex],max(trialEndSamples[trialIndex]-trialStartSamples[trialIndex]))
-                        f,pwr = scipy.signal.welch(sdf,1/bins[1],nperseg=sdf.size,detrend='constant',scaling='spectrum')
-                        pwr **= 0.5
-                        f1Ind = np.argmin(np.absolute(f-tfi))
-                        f1f0[i,j] = pwr[f1Ind-1:f1Ind+2].max()/sdf.mean()
+                        trialIndex = np.where(np.logical_and(trialContrast>0+tol,np.logical_and(np.isclose(trialTF,tfi),np.isclose(trialSF,sfj))))[0]
+                        if len(trialIndex)>0:
+                            sdf,bins = self.getMeanSDF(spikes,trialStartSamples[trialIndex],max(trialEndSamples[trialIndex]-trialStartSamples[trialIndex]))
+                            f,pwr = scipy.signal.welch(sdf,1/bins[1],nperseg=sdf.size,detrend='constant',scaling='spectrum')
+                            pwr **= 0.5
+                            f1Ind = np.argmin(np.absolute(f-tfi))
+                            f1f0[i,j] = pwr[f1Ind-1:f1Ind+2].max()/sdf.mean()
                 
                 oriMean = np.zeros(len(oriList))                
                 oriError = np.zeros(len(oriList))
                 for oindex in range(len(oriList)):
                     oriMean[oindex] = np.mean(np.array(oriList[oindex]))
                     oriError[oindex] = np.std(np.array(oriList[oindex]))
-                oriMean -= spontRate
+            
                 
                 if protocolType=='ori':
-                    dsi,prefDir = getDSI(oriMean+spontRate,ori)
-                    osi,prefOri = getDSI(oriMean+spontRate,2*ori)
+                    dsi,prefDir = getDSI(oriMean,ori)
+                    osi,prefOri = getDSI(oriMean,2*ori)
                     prefOri /= 2
+                    self.units[str(unit)]['ori' + saveTag]['dsi'] = [dsi, prefDir]
+                    self.units[str(unit)]['ori' + saveTag]['osi'] = [osi, prefOri]
+                    self.units[str(unit)]['ori' + saveTag]['tuningCurve'] = [oriMean, oriError]
                 
                 if fit and protocolType=='stf':
                     # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude
@@ -581,14 +611,19 @@ class probeData():
                         fitParams = None
                     else:
                         i,j = np.unravel_index(np.argmax(stfMat),stfMat.shape)
-                        initialParams = (sf[j], tf[i], 1, 1, 0.5, stfMat.max())
-                        fitParams = fitStfLogGauss2D(sf,tf,stfMat,initialParams)
-                    self.units[str(unit)]['stf']['fitParams'] = fitParams
+                        initialParams = (sf[j], tf[i], 1, 1, 0.5, stfMat.max()-spontRate)
+                        try:
+                            fitParams = fitStfLogGauss2D(sf,tf,stfMat-spontRate,initialParams)
+                        except:
+                            fitParams = None
+                            print('fit failed')
+                            
+                    self.units[str(unit)]['stf' + saveTag]['fitParams'] = fitParams
                     
                 if protocolType=='stf':
-                    self.units[str(unit)]['stf']['stfMat'] = stfMat
-                    self.units[str(unit)]['stf']['sf'] = sf
-                    self.units[str(unit)]['stf']['tf'] = tf
+                    self.units[str(unit)]['stf' + saveTag]['stfMat'] = stfMat
+                    self.units[str(unit)]['stf' + saveTag]['sf'] = sf
+                    self.units[str(unit)]['stf' + saveTag]['tf'] = tf
         
             if plot:
                 if protocolType=='stf':                
@@ -599,10 +634,11 @@ class probeData():
                     plt.xlabel('sf')
                     plt.ylabel('tf')
                     plt.title(str(unit))
-                    cLim = max(1,np.max(abs(stfMat)))
-                    im = a1.imshow(stfMat, clim=(-cLim,cLim), cmap='bwr', origin = 'lower', interpolation='none')
+                    centerPoint = spontRate if not np.isnan(spontRate) else np.nanmedian(stfMat)
+                    cLim = np.nanmax(abs(stfMat - centerPoint))
+                    im = a1.imshow(stfMat, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
                     for xypair in xyNan:    
-                        a1.text(xypair[1], xypair[0], 'no trials', color='white', ha='center')
+                        a1.text(xypair[1], xypair[0], 'nan', color='white', ha='center')
                     if fit and fitParams is not None:
                         a1.plot(np.log2(fitParams[0])-np.log2(sf[0]),np.log2(fitParams[1])-np.log2(tf[0]),'kx',markeredgewidth=2)
                         fitX,fitY = getStfContour(sf,tf,fitParams)
@@ -653,12 +689,12 @@ class probeData():
                     a2 = plt.subplot(gs[uindex,1], projection='polar')
                     theta = ori * (np.pi/180.0)
                     theta = np.append(theta, theta[0])
-                    rho = np.append(oriMean, oriMean[0]) + spontRate
+                    rho = np.append(oriMean, oriMean[0])
                     a2.plot(theta, rho)
                     a2.set_title('DSI = '+str(round(dsi,2))+', prefDir = '+str(round(prefDir))+'\n'+', OSI = '+str(round(osi,2))+', prefOri = '+str(round(prefOri)),fontsize='x-small')
 
 
-    def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=True):
+    def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=False, saveTag=''):
          
         units, unitsYPos = self.getOrderedUnits(units) 
          
@@ -693,11 +729,11 @@ class probeData():
         elevs = np.unique(trialPos[horzTrials])
          
         for uindex, unit in enumerate(units):
-            if 'spotResponse' in self.units[str(unit)] and useCache:
-                responseDict = self.units[str(unit)]['spotResponse']['spot_responseDict']
+            if ('spotResponse' + saveTag) in self.units[str(unit)] and useCache:
+                responseDict = self.units[str(unit)]['spotResponse' + saveTag]['spot_responseDict']
                 spotRF = responseDict['spotRF']
             else:
-                self.units[str(unit)]['spotResponse'] = {}
+                self.units[str(unit)]['spotResponse' + saveTag] = {}
                 spikes = self.units[str(unit)]['times'][str(protocol)]
          
                 # get RF         
@@ -762,7 +798,7 @@ class probeData():
                 x,y = np.meshgrid(azimuthSpikeRate-meanItiRate,elevSpikeRate-meanItiRate)
                 spotRF = np.sqrt(abs(x*y))*np.sign(x+y)
                 responseDict['spotRF'] = spotRF                
-                self.units[str(unit)]['spotResponse']['spot_responseDict'] = responseDict
+                self.units[str(unit)]['spotResponse' + saveTag]['spot_responseDict'] = responseDict
                  
             if plot:   
                 a1 = plt.subplot(gs[uindex, 0])            
@@ -784,7 +820,7 @@ class probeData():
                         a.set_xticks(responseDict[param]['tuningCurve']['paramValues'])
     
                                         
-    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True):
+    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True, saveTag=''):
         
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -830,7 +866,7 @@ class probeData():
                 for j in range(bckgndSpeed.size):
                     if patchSpeed[i]==bckgndSpeed[j]:
                         meanResp[i,j,:,:] = meanResp[patchSpeed.size//2,j]            
-            self.units[str(u)]['checkerboard'] = {'meanResp':meanResp}
+            self.units[str(u)]['checkerboard' + saveTag] = {'meanResp':meanResp}
             resp[:] = np.nan
             
             if plot:
@@ -912,22 +948,22 @@ class probeData():
                 row += 2
     
     
-    def parseRunning(self, protocol, runThresh = 5.0, statThresh = 1.0, trialStarts = None, trialEnds = None):
+    def parseRunning(self, protocol, runThresh = 5.0, statThresh = 1.0, trialStarts = None, trialEnds = None, wheelDownsampleFactor = 500.0):
         if not 'running' in self.behaviorData[str(protocol)]:
             self.decodeWheel(self.d[protocol]['data'][::500, self.wheelChannel]*self.d[protocol]['gains'][self.wheelChannel])
         
-        wheelData = self.behaviorData[str(protocol)]['running']
+        wheelData = -self.behaviorData[str(protocol)]['running']
         
         if trialStarts is not None:
             runningTrials = []
             stationaryTrials = []
             for trial in range(trialStarts.size):
-                trialSpeed = np.mean(wheelData[trialStarts[trial]:trialEnds[trial]])
+                trialSpeed = np.mean(wheelData[round(trialStarts[trial]/wheelDownsampleFactor):round(trialEnds[trial]/wheelDownsampleFactor)])
                 if trialSpeed >= runThresh:
                     runningTrials.append(trial)
                 elif trialSpeed <= statThresh:
                     stationaryTrials.append(trial)
-        return stationaryTrials, runningTrials
+        return stationaryTrials, runningTrials, trialSpeed
     
     
     def analyzeRunning(self, units, protocol, plot=True):
@@ -1194,66 +1230,66 @@ class probeData():
             
             if 'gratings'==pro:
                 if splitRunning:
-                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames']
+                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames'][:-1]
                     trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['stimTime']
                     trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
                     trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
-                    statTrials, runTrials = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
                     
-                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials)
-                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials)
+                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials, saveTag='_stat')
+                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials, saveTag='_run')
                 else:
                     self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf')
 
             elif 'gratings_ori'==pro:
                 if splitRunning:
-                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames']
+                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames'][:-1]
                     trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['stimTime']
                     trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
                     trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
-                    statTrials, runTrials = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
                     
-                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials)
-                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials)
+                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials, saveTag='_stat')
+                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials, saveTag='_run')
                 else:
                     self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori')
 
             elif 'sparseNoise' in pro:
                 if splitRunning:
-                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames']
+                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames'][:-1]
                     trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['boxDuration']
                     trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
                     trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
-                    statTrials, runTrials = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
                     
-                    self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials)
-                    self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials)
+                    self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
+                    self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
                 else:                    
                     self.findRF(units, protocol=protocol, useCache=useCache)
             elif 'spots' in pro:
                 if splitRunning:
-                    trialStartFrames = self.visstimData[str(protocol)]['trialStartFrame']
+                    trialStartFrames = self.visstimData[str(protocol)]['trialStartFrame'][:-1]
                     trialDuration = (self.visstimData[str(protocol)]['trialNumFrames']).astype(np.int)
-                    trialEndFrames = trialStartFrames + trialDuration
+                    trialEndFrames = trialStartFrames + trialDuration[:-1]
                     frameSamples = self.visstimData[str(protocol)]['frameSamples']     
                     trialStarts = frameSamples[trialStartFrames]
                     trialEnds = frameSamples[trialEndFrames]
-                    statTrials, runTrials = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
                     
-                    self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=statTrials)
-                    self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials)
+                    self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
+                    self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
                 else:
                     self.analyzeSpots(units, protocol=protocol, useCache=useCache)
             elif 'checkerboard' in pro:
                 if splitRunning:
-                    trialStartFrame = self.visstimData[str(protocol)]['trialStartFrame']
+                    trialStartFrame = self.visstimData[str(protocol)]['trialStartFrame'][:-1]
                     trialDuration = (self.visstimData[str(protocol)]['trialNumFrames']).astype(int)
                     trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame]
                     trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame+trialDuration]
-                    statTrials, runTrials = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
                     
-                    self.analyzeCheckerboard(units, protocol=protocol, trials=statTrials)
-                    self.analyzeCheckerboard(units, protocol=protocol, trials=runTrials)
+                    self.analyzeCheckerboard(units, protocol=protocol, trials=statTrials, saveTag='_stat')
+                    self.analyzeCheckerboard(units, protocol=protocol, trials=runTrials, saveTag='_run')
                 else:
                     self.analyzeCheckerboard(units, protocol=protocol)
             else:
@@ -1456,7 +1492,9 @@ def getKwdInfo(dirPath=None):
     return zip(*[n[1:] for n in sorted(zip(startTime,kwdFiles,nSamples),key=lambda z: z[0])])
 
 
-def makeDat(kwdFiles):
+def makeDat(kwdFiles=None):
+    if kwdFiles is None:
+        kwdFiles, _ = getKwdInfo()
     dirPath = os.path.dirname(os.path.dirname(kwdFiles[0]))
     datFilePath = os.path.join(dirPath,os.path.basename(dirPath)+'.dat')
     datFile = open(datFilePath,'wb')
@@ -1467,7 +1505,7 @@ def makeDat(kwdFiles):
         while i<dset.shape[0]:
             (dset[i:i+dset.chunks[0],:128]).tofile(datFile)                        
             i += dset.chunks[0]
-        print('Completed file ' + str(filenum) + ' of ' + str(len(kwdFiles)))
+        print('Completed file ' + str(filenum + 1) + ' of ' + str(len(kwdFiles)))
     datFile.close()
     copyPath = r'\\10.128.38.3\data_local_1\corbett'
     print('copying dat file to ' + copyPath)
