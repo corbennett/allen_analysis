@@ -259,30 +259,39 @@ class probeData():
         return spikesPerTrial
         
             
-    def findRF(self, units=None, sigma = 2, plot = True, minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=None, fit=True, useCache=False, saveTag=''):
+    def findRF(self, units=None, sigma = 2, plot = True, plotSDF = False, minLatency = 0.05, maxLatency = 0.15, trials = None, protocol=None, fit=True, useCache=False, saveTag=''):
 
         units, unitsYPos = self.getOrderedUnits(units)
         
         if protocol is None:
             protocol = self.getProtocolIndex('sparseNoise')
         protocol = str(protocol)
+        
         if plot:        
-            plt.figure(figsize = (7.1, 3*len(units)))
-            gs = gridspec.GridSpec(len(units), 2) 
+            fig = plt.figure(figsize = (7.1, 3*len(units)))
+            gs = gridspec.GridSpec(len(units), 2)
+            
+        if trials is None:
+            trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
+        else:
+            trials = np.array(trials)
         
         minLatency *= self.sampleRate
         maxLatency *= self.sampleRate
    
-        xpos = np.sort(np.unique(self.visstimData[str(protocol)]['boxPositionHistory'][:, 0]))
-        ypos = np.sort(np.unique(self.visstimData[str(protocol)]['boxPositionHistory'][:, 1]))
+        xpos = np.unique(self.visstimData[str(protocol)]['boxPositionHistory'][trials, 0])
+        ypos = np.unique(self.visstimData[str(protocol)]['boxPositionHistory'][trials, 1])
         
-        posHistory = self.visstimData[str(protocol)]['boxPositionHistory'][:]
-        colorHistory = self.visstimData[str(protocol)]['boxColorHistory'][:, 0:1]        
+        posHistory = self.visstimData[str(protocol)]['boxPositionHistory'][trials]
+        colorHistory = self.visstimData[str(protocol)]['boxColorHistory'][trials, 0]        
         gridExtent = self.visstimData[str(protocol)]['gridBoundaries']
         
         if fit:
             onCenters = np.full((len(units),2),np.nan)
             offCenters = np.copy(onCenters)
+            
+        sdfSampInt = 0.001
+        sdfSigma = 0.01
         
         for uindex, unit in enumerate(units):
             if ('rf' + saveTag) in self.units[str(unit)] and useCache:
@@ -297,41 +306,39 @@ class probeData():
             else:
                 self.units[str(unit)]['rf' + saveTag] = {}
                 spikes = self.units[str(unit)]['times'][str(protocol)]
-                grid = list(itertools.product(xpos,ypos))
-                gridOnSpikes = np.zeros(len(grid))
-                gridOffSpikes = np.zeros(len(grid))
-                for index, pos in enumerate(grid):
-                    po = np.intersect1d(np.where(posHistory[:, 0] == pos[0])[0], np.where(posHistory[:, 1] == pos[1])[0])
-                    if trials is not None:
-                        po = np.intersect1d(po, trials)
-                    
-                    posOnTrials = np.intersect1d(po, np.where(colorHistory == 1)[0])
-                    posOffTrials = np.intersect1d(po, np.where(colorHistory == -1)[0])
-                    
-                    posOnFrames = self.visstimData[str(protocol)]['stimStartFrames'][posOnTrials]
-                    posOffFrames = self.visstimData[str(protocol)]['stimStartFrames'][posOffTrials]
-                    
-                    posOnSamples = self.visstimData[str(protocol)]['frameSamples'][posOnFrames]
-                    posOffSamples = self.visstimData[str(protocol)]['frameSamples'][posOffFrames]
-                    
-                    for p in posOnSamples:
-                        # gridOnSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
-                        gridOnSpikes[index] += np.count_nonzero(np.logical_and(spikes>=p+minLatency,spikes<p+maxLatency))
-                    
-                    for p in posOffSamples:
-                        # gridOffSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
-                        gridOffSpikes[index] += np.count_nonzero(np.logical_and(spikes>=p+minLatency,spikes<p+maxLatency))
-                    
-                    gridOnSpikes[index] /= posOnTrials.size
-                    gridOffSpikes[index] /= posOffTrials.size
+                gridOnSpikes = np.zeros((ypos.size,xpos.size))
+                gridOffSpikes = np.zeros_like(gridOnSpikes)
+                sdfOn = np.zeros((ypos.size,xpos.size,round((minLatency+maxLatency)/self.sampleRate/sdfSampInt)))
+                sdfOff = np.zeros_like(sdfOn)
+                for i,y in enumerate(ypos):
+                    for j,x in enumerate(xpos):
+                        po = np.logical_and(posHistory[:, 1] == y,posHistory[:, 0] == x)
+                        posOnTrials = np.logical_and(po, colorHistory == 1)
+                        posOffTrials = np.logical_and(po, colorHistory == -1)
+                        
+                        posOnFrames = self.visstimData[str(protocol)]['stimStartFrames'][trials][posOnTrials]
+                        posOffFrames = self.visstimData[str(protocol)]['stimStartFrames'][trials][posOffTrials]
+                        
+                        posOnSamples = self.visstimData[str(protocol)]['frameSamples'][posOnFrames]
+                        posOffSamples = self.visstimData[str(protocol)]['frameSamples'][posOffFrames]
+                        
+                        for p in posOnSamples:
+                            # gridOnSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
+                            gridOnSpikes[i,j] += np.count_nonzero(np.logical_and(spikes>=p+minLatency,spikes<p+maxLatency))
+                        
+                        for p in posOffSamples:
+                            # gridOffSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
+                            gridOffSpikes[i,j] += np.count_nonzero(np.logical_and(spikes>=p+minLatency,spikes<p+maxLatency))
+                        
+                        gridOnSpikes[i,j] /= posOnSamples.size
+                        gridOffSpikes[i,j] /= posOffSamples.size
+                        
+                        sdfOn[i,j,:],sdfTime = self.getMeanSDF(spikes,posOnSamples-minLatency,2*maxLatency,sdfSigma,sdfSampInt)
+                        sdfOff[i,j,:],_ = self.getMeanSDF(spikes,posOffSamples-minLatency,2*maxLatency,sdfSigma,sdfSampInt)
                     
                 # convert spike count to spike rate
                 gridOnSpikes = gridOnSpikes/(maxLatency-minLatency)*self.sampleRate
                 gridOffSpikes = gridOffSpikes/(maxLatency-minLatency)*self.sampleRate
-                 
-                # reshape and filter response
-                gridOnSpikes = gridOnSpikes.reshape(xpos.size,ypos.size).T  
-                gridOffSpikes = gridOffSpikes.reshape(xpos.size,ypos.size).T
                 
                 gaussianKernel = Gaussian2DKernel(stddev=sigma)
                 gridOnSpikes_filter = convolve(gridOnSpikes, gaussianKernel, boundary='extend')
@@ -368,13 +375,12 @@ class probeData():
                 self.units[str(unit)]['rf' + saveTag]['off_filter'] = gridOffSpikes_filter
                 self.units[str(unit)]['rf' + saveTag]['xpos'] = xpos
                 self.units[str(unit)]['rf' + saveTag]['ypos'] = ypos
-                
-#            return gridOnSpikes, gridOffSpikes, gridOnSpikes_filter, gridOffSpikes_filter
+            
             if plot:
                 maxVal = max(np.nanmax(gridOnSpikes_filter), np.nanmax(gridOffSpikes_filter))
                 minVal = min(np.nanmin(gridOnSpikes_filter), np.nanmin(gridOffSpikes_filter))
                 
-                a1 = plt.subplot(gs[uindex, 0])
+                a1 = fig.add_subplot(gs[uindex, 0])
                 a1.imshow(gridOnSpikes_filter, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]] )
                 if fit and onFit is not None:
                     a1.plot(onFit[0],onFit[1],'kx',markeredgewidth=2)
@@ -384,7 +390,7 @@ class probeData():
                     a1.set_ylim(gridExtent[[1,3]]-0.5)
                 a1.set_ylabel(str(unit)+', ypos = '+str(round(unitsYPos[uindex])), fontsize='x-small')
            
-                a2 = plt.subplot(gs[uindex, 1])
+                a2 = fig.add_subplot(gs[uindex, 1])
                 im = a2.imshow(gridOffSpikes_filter, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
                 if fit and offFit is not None:
                     a2.plot(offFit[0],offFit[1],'kx',markeredgewidth=2)
@@ -397,6 +403,23 @@ class probeData():
                     a2.set_title('off response')
                 plt.colorbar(im, ax= [a1, a2], fraction=0.05, shrink=0.5, pad=0.05)
                 a2.yaxis.set_visible(False)
+                
+            if plotSDF:
+                ymax = max(sdfOn.max(),sdfOff.max())
+                for sdf in (sdfOff,):
+                    sdfFig = plt.figure()
+                    sdfGS = gridspec.GridSpec(ypos.size,xpos.size)
+                    for i,_ in enumerate(ypos):
+                        for j,_ in enumerate(xpos):
+                            ax = sdfFig.add_subplot(sdfGS[ypos.size-1-i,j])
+                            ax.plot(sdfTime-minLatency/self.sampleRate,sdf[i,j,:])
+                            ax.spines['right'].set_visible(False)
+                            ax.spines['top'].set_visible(False)
+                            ax.spines['left'].set_visible(False)
+                            ax.spines['bottom'].set_visible(False)
+                            ax.set_xticks([])
+                            ax.set_yticks([])
+                            ax.set_ylim([0,ymax])
                 
         if plot and fit and len(units)>1:
             # comparison of RF and probe position
@@ -496,8 +519,9 @@ class probeData():
 
         if trials is None:
             trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
+        else:
+            trials = np.array(trials)
         
-        trials = np.array(trials)
         latencySamples = int(responseLatency*self.sampleRate)
         
         # ignore trials with bogus sf or tf
