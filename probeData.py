@@ -292,6 +292,7 @@ class probeData():
             
         sdfSampInt = 0.001
         sdfSigma = 0.01
+        sdfSamples = minLatency+2*maxLatency
         
         for uindex, unit in enumerate(units):
             if ('rf' + saveTag) in self.units[str(unit)] and useCache:
@@ -308,7 +309,7 @@ class probeData():
                 spikes = self.units[str(unit)]['times'][str(protocol)]
                 gridOnSpikes = np.zeros((ypos.size,xpos.size))
                 gridOffSpikes = np.zeros_like(gridOnSpikes)
-                sdfOn = np.zeros((ypos.size,xpos.size,round((minLatency+maxLatency)/self.sampleRate/sdfSampInt)))
+                sdfOn = np.zeros((ypos.size,xpos.size,round(sdfSamples/self.sampleRate/sdfSampInt)))
                 sdfOff = np.zeros_like(sdfOn)
                 for i,y in enumerate(ypos):
                     for j,x in enumerate(xpos):
@@ -333,8 +334,8 @@ class probeData():
                         gridOnSpikes[i,j] /= posOnSamples.size
                         gridOffSpikes[i,j] /= posOffSamples.size
                         
-                        sdfOn[i,j,:],sdfTime = self.getMeanSDF(spikes,posOnSamples-minLatency,2*maxLatency,sdfSigma,sdfSampInt)
-                        sdfOff[i,j,:],_ = self.getMeanSDF(spikes,posOffSamples-minLatency,2*maxLatency,sdfSigma,sdfSampInt)
+                        sdfOn[i,j,:],sdfTime = self.getMeanSDF(spikes,posOnSamples-minLatency,sdfSamples,sdfSigma,sdfSampInt)
+                        sdfOff[i,j,:],_ = self.getMeanSDF(spikes,posOffSamples-minLatency,sdfSamples,sdfSigma,sdfSampInt)
                     
                 # convert spike count to spike rate
                 gridOnSpikes = gridOnSpikes/(maxLatency-minLatency)*self.sampleRate
@@ -405,21 +406,31 @@ class probeData():
                 a2.yaxis.set_visible(False)
                 
             if plotSDF:
-                ymax = max(sdfOn.max(),sdfOff.max())
-                for sdf in (sdfOff,):
-                    sdfFig = plt.figure()
-                    sdfGS = gridspec.GridSpec(ypos.size,xpos.size)
+                sdfMax = max(sdfOn.max(),sdfOff.max())
+                xmax = sdfTime[-1]*1.2
+                ymax = sdfMax*1.2
+                for sdf,title in zip((sdfOn,sdfOff),('On','Off')):
+                    plt.figure(figsize=(5,5),facecolor='w')
+                    ax = plt.subplot(1,1,1)
+                    x = 0
+                    y = 0
                     for i,_ in enumerate(ypos):
                         for j,_ in enumerate(xpos):
-                            ax = sdfFig.add_subplot(sdfGS[ypos.size-1-i,j])
-                            ax.plot(sdfTime-minLatency/self.sampleRate,sdf[i,j,:])
-                            ax.spines['right'].set_visible(False)
-                            ax.spines['top'].set_visible(False)
-                            ax.spines['left'].set_visible(False)
-                            ax.spines['bottom'].set_visible(False)
-                            ax.set_xticks([])
-                            ax.set_yticks([])
-                            ax.set_ylim([0,ymax])
+                            ax.plot(x+sdfTime,y+sdf[i,j,:],color='k')
+                            x += xmax
+                        x = 0
+                        y += ymax
+                    ax.spines['right'].set_visible(False)
+                    ax.spines['top'].set_visible(False)
+                    ax.spines['left'].set_visible(False)
+                    ax.spines['bottom'].set_visible(False)
+                    ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
+                    ax.set_xticks([minLatency/self.sampleRate,minLatency/self.sampleRate+0.1])
+                    ax.set_xticklabels(['','100 ms'])
+                    ax.set_yticks([0,int(sdfMax)])
+                    ax.set_xlim([-xmax/1.1*0.1,xmax*xpos.size])
+                    ax.set_ylim([-ymax/1.1*0.1,ymax*ypos.size])
+                    ax.set_title(title)
                 
         if plot and fit and len(units)>1:
             # comparison of RF and probe position
