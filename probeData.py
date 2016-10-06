@@ -259,7 +259,7 @@ class probeData():
         return spikesPerTrial
         
             
-    def findRF(self, units=None, sigma = 2, plot = True, plotSDF = False, minLatency = 0.05, maxLatency = 0.15, trials = None, protocol=None, fit=True, useCache=False, saveTag=''):
+    def findRF(self, units=None, sigma = 2, plot = True, minLatency = 0.05, maxLatency = 0.15, trials = None, protocol=None, fit=True, useCache=False, saveTag=''):
 
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -268,8 +268,8 @@ class probeData():
         protocol = str(protocol)
         
         if plot:        
-            fig = plt.figure(figsize = (7.1, 3*len(units)))
-            gs = gridspec.GridSpec(len(units), 2)
+            fig = plt.figure(figsize = (10, 3*len(units)))
+            gs = gridspec.GridSpec(len(units), 6)
             
         if trials is None:
             trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
@@ -293,7 +293,8 @@ class probeData():
         sdfSampInt = 0.001
         sdfSigma = 0.01
         sdfSamples = minLatency+2*maxLatency
-        
+        fwOn = []
+        fwOff = []
         for uindex, unit in enumerate(units):
             if ('rf' + saveTag) in self.units[str(unit)] and useCache:
                 gridOnSpikes = self.units[str(unit)]['rf' + saveTag]['on']
@@ -346,14 +347,15 @@ class probeData():
                 gridOffSpikes_filter = convolve(gridOffSpikes, gaussianKernel, boundary='extend')
 #                gridOnSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOnSpikes, sigma)
 #                gridOffSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOffSpikes, sigma)
-                                
+                
+                pixPerDeg = self.visstimData[str(protocol)]['pixelsPerDeg']
+                elev, azim = ypos/pixPerDeg, xpos/pixPerDeg
+                onFit = offFit = None
                 if fit:
                     fitParams = []
-                    pixPerDeg = self.visstimData[str(protocol)]['pixelsPerDeg']
                     for d in (gridOnSpikes_filter,gridOffSpikes_filter):
                         # params: x0 , y0, sigX, sigY, theta, amplitude
                         data = np.copy(d)-d.min()
-                        elev, azim = ypos/pixPerDeg, xpos/pixPerDeg
                         i,j = np.unravel_index(np.argmax(data),data.shape)
                         initialParams = (azim[j], elev[i], azim[1]-azim[0], elev[1]-elev[0], 0, data.max())
                         try:
@@ -364,11 +366,24 @@ class probeData():
                             if offFit is not None and gridExtent[0]<offFit[0]<gridExtent[2] and gridExtent[1]<offFit[1]<gridExtent[3]:
                                 offCenters[uindex,:] = offFit[0:2]
                         except:
-                            onFit, offFit = [None, None]
                             print('fit failed')
-                   
-                    self.units[str(unit)]['rf' + saveTag]['onFit'] = onFit
-                    self.units[str(unit)]['rf' + saveTag]['offFit'] = offFit
+                            
+                self.units[str(unit)]['rf' + saveTag]['onFit'] = onFit
+                self.units[str(unit)]['rf' + saveTag]['offFit'] = offFit
+                    
+                
+                fwhm = {}
+                indexName = ['on', 'off']                
+                for ind, sdfs in enumerate([sdfOn, sdfOff]):                  
+                    fwhm[indexName[ind]] = {}
+                    maxTrace = np.where(sdfs == sdfs.max())
+                    maxData = sdfs[maxTrace[0][0], maxTrace[1][0], :]
+                    fwhm[indexName[ind]]['range'], fwhm[indexName[ind]]['fw'] = findFWatHM(maxData)
+                    fwhm[indexName[ind]]['trace'] = [maxTrace[0][0], maxTrace[1][0]] 
+                
+                fwOn.append(fwhm['on']['fw'])
+                fwOff.append(fwhm['off']['fw'])                
+                
                                         
                 self.units[str(unit)]['rf' + saveTag]['on'] = gridOnSpikes
                 self.units[str(unit)]['rf' + saveTag]['off'] = gridOffSpikes
@@ -381,45 +396,22 @@ class probeData():
                 maxVal = max(np.nanmax(gridOnSpikes_filter), np.nanmax(gridOffSpikes_filter))
                 minVal = min(np.nanmin(gridOnSpikes_filter), np.nanmin(gridOffSpikes_filter))
                 
-                a1 = fig.add_subplot(gs[uindex, 0])
-                a1.imshow(gridOnSpikes_filter, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]] )
-                if fit and onFit is not None:
-                    a1.plot(onFit[0],onFit[1],'kx',markeredgewidth=2)
-                    fitX,fitY = getEllipseXY(*onFit[:-1])
-                    a1.plot(fitX,fitY,'k',linewidth=2)
-                    a1.set_xlim(gridExtent[[0,2]]-0.5)
-                    a1.set_ylim(gridExtent[[1,3]]-0.5)
-                a1.set_ylabel(str(unit)+', ypos = '+str(round(unitsYPos[uindex])), fontsize='x-small')
-           
-                a2 = fig.add_subplot(gs[uindex, 1])
-                im = a2.imshow(gridOffSpikes_filter, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
-                if fit and offFit is not None:
-                    a2.plot(offFit[0],offFit[1],'kx',markeredgewidth=2)
-                    fitX,fitY = getEllipseXY(*offFit[:-1])
-                    a2.plot(fitX,fitY,'k',linewidth=2)
-                    a2.set_xlim(gridExtent[[0,2]]-0.5)
-                    a2.set_ylim(gridExtent[[1,3]]-0.5)
-                if uindex == 0:
-                    a1.set_title('on response')
-                    a2.set_title('off response')
-                plt.colorbar(im, ax= [a1, a2], fraction=0.05, shrink=0.5, pad=0.05)
-                a2.yaxis.set_visible(False)
-                
-            if plotSDF:
                 sdfMax = max(sdfOn.max(),sdfOff.max())
-                xmax = sdfTime[-1]*1.2
-                ymax = sdfMax*1.2
-                for sdf,title in zip((sdfOn,sdfOff),('On','Off')):
-                    plt.figure(figsize=(5,5),facecolor='w')
-                    ax = plt.subplot(1,1,1)
+                spacing = 0.2
+                sdfXMax = sdfTime[-1]
+                sdfYMax = sdfMax                
+                
+                for ind,(sdf,resp,fitPrm,title) in enumerate(zip((sdfOn,sdfOff),(gridOnSpikes_filter,gridOffSpikes_filter),(onFit,offFit),('On','Off'))):
+                    
+                    ax = fig.add_subplot(gs[uindex,ind*3:ind*3+2])
                     x = 0
                     y = 0
                     for i,_ in enumerate(ypos):
                         for j,_ in enumerate(xpos):
                             ax.plot(x+sdfTime,y+sdf[i,j,:],color='k')
-                            x += xmax
+                            x += sdfXMax*(1+spacing)
                         x = 0
-                        y += ymax
+                        y += sdfYMax*(1+spacing)
                     ax.spines['right'].set_visible(False)
                     ax.spines['top'].set_visible(False)
                     ax.spines['left'].set_visible(False)
@@ -428,9 +420,27 @@ class probeData():
                     ax.set_xticks([minLatency/self.sampleRate,minLatency/self.sampleRate+0.1])
                     ax.set_xticklabels(['','100 ms'])
                     ax.set_yticks([0,int(sdfMax)])
-                    ax.set_xlim([-xmax/1.1*0.1,xmax*xpos.size])
-                    ax.set_ylim([-ymax/1.1*0.1,ymax*ypos.size])
-                    ax.set_title(title)
+                    ax.set_xlim([-sdfXMax*spacing,sdfXMax*(1+spacing)*xpos.size])
+                    ax.set_ylim([-sdfYMax*spacing,sdfYMax*(1+spacing)*ypos.size])
+                    if ind==0:
+                        ax.set_ylabel(str(unit)+'\nypos = '+str(round(unitsYPos[uindex])), fontsize='medium')
+                    if uindex==0:
+                        ax.set_title(title,fontsize='medium')                    
+                    
+                    ax = fig.add_subplot(gs[uindex,ind*3+2])
+                    im = ax.imshow(resp, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]] )
+                    if fit and fitPrm is not None:
+                        ax.plot(fitPrm[0],fitPrm[1],'kx',markeredgewidth=2)
+                        fitX,fitY = getEllipseXY(*fitPrm[:-1])
+                        ax.plot(fitX,fitY,'k',linewidth=2)
+                        ax.set_xlim(gridExtent[[0,2]]-0.5)
+                        ax.set_ylim(gridExtent[[1,3]]-0.5)
+                    ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
+                    ax.set_xticks(np.round(azim[[0,-1]]))
+                    ax.set_yticks(np.round(elev[[0,-1]]))
+                    cb = plt.colorbar(im, ax=ax, fraction=0.05, shrink=0.5, pad=0.04)
+                    cb.ax.tick_params(length=0,labelsize='x-small')
+                    cb.set_ticks([math.ceil(minVal),int(maxVal)])
                 
         if plot and fit and len(units)>1:
             # comparison of RF and probe position
@@ -506,7 +516,8 @@ class probeData():
             ax.set_xlim(xlim)
             ax.set_ylim(gridExtent[[1,3]]+[-5,5])
             ax.set_xlabel('Probe Y Pos',fontsize='medium')
-    
+            
+        return fwOn, fwOff
     
     def analyzeGratings(self, units=None, trials = None, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', avgOri = True, fit = True, useCache=False, saveTag=''):
     
@@ -1761,6 +1772,27 @@ def getDSI(resp,theta):
     return dsi, prefTheta
 
 
-   
+def findFWatHM(data):
+    data = np.array(data)    
+    data -= data.min()
+    maxPoint = np.argmax(data)
+    maxVal = data[maxPoint]
+    hMax = maxVal/2.0
+    
+    hStart = np.nan
+    for i, point in enumerate(data[maxPoint::-1]):
+        if point <= hMax:
+            hStart = maxPoint - i
+            break
+    
+    hEnd = np.nan  
+    for i, point in enumerate(data[maxPoint:]):
+        if point <= hMax:
+            hEnd = i + maxPoint
+            break
+        
+    return [hStart, hEnd], hEnd-hStart
+
+
 if __name__=="__main__":
     pass       
