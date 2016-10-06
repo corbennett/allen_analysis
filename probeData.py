@@ -6,18 +6,21 @@ Created on Fri Jun 17 12:19:20 2016
 """
 
 from __future__ import division
-import datetime, h5py, itertools, json, math, os, shelve, shutil
+import datetime, h5py, itertools, json, math, ntpath, os, shelve, shutil
 import numpy as np
-import scipy.signal
-import scipy.optimize
 import scipy.ndimage.filters
+import scipy.optimize
+import scipy.signal
+import scipy.stats
 from matplotlib import pyplot as plt 
-import matplotlib.gridspec as gridspec
+from matplotlib import gridspec
+from matplotlib import cm
 from PyQt4 import QtGui
+from astropy.convolution import Gaussian2DKernel, convolve
+
 
 
 dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
-
 
 class probeData():
     
@@ -28,7 +31,7 @@ class probeData():
         self.wheelChannel = 134
         self.diodeChannel = 135
         self.sampleRate = 30000     
-   
+
 
     def loadKwd(self, filePath):
                 
@@ -47,8 +50,8 @@ class probeData():
         return datDict
         
         
-    def loadExperiment(self):
-        self.kwdFileList, nsamps = self.getKwdInfo()
+    def loadExperiment(self, loadRunningData=False):
+        self.kwdFileList, nsamps = getKwdInfo()
         filelist = self.kwdFileList
         filePaths = [os.path.dirname(f) for f in filelist]        
         
@@ -72,6 +75,7 @@ class probeData():
             
             visStimFound = False
             eyeDataFound = False
+            self.behaviorData[str(pro)] = {}
             for f in files:
                 if 'VisStim' in f:
                     self.getVisStimData(os.path.join(proPath, f), protocol=pro)
@@ -86,7 +90,10 @@ class probeData():
                 
             ttlFile = [f for f in files if f.endswith('kwe')][0]             
             self.getTTLData(filePath=os.path.join(proPath, ttlFile), protocol=pro)
-                    
+            
+            if loadRunningData:
+                self.behaviorData[str(pro)]['running'] = self.decodeWheel(self.d[pro]['data'][::500, self.wheelChannel]*self.d[pro]['gains'][self.wheelChannel])
+            
             if not visStimFound:
                 print('No vis stim data found for ' + os.path.basename(proPath))
             if not eyeDataFound:
@@ -115,7 +122,7 @@ class probeData():
             self.TTL[str(protocol)][self.TTLChannelLabels[chan]]['rising'] = timeSamples[np.intersect1d(eventsForChan, np.where(edges == 1))] - self.d[protocol]['firstAnalogSample']
             self.TTL[str(protocol)][self.TTLChannelLabels[chan]]['falling'] = timeSamples[np.intersect1d(eventsForChan, np.where(edges ==0))] - self.d[protocol]['firstAnalogSample']
         
-        if str(protocol) in self.visstimData.keys():
+        if str(protocol) in self.visstimData:
             if not hasattr(self, 'frameSamples'):
                 self.alignFramesToDiode(protocol=protocol)
     
@@ -126,7 +133,7 @@ class probeData():
         
         dataFile = h5py.File(filePath)        
         self.visstimData[str(protocol)] = {}
-        for params in dataFile.keys():
+        for params in dataFile:
             if dataFile[params].size > 1:
                 self.visstimData[str(protocol)][params] = dataFile[params][:]
             else:
@@ -137,7 +144,6 @@ class probeData():
         if filePath is None:        
             filePath = getFile()
         
-        self.behaviorData[str(protocol)] = {}        
         dataFile = h5py.File(filePath)
         frameTimes = dataFile['frameTimes'][:]
         frameInt = 1/60.0
@@ -181,24 +187,25 @@ class probeData():
         self.channelMapping = self.channelMapping[np.where(self.channelMapping > 0)] - 1
     
     
-    def decodeWheel(self, kernelLength = 0.5, protocol=0):
-        wheelData = -self.data[str(protocol)]['data'][:, self.wheelChannel] * self.gains[self.wheelChannel]
+    def decodeWheel(self, wheelData, kernelLength = 0.5, wheelSampleRate = 60.0):
+    
+        sampleRate = wheelSampleRate
         wheelData = wheelData - np.min(wheelData)
         wheelData = 2*np.pi*wheelData/np.max(wheelData)
-      
-        smoothFactor = 500.0       
-
-        wD = wheelData
-        angularWheelData = np.arctan2(np.sin(wD), np.cos(wD))
+          
+        smoothFactor = sampleRate/60.0       
+        angularWheelData = np.arctan2(np.sin(wheelData), np.cos(wheelData))
         angularWheelData = np.convolve(angularWheelData, np.ones(smoothFactor), 'same')/smoothFactor
-       
+        
+        artifactThreshold = (100.0/sampleRate)/7.6      #reasonable bound for how far (in radians) a mouse could move in one sample point (assumes top speed of 100 cm/s)
         angularDisplacement = (np.diff(angularWheelData) + np.pi)%(2*np.pi) - np.pi
-        angularDisplacement[np.abs(angularDisplacement) > 0.001] = 0
-        self.wheelData = np.convolve(angularDisplacement, np.ones(kernelLength*self.sampleRate), 'same')/(kernelLength*self.sampleRate)
-        self.wheelData *= 7.6*self.sampleRate
-        self.wheelData = np.insert(self.wheelData, 0, self.wheelData[0])
-
-
+        angularDisplacement[np.abs(angularDisplacement) > artifactThreshold ] = 0
+        wheelData = np.convolve(angularDisplacement, np.ones(kernelLength*sampleRate), 'same')/(kernelLength*sampleRate)
+        wheelData *= 7.6*sampleRate
+        wheelData = np.insert(wheelData, 0, wheelData[0])
+        
+        return wheelData
+        
     def filterChannel(self, chan, cutoffFreqs, protocol=0):
         Wn = np.array(cutoffFreqs)/(self.sampleRate/2)        
         b,a = scipy.signal.butter(4, Wn, btype='bandpass')
@@ -243,45 +250,26 @@ class probeData():
             except:
                 continue
         return aligned
-                
-            
-    def parseRunning(self, runThresh = 5.0, statThresh = 1.0, trialStarts = None, trialEnds = None):
-        if not hasattr(self, 'wheelData'):
-            self.decodeWheel()
-            
-        self.runningPoints = np.where(np.abs(self.wheelData) > runThresh)[0]
-        self.stationaryPoints = np.where(np.abs(self.wheelData) < statThresh)[0]
-        
-        if trialStarts is not None:
-            self.runningTrials = []
-            self.stationaryTrials = []
-            for trial in xrange(trialStarts.size):
-                trialSpeed = np.mean(self.wheelData[trialStarts[trial]:trialEnds[trial]])
-                if trialSpeed >= runThresh:
-                    self.runningTrials.append(trial)
-                elif trialSpeed <= statThresh:
-                    self.stationaryTrials.append(trial)
      
                
-    def findSpikesPerTrial(self, trialStarts, trialEnds, spikes):
-        
+    def findSpikesPerTrial(self, trialStarts, trialEnds, spikes): 
         spikesPerTrial = np.zeros(trialStarts.size)
-        for trialNum in xrange(trialStarts.size):
-            trialSamples = np.arange(trialStarts[trialNum], trialEnds[trialNum])    
-            spikesPerTrial[trialNum] = np.intersect1d(trialSamples, spikes).size
-        
+        for trialNum in range(trialStarts.size):
+            spikesPerTrial[trialNum] = np.count_nonzero(np.logical_and(spikes>=trialStarts[trialNum],spikes<=trialEnds[trialNum]))
         return spikesPerTrial
         
             
-    def findRF(self, units, sigma = 2, plot = True, minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=1, fit=False, useCache=True):
-        if units is None:
-            units = self.units.keys()
-        if type(units) is int:
-            units = [units]        
+    def findRF(self, units=None, sigma = 2, plot = True, minLatency = 0.03, maxLatency = 0.13, trials = None, protocol=None, fit=True, useCache=False, saveTag=''):
+
+        units, unitsYPos = self.getOrderedUnits(units)
+        
+        if protocol is None:
+            protocol = self.getProtocolIndex('sparseNoise')
+        protocol = str(protocol)
         if plot:        
             plt.figure(figsize = (7.1, 3*len(units)))
-            gs = gridspec.GridSpec(len(units), 2)
-            
+            gs = gridspec.GridSpec(len(units), 2) 
+        
         minLatency *= self.sampleRate
         maxLatency *= self.sampleRate
    
@@ -292,18 +280,22 @@ class probeData():
         colorHistory = self.visstimData[str(protocol)]['boxColorHistory'][:, 0:1]        
         gridExtent = self.visstimData[str(protocol)]['gridBoundaries']
         
+        if fit:
+            onCenters = np.full((len(units),2),np.nan)
+            offCenters = np.copy(onCenters)
+        
         for uindex, unit in enumerate(units):
-            if ('rf' in self.units[str(unit)].keys()) and useCache:
-                gridOnSpikes = self.units[str(unit)]['rf']['on']
-                gridOffSpikes = self.units[str(unit)]['rf']['off']
-                gridOnSpikes_filter = self.units[str(unit)]['rf']['on_filter']
-                gridOffSpikes_filter = self.units[str(unit)]['rf']['off_filter']
-                xpos = self.units[str(unit)]['rf']['xpos']
-                ypos = self.units[str(unit)]['rf']['ypos']
-                onFit = self.units[str(unit)]['rf']['onFit']
-                offFit = self.units[str(unit)]['rf']['offFit']
+            if ('rf' + saveTag) in self.units[str(unit)] and useCache:
+                gridOnSpikes = self.units[str(unit)]['rf' + saveTag]['on']
+                gridOffSpikes = self.units[str(unit)]['rf' + saveTag]['off']
+                gridOnSpikes_filter = self.units[str(unit)]['rf' + saveTag]['on_filter']
+                gridOffSpikes_filter = self.units[str(unit)]['rf' + saveTag]['off_filter']
+                xpos = self.units[str(unit)]['rf' + saveTag]['xpos']
+                ypos = self.units[str(unit)]['rf' + saveTag]['ypos']
+                onFit = self.units[str(unit)]['rf' + saveTag]['onFit']
+                offFit = self.units[str(unit)]['rf' + saveTag]['offFit']
             else:
-                self.units[str(unit)]['rf'] = {}
+                self.units[str(unit)]['rf' + saveTag] = {}
                 spikes = self.units[str(unit)]['times'][str(protocol)]
                 grid = list(itertools.product(xpos,ypos))
                 gridOnSpikes = np.zeros(len(grid))
@@ -323,19 +315,29 @@ class probeData():
                     posOffSamples = self.visstimData[str(protocol)]['frameSamples'][posOffFrames]
                     
                     for p in posOnSamples:
-                        gridOnSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
+                        # gridOnSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
+                        gridOnSpikes[index] += np.count_nonzero(np.logical_and(spikes>=p+minLatency,spikes<p+maxLatency))
                     
                     for p in posOffSamples:
-                        gridOffSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
+                        # gridOffSpikes[index] += np.intersect1d(np.arange(p+minLatency, p+maxLatency), spikes).size
+                        gridOffSpikes[index] += np.count_nonzero(np.logical_and(spikes>=p+minLatency,spikes<p+maxLatency))
                     
-                    gridOnSpikes[index] = gridOnSpikes[index]/float(posOnTrials.size)
-                    gridOffSpikes[index] = gridOffSpikes[index]/float(posOffTrials.size)
+                    gridOnSpikes[index] /= posOnTrials.size
+                    gridOffSpikes[index] /= posOffTrials.size
                     
-                gridOnSpikes = gridOnSpikes.reshape(xpos.size,ypos.size).T    
-                gridOffSpikes = gridOffSpikes.reshape(xpos.size,ypos.size).T  
-                gridOnSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOnSpikes, sigma)
-                gridOffSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOffSpikes, sigma)
-               
+                # convert spike count to spike rate
+                gridOnSpikes = gridOnSpikes/(maxLatency-minLatency)*self.sampleRate
+                gridOffSpikes = gridOffSpikes/(maxLatency-minLatency)*self.sampleRate
+                 
+                # reshape and filter response
+                gridOnSpikes = gridOnSpikes.reshape(xpos.size,ypos.size).T  
+                gridOffSpikes = gridOffSpikes.reshape(xpos.size,ypos.size).T
+                
+                gaussianKernel = Gaussian2DKernel(stddev=sigma)
+                gridOnSpikes_filter = convolve(gridOnSpikes, gaussianKernel, boundary='extend')
+                gridOffSpikes_filter = convolve(gridOffSpikes, gaussianKernel, boundary='extend')
+#                gridOnSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOnSpikes, sigma)
+#                gridOffSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOffSpikes, sigma)
                                 
                 if fit:
                     fitParams = []
@@ -343,240 +345,407 @@ class probeData():
                     for d in (gridOnSpikes_filter,gridOffSpikes_filter):
                         # params: x0 , y0, sigX, sigY, theta, amplitude
                         data = np.copy(d)-d.min()
-                        elev, azi = ypos/pixPerDeg, xpos/pixPerDeg
-                        j,i = np.unravel_index(np.argmax(data),data.shape)
-                        initialParams = (azi[j], elev[i], azi[1]-azi[0], elev[1]-elev[0], 0, data.max())
-                        fitParams.append(fitGauss2D(azi,elev,data,initialParams))
-                    onFit,offFit = fitParams
-                    self.units[str(unit)]['rf']['onFit'] = onFit
-                    self.units[str(unit)]['rf']['offFit'] = offFit
+                        elev, azim = ypos/pixPerDeg, xpos/pixPerDeg
+                        i,j = np.unravel_index(np.argmax(data),data.shape)
+                        initialParams = (azim[j], elev[i], azim[1]-azim[0], elev[1]-elev[0], 0, data.max())
+                        try:
+                            fitParams.append(fitGauss2D(azim,elev,data,initialParams))
+                            onFit,offFit = fitParams
+                            if onFit is not None and gridExtent[0]<onFit[0]<gridExtent[2] and gridExtent[1]<onFit[1]<gridExtent[3]:
+                                onCenters[uindex,:] = onFit[0:2]
+                            if offFit is not None and gridExtent[0]<offFit[0]<gridExtent[2] and gridExtent[1]<offFit[1]<gridExtent[3]:
+                                offCenters[uindex,:] = offFit[0:2]
+                        except:
+                            onFit, offFit = [None, None]
+                            print('fit failed')
+                   
+                    self.units[str(unit)]['rf' + saveTag]['onFit'] = onFit
+                    self.units[str(unit)]['rf' + saveTag]['offFit'] = offFit
                                         
-                self.units[str(unit)]['rf']['on'] = gridOnSpikes
-                self.units[str(unit)]['rf']['off'] = gridOffSpikes
-                self.units[str(unit)]['rf']['on_filter'] = gridOnSpikes_filter
-                self.units[str(unit)]['rf']['off_filter'] = gridOffSpikes_filter
-                self.units[str(unit)]['rf']['xpos'] = xpos
-                self.units[str(unit)]['rf']['ypos'] = ypos
+                self.units[str(unit)]['rf' + saveTag]['on'] = gridOnSpikes
+                self.units[str(unit)]['rf' + saveTag]['off'] = gridOffSpikes
+                self.units[str(unit)]['rf' + saveTag]['on_filter'] = gridOnSpikes_filter
+                self.units[str(unit)]['rf' + saveTag]['off_filter'] = gridOffSpikes_filter
+                self.units[str(unit)]['rf' + saveTag]['xpos'] = xpos
+                self.units[str(unit)]['rf' + saveTag]['ypos'] = ypos
                 
+#            return gridOnSpikes, gridOffSpikes, gridOnSpikes_filter, gridOffSpikes_filter
             if plot:
-                maxVal = max(np.max(gridOnSpikes_filter), np.max(gridOffSpikes_filter))
-                minVal = min(np.min(gridOnSpikes_filter), np.min(gridOffSpikes_filter))
+                maxVal = max(np.nanmax(gridOnSpikes_filter), np.nanmax(gridOffSpikes_filter))
+                minVal = min(np.nanmin(gridOnSpikes_filter), np.nanmin(gridOffSpikes_filter))
                 
                 a1 = plt.subplot(gs[uindex, 0])
-                a1.imshow(gridOnSpikes_filter, clim=[minVal, maxVal], interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]] )
+                a1.imshow(gridOnSpikes_filter, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]] )
                 if fit and onFit is not None:
-                    xlim = a1.get_xlim()
-                    ylim = a1.get_ylim()
                     a1.plot(onFit[0],onFit[1],'kx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*onFit[:-1])
                     a1.plot(fitX,fitY,'k',linewidth=2)
-                    a1.set_xlim(xlim)
-                    a1.set_ylim(ylim)
-                a1.set_ylabel(str(unit),fontsize='x-small')
+                    a1.set_xlim(gridExtent[[0,2]]-0.5)
+                    a1.set_ylim(gridExtent[[1,3]]-0.5)
+                a1.set_ylabel(str(unit)+', ypos = '+str(round(unitsYPos[uindex])), fontsize='x-small')
            
                 a2 = plt.subplot(gs[uindex, 1])
-                im = a2.imshow(gridOffSpikes_filter, clim=[minVal, maxVal], interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
+                im = a2.imshow(gridOffSpikes_filter, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
                 if fit and offFit is not None:
-                    xlim = a2.get_xlim()
-                    ylim = a2.get_ylim()
                     a2.plot(offFit[0],offFit[1],'kx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*offFit[:-1])
                     a2.plot(fitX,fitY,'k',linewidth=2)
-                    a2.set_xlim(xlim)
-                    a2.set_ylim(ylim)
+                    a2.set_xlim(gridExtent[[0,2]]-0.5)
+                    a2.set_ylim(gridExtent[[1,3]]-0.5)
                 if uindex == 0:
                     a1.set_title('on response')
                     a2.set_title('off response')
                 plt.colorbar(im, ax= [a1, a2], fraction=0.05, shrink=0.5, pad=0.05)
                 a2.yaxis.set_visible(False)
+                
+        if plot and fit and len(units)>1:
+            # comparison of RF and probe position
+            onIncluded = np.logical_not(np.isnan(onCenters[:,0]))
+            offIncluded = np.logical_not(np.isnan(offCenters[:,0]))
+            unitsYPos = np.array(unitsYPos)
+            # __LinFit__ = (slope, intercept, r-value, p-value, stderror)
+            if np.count_nonzero(onIncluded)>1:
+                onLinFitAzim = scipy.stats.linregress(unitsYPos[onIncluded],onCenters[onIncluded,0])
+                onLinFitElev = scipy.stats.linregress(unitsYPos[onIncluded],onCenters[onIncluded,1])
+            if np.count_nonzero(offIncluded)>1:
+                offLinFitAzim = scipy.stats.linregress(unitsYPos[offIncluded],offCenters[offIncluded,0])
+                offLinFitElev = scipy.stats.linregress(unitsYPos[offIncluded],offCenters[offIncluded,1]) 
+            
+            probePos = [self.units[n]['ypos'] for n in self.units]
+            xlim = np.array([min(probePos)-10,max(probePos)+10])            
+            
+            # on azimuth
+            plt.figure(facecolor='w')
+            ax = plt.subplot(2,2,1)
+            if np.count_nonzero(onIncluded)>1:
+                ax.plot(xlim,onLinFitAzim[0]*xlim+onLinFitAzim[1],color='0.6')
+                ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(onLinFitAzim[2]**2,2))+', p = '+str(round(onLinFitAzim[3],2)),
+                        transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
+            ax.plot(unitsYPos,onCenters[:,0],'ro')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_xlim(xlim)
+            ax.set_ylim(gridExtent[[0,2]]+[-5,5])
+            ax.set_ylabel('Azimuth',fontsize='medium')
+            ax.set_title('On',fontsize='medium')
+            
+            # off azimuth
+            ax = plt.subplot(2,2,2)
+            if np.count_nonzero(offIncluded)>1:
+                ax.plot(xlim,offLinFitAzim[0]*xlim+offLinFitAzim[1],color='0.6')
+                ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(offLinFitAzim[2]**2,2))+', p = '+str(round(offLinFitAzim[3],2)),
+                        transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
+            ax.plot(unitsYPos,offCenters[:,0],'bo')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_xlim(xlim)
+            ax.set_ylim(gridExtent[[0,2]]+[-5,5])
+            ax.set_title('Off',fontsize='medium')
+            
+            # on elevation
+            ax = plt.subplot(2,2,3)
+            if np.count_nonzero(onIncluded)>1:
+                ax.plot(xlim,onLinFitElev[0]*xlim+onLinFitElev[1],color='0.6')
+                ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(onLinFitElev[2]**2,2))+', p = '+str(round(onLinFitElev[3],2)),
+                        transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
+            ax.plot(unitsYPos,onCenters[:,1],'ro')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_xlim(xlim)
+            ax.set_ylim(gridExtent[[1,3]]+[-5,5])
+            ax.set_xlabel('Probe Y Pos',fontsize='medium')
+            ax.set_ylabel('Elevation',fontsize='medium')
+            
+            # off elevation
+            ax = plt.subplot(2,2,4)
+            if np.count_nonzero(offIncluded)>1:
+                ax.plot(xlim,offLinFitElev[0]*xlim+offLinFitElev[1],color='0.6')
+                ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(offLinFitElev[2]**2,2))+', p = '+str(round(offLinFitElev[3],2)),
+                        transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
+            ax.plot(unitsYPos,offCenters[:,1],'bo')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            ax.set_xlim(xlim)
+            ax.set_ylim(gridExtent[[1,3]]+[-5,5])
+            ax.set_xlabel('Probe Y Pos',fontsize='medium')
     
     
-    def analyzeGratings(self, units, trials = None, responseLatency = 0.05, plot=True, protocol=3, fit = True, useCache=True):
-        
-        if units is None:
-            units = self.units.keys()
-        if type(units) is int:
-            units = [units]        
+    def analyzeGratings(self, units=None, trials = None, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', fit = True, useCache=False, saveTag=''):
+    
+        units, unitsYPos = self.getOrderedUnits(units) 
+            
+        if protocol is None:
+            if protocolType=='stf':
+                label = 'gratings'
+            elif protocolType=='ori':
+                label = 'gratings_ori'
+            protocol = self.getProtocolIndex(label)
+        protocol = str(protocol)
+               
         if plot:        
             plt.figure(figsize = (7.1, 3*len(units)))
-            gs = gridspec.GridSpec(len(units), 3)                
-        
-        trialSF = self.visstimData[str(protocol)]['stimulusHistory_sf']
-        trialTF = self.visstimData[str(protocol)]['stimulusHistory_tf']
-        trialOri = self.visstimData[str(protocol)]['stimulusHistory_ori']
-        trialContrast = self.visstimData[str(protocol)]['stimulusHistory_contrast']
+            gs = gridspec.GridSpec(len(units), 2)
 
-        sf = np.unique(trialSF)
-        tf = np.unique(trialTF)
-        ori = np.unique(trialOri)
-                
-        responseLatency *= self.sampleRate
+        if trials is None:
+            trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
+        
+        trials = np.array(trials)
+        latencySamples = int(responseLatency*self.sampleRate)
+        
+        #ignore trials with bogus sf or tf
+        trialContrast = self.visstimData[str(protocol)]['stimulusHistory_contrast'][trials]
+        trialSF = self.visstimData[str(protocol)]['stimulusHistory_sf'][trials]
+        trialTF = self.visstimData[str(protocol)]['stimulusHistory_tf'][trials]
+        tol = 1e-9
+        sf = np.copy(self.visstimData[protocol]['sf'])
+        sf = sf[np.logical_and(sf>0.01-tol,sf<0.32+tol)]
+        tf = np.copy(self.visstimData[protocol]['tf'])
+        tf = tf[np.logical_and(tf>0.5-tol,tf<8+tol)]
+        stfTrialsToUse = np.logical_and(np.logical_and(trialSF>0.01-tol,trialSF<0.32+tol),
+                                        np.logical_and(trialTF>0.5-tol,trialTF<8+tol))
+        trialsToUse = np.logical_or(np.isclose(trialContrast,0),stfTrialsToUse)
+
+        trials = trials[trialsToUse]         
+        
+        trialContrast = trialContrast[trialsToUse]
+        trialSF = trialSF[trialsToUse]
+        trialTF = trialTF[trialsToUse]
+        
+        # as presented ori 0 is rightward moving vertical bars and ori 90 is downward moving horizontal bars
+        # change to more typical convention (90 up)
+        trialOri = np.copy(self.visstimData[str(protocol)]['stimulusHistory_ori'][trials])
+        trialOri[trialOri>0] = -(trialOri[trialOri>0]-360)
+        ori = np.copy(self.visstimData[protocol]['ori'])
+        ori[ori>0] = -(ori[ori>0]-360)
+        ori = np.sort(ori)        
+        
+        trialStartFrame = self.visstimData[str(protocol)]['stimStartFrames'][trials]
+        trialDuration = self.visstimData[str(protocol)]['stimTime']
+        trialStartSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame] + latencySamples
+        trialEndSamples = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame+trialDuration]
         
         for uindex, unit in enumerate(units):
-            if ('stf' in self.units[str(unit)].keys()) and useCache:
-                stfMat = self.units[str(unit)]['stf']['stfMat']
-                sf = self.units[str(unit)]['stf']['sf']
-                tf = self.units[str(unit)]['stf']['tf']
-                fitParams = self.units[str(unit)]['stf']['fitParams']
+            if ('stf' + saveTag) in self.units[str(unit)] and protocolType=='stf' and useCache:
+                stfMat = self.units[str(unit)]['stf' + saveTag]['stfMat']
+                sf = self.units[str(unit)]['stf' + saveTag]['sf']
+                tf = self.units[str(unit)]['stf' + saveTag]['tf']
+                fitParams = self.units[str(unit)]['stf' + saveTag]['fitParams']
+            elif ('ori' + saveTag) in self.units[str(unit)] and protocolType=='ori' and useCache:
+                oriList = self.units[str(unit)]['ori' + saveTag]['tuningCurve']
             else:
-                self.units[str(unit)]['stf'] = {}
-                spikes = self.units[str(unit)]['times'][str(protocol)]
+                self.units[str(unit)][protocolType + saveTag] = {}
                 
                 #spontaneous firing rate taken from interspersed gray trials
                 spontRate = 0
                 spontCount = 0
                 
                 stfMat = np.zeros([tf.size, sf.size])
-                stfCountMat = np.zeros([sf.size, tf.size])
-                oriVect = np.zeros(ori.size)
-                oriCountVect = np.zeros(ori.size)
-        
-                #find and record spikes for every trial
-                trialResponse = np.zeros(trialSF.size)
-                for trial in xrange(trialSF.size-1):
-                    trialStartFrame = self.visstimData[str(protocol)]['stimStartFrames'][trial]
-                    trialEndFrame = trialStartFrame + self.visstimData[str(protocol)]['stimTime']
-                    trialSamples = np.arange(self.visstimData[str(protocol)]['frameSamples'][trialStartFrame] + responseLatency, self.visstimData[str(protocol)]['frameSamples'][trialEndFrame] + responseLatency)    
+                stfCountMat = np.zeros([tf.size, sf.size])
+                oriList = [[] for i in range(ori.size)]
                     
-                    spikesThisTrial = np.intersect1d(spikes, trialSamples).size
-                    trialResponse[trial] = self.sampleRate*spikesThisTrial/(float(trialSamples.size))
-                
+                spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,self.units[str(unit)]['times'][protocol])
+                trialResponse = spikesPerTrial/((trialEndSamples-trialStartSamples)/self.sampleRate)
                 
                 #make STF mat for specified trials (default all trials)
-                if trials is None:
-                    trials = np.arange(trialSF.size - 1)
-                
-                for trial in trials:
+                for trial,_ in enumerate(trials):
                     spikeRateThisTrial = trialResponse[trial]
                     
                     if trialContrast[trial] > 0:
-                        sfIndex = int(np.where(sf == trialSF[trial])[0])
-                        tfIndex = int(np.where(tf == trialTF[trial])[0])
-                        oriIndex = int(np.where(ori == trialOri[trial])[0])
-                            
+                
+                        sfIndex = np.where(np.isclose(sf, trialSF[trial]))[0]
+                        tfIndex = np.where(np.isclose(tf, trialTF[trial]))[0]
+ 
                         stfMat[tfIndex, sfIndex] += spikeRateThisTrial
                         stfCountMat[tfIndex, sfIndex] += 1
-                        
-                        oriVect[oriIndex] += spikeRateThisTrial
-                        oriCountVect[oriIndex] += 1        
+                        oriIndex = np.where(np.isclose(ori,trialOri[trial]))[0]
+                        oriList[oriIndex].append(spikeRateThisTrial)
                     else:
                         spontRate += spikeRateThisTrial
                         spontCount += 1
                 
-                spontRate /= spontCount
+                if spontCount>0:
+                    spontRate /= spontCount
+                else:
+                    spontRate = np.nan
+                
+                self.units[str(unit)][protocolType + saveTag]['spontRate'] = spontRate
+                stfCountMat[stfCountMat==0] = np.nan
+                
                 stfMat /= stfCountMat
-                stfMat -= spontRate
+#                stfMat -= spontRate
+                
+                spikes = self.units[str(unit)]['times'][protocol]
+                f1f0 = np.zeros((len(tf),len(sf)))
+                for i,tfi in enumerate(tf):
+                    for j,sfj in enumerate(sf):
+                        trialIndex = np.where(np.logical_and(trialContrast>0+tol,np.logical_and(np.isclose(trialTF,tfi),np.isclose(trialSF,sfj))))[0]
+                        if len(trialIndex)>0:
+                            sdf,bins = self.getMeanSDF(spikes,trialStartSamples[trialIndex],max(trialEndSamples[trialIndex]-trialStartSamples[trialIndex]))
+                            f,pwr = scipy.signal.welch(sdf,1/bins[1],nperseg=sdf.size,detrend='constant',scaling='spectrum')
+                            pwr **= 0.5
+                            f1Ind = np.argmin(np.absolute(f-tfi))
+                            f1f0[i,j] = pwr[f1Ind-1:f1Ind+2].max()/sdf.mean()
+                
+                oriMean = np.zeros(len(oriList))                
+                oriError = np.zeros(len(oriList))
+                for oindex in range(len(oriList)):
+                    oriMean[oindex] = np.mean(np.array(oriList[oindex]))
+                    oriError[oindex] = np.std(np.array(oriList[oindex]))
             
-                if fit:
+                
+                if protocolType=='ori':
+                    dsi,prefDir = getDSI(oriMean,ori)
+                    osi,prefOri = getDSI(oriMean,2*ori)
+                    prefOri /= 2
+                    self.units[str(unit)]['ori' + saveTag]['dsi'] = [dsi, prefDir]
+                    self.units[str(unit)]['ori' + saveTag]['osi'] = [osi, prefOri]
+                    self.units[str(unit)]['ori' + saveTag]['tuningCurve'] = [oriMean, oriError]
+                
+                if fit and protocolType=='stf':
                     # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude
-                    j,i = np.unravel_index(np.argmax(stfMat),stfMat.shape)
-                    initialParams = (sf[j], tf[i], 1, 1, 0.5, stfMat.max())
-                    fitParams = fitStfLogGauss2D(sf,tf,stfMat,initialParams)
-                    self.units[str(unit)]['stf']['fitParams'] = fitParams
+                    if stfMat.max()<0:
+                        fitParams = None
+                    else:
+                        i,j = np.unravel_index(np.argmax(stfMat),stfMat.shape)
+                        initialParams = (sf[j], tf[i], 1, 1, 0.5, stfMat.max()-spontRate)
+                        try:
+                            fitParams = fitStfLogGauss2D(sf,tf,stfMat-spontRate,initialParams)
+                        except:
+                            fitParams = None
+                            print('fit failed')
+                            
+                    self.units[str(unit)]['stf' + saveTag]['fitParams'] = fitParams
                     
-                self.units[str(unit)]['stf']['stfMat'] = stfMat
-                self.units[str(unit)]['stf']['sf'] = sf
-                self.units[str(unit)]['stf']['tf'] = tf
+                if protocolType=='stf':
+                    self.units[str(unit)]['stf' + saveTag]['stfMat'] = stfMat
+                    self.units[str(unit)]['stf' + saveTag]['sf'] = sf
+                    self.units[str(unit)]['stf' + saveTag]['tf'] = tf
         
             if plot:
-                xyNan = np.transpose(np.where(np.isnan(stfMat)))
-                stfMat[np.isnan(stfMat)] = 0
-               
-                a1 = plt.subplot(gs[uindex, 0])
-                plt.xlabel('sf')
-                plt.ylabel('tf')
-                plt.title(str(unit))
-                cLim = max(1,np.max(abs(stfMat)))
-                im = a1.imshow(stfMat, clim=(-cLim,cLim), cmap='bwr', origin = 'lower', interpolation='none')
-                for xypair in xyNan:    
-                    a1.text(xypair[1], xypair[0], 'no trials', color='white', ha='center')
-                if fit and fitParams is not None:
-                    xlim = a1.get_xlim()
-                    ylim = a1.get_ylim()
-                    a1.plot(np.log2(fitParams[0])-np.log2(sf[0]),np.log2(fitParams[1])-np.log2(tf[0]),'kx',markeredgewidth=2)
-                    fitX,fitY = getStfContour(sf,tf,fitParams)
-                    a1.plot(fitX,fitY,'k',linewidth=2)
-                    a1.set_xlim(xlim)
-                    a1.set_ylim(ylim)                
-                
-                a1.set_xticklabels(np.insert(sf, 0, 0))
-                a1.set_yticklabels(np.insert(tf, 0, 0))
-                plt.colorbar(im, ax=a1, fraction=0.05, shrink=0.5, pad=0.05)
-                
-                a2 = plt.subplot(gs[uindex,1])
-                values = np.mean(stfMat, axis=0)
-                error = np.std(stfMat, axis=0)
-                a2.plot(sf, values)
-                plt.fill_between(sf, values+error, values-error, alpha=0.3)
-                plt.xlabel('sf')
-                plt.ylabel('spikes')
-                plt.xticks(sf)
-                
-                a3 = plt.subplot(gs[uindex, 2])
-                values = np.mean(stfMat, axis=1)
-                error = np.std(stfMat, axis=1)
-                a3.plot(tf, values)
-                plt.fill_between(tf, values+error, values-error, alpha=0.3)
-                plt.xlabel('tf')
-                plt.ylabel('spikes')
-                plt.xticks(tf)
+                if protocolType=='stf':                
+                    xyNan = np.transpose(np.where(np.isnan(stfMat)))
+                    stfMat[np.isnan(stfMat)] = 0
+                   
+                    a1 = plt.subplot(gs[uindex,0])
+                    plt.xlabel('sf')
+                    plt.ylabel('tf')
+                    plt.title(str(unit))
+                    centerPoint = spontRate if not np.isnan(spontRate) else np.nanmedian(stfMat)
+                    cLim = np.nanmax(abs(stfMat - centerPoint))
+                    im = a1.imshow(stfMat, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
+                    for xypair in xyNan:    
+                        a1.text(xypair[1], xypair[0], 'nan', color='white', ha='center')
+                    if fit and fitParams is not None:
+                        a1.plot(np.log2(fitParams[0])-np.log2(sf[0]),np.log2(fitParams[1])-np.log2(tf[0]),'kx',markeredgewidth=2)
+                        fitX,fitY = getStfContour(sf,tf,fitParams)
+                        a1.plot(fitX,fitY,'k',linewidth=2)
+                        a1.set_xlim([-0.5,sf.size-0.5])
+                        a1.set_ylim([-0.5,tf.size-0.5])                
+                    a1.set_xticks(range(sf.size))
+                    a1.set_yticks(range(tf.size))
+                    a1.set_xticklabels(sf)
+                    a1.set_yticklabels(tf)
+                    plt.colorbar(im, ax=a1, fraction=0.05, shrink=0.5, pad=0.05)
+                    
+                    a2 = plt.subplot(gs[uindex,1])
+                    plt.xlabel('sf')
+                    im2 = a2.imshow(f1f0, clim=(0,f1f0.max()), cmap='gray', origin = 'lower', interpolation='none')
+                    a2.set_xticks(range(sf.size))
+                    a2.set_yticks(range(tf.size))
+                    a2.set_xticklabels(sf)
+                    a2.set_yticklabels([])
+                    plt.colorbar(im2, ax=a2, fraction=0.05, shrink=0.5, pad=0.05)
+                    
+#                    a2 = plt.subplot(gs[uindex,2])
+#                    values = np.mean(stfMat, axis=0)
+#                    error = np.std(stfMat, axis=0)
+#                    a2.plot(sf, values)
+#                    plt.fill_between(sf, values+error, values-error, alpha=0.3)
+#                    plt.xlabel('sf')
+#                    plt.ylabel('spikes')
+#                    plt.xticks(sf)
+#                    
+#                    a3 = plt.subplot(gs[uindex,3])
+#                    values = np.mean(stfMat, axis=1)
+#                    error = np.std(stfMat, axis=1)
+#                    a3.plot(tf, values)
+#                    plt.fill_between(tf, values+error, values-error, alpha=0.3)
+#                    plt.xlabel('tf')
+#                    plt.ylabel('spikes')
+#                    plt.xticks(tf)
+              
+                elif protocolType=='ori':
+                    a1 = plt.subplot(gs[uindex,0])
+                    plt.xlabel('ori')
+                    plt.ylabel('spike rate: ' + str(unit))
+                    a1.plot(ori, oriMean)
+                    plt.fill_between(ori, oriMean+oriError, oriMean - oriError, alpha=0.3)
+                    plt.xticks(ori)
+                    
+                    a2 = plt.subplot(gs[uindex,1], projection='polar')
+                    theta = ori * (np.pi/180.0)
+                    theta = np.append(theta, theta[0])
+                    rho = np.append(oriMean, oriMean[0])
+                    a2.plot(theta, rho)
+                    a2.set_title('DSI = '+str(round(dsi,2))+', prefDir = '+str(round(prefDir))+'\n'+', OSI = '+str(round(osi,2))+', prefOri = '+str(round(prefOri)),fontsize='x-small')
 
-                plt.tight_layout()
- 
-               
-    def analyzeSpots(self, units, protocol = 3, plot=True, trials=None, useCache=True):
-        
-        if units is None:
-            units = self.units.keys()
-        if type(units) is int:
-            units = [units]        
+
+    def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=False, saveTag=''):
+         
+        units, unitsYPos = self.getOrderedUnits(units) 
+         
+        if protocol is None:
+            protocol = self.getProtocolIndex('spots')
+        protocol = str(protocol)
+         
         if plot:        
             plt.figure(figsize = (11, 3*len(units)))
             gs = gridspec.GridSpec(len(units), 4)                        
-        
+         
         if trials is None:
             trials = np.arange((self.visstimData[str(protocol)]['trialStartFrame'][:-1]).size)
-        
+         
         trialStartFrames = self.visstimData[str(protocol)]['trialStartFrame'][trials]
         trialDuration = (self.visstimData[str(protocol)]['trialNumFrames'][trials]).astype(np.int)
         trialEndFrames = trialStartFrames + trialDuration
         frameSamples = self.visstimData[str(protocol)]['frameSamples']     
         trialStartSamples = frameSamples[trialStartFrames]
         trialEndSamples = frameSamples[trialEndFrames]
-        
+         
         trialPos = self.visstimData[str(protocol)]['trialSpotPos'][trials]
         trialColor = self.visstimData[str(protocol)]['trialSpotColor'][trials]
         trialSize = self.visstimData[str(protocol)]['trialSpotSize'][trials]
         trialDir = self.visstimData[str(protocol)]['trialSpotDir'][trials]
         trialSpeed = self.visstimData[str(protocol)]['trialSpotSpeed'][trials]
-  
-        horTrials = np.in1d(trialDir,[0,180])
-        vertTrials = np.in1d(trialDir,[90,270])
-#        horTrials = np.logical_or(trialDir==0, trialDir==180)
-#        vertTrials = np.logical_or(trialDir==270, trialDir==90)
-        
+   
+        horzTrials = np.logical_or(trialDir==0, trialDir==180)
+        vertTrials = np.logical_or(trialDir==270, trialDir==90)
+         
         azimuths = np.unique(trialPos[vertTrials])
-        elevs = np.unique(trialPos[horTrials])
-        
-        
+        elevs = np.unique(trialPos[horzTrials])
+         
         for uindex, unit in enumerate(units):
-            if ('spotResponse' in self.units[str(unit)].keys()) and useCache:
-                responseDict = self.units[str(unit)]['spotResponse']['spot_responseDict']
+            if ('spotResponse' + saveTag) in self.units[str(unit)] and useCache:
+                responseDict = self.units[str(unit)]['spotResponse' + saveTag]['spot_responseDict']
                 spotRF = responseDict['spotRF']
             else:
-                self.units[str(unit)]['spotResponse'] = {}
+                self.units[str(unit)]['spotResponse' + saveTag] = {}
                 spikes = self.units[str(unit)]['times'][str(protocol)]
-        
+         
                 # get RF         
                 spikesPerTrial = self.findSpikesPerTrial(trialStartSamples, trialEndSamples, spikes)
                 trialSpikeRate = spikesPerTrial/((1/self.visstimData[str(protocol)]['frameRate'])*trialDuration)
-
+ 
                 azimuthSpikeRate = np.zeros(azimuths.size)        
                 elevSpikeRate = np.zeros(elevs.size)
                 azimuthTrialCount = np.zeros(azimuths.size)        
                 elevTrialCount = np.zeros(elevs.size)
-                for trial in xrange(trialPos.size):
-                    if horTrials[trial]:
+                for trial in range(trialPos.size):
+                    if horzTrials[trial]:
                         elevIndex = np.where(trialPos[trial]==elevs)[0]
                         elevSpikeRate[elevIndex] += trialSpikeRate[trial]
                         elevTrialCount[elevIndex] += 1
@@ -584,10 +753,10 @@ class probeData():
                         azimuthIndex = np.where(trialPos[trial]==azimuths)[0]
                         azimuthSpikeRate[azimuthIndex] += trialSpikeRate[trial]
                         azimuthTrialCount[azimuthIndex] += 1
-                
+                 
                 elevSpikeRate /= elevTrialCount
                 azimuthSpikeRate /= azimuthTrialCount
-        
+         
                 #get spontaneous rate
                 recoveryPeriod = 10
                 interTrialIntervals = trialStartFrames[1:]- trialEndFrames[:-1]
@@ -596,7 +765,7 @@ class probeData():
                 itiSpikes = self.findSpikesPerTrial(frameSamples[interTrialStarts], frameSamples[interTrialEnds], spikes)
                 itiRate = itiSpikes/((1/60.0)*(interTrialEnds - interTrialStarts))
                 meanItiRate = itiRate.mean()
-                
+                 
                 #make tuning curves for various spot parameters        
                 responseDict = {}        
                 for param in ['trialSpotSize', 'trialSpotDir', 'trialSpotSpeed']:
@@ -624,20 +793,20 @@ class probeData():
                     responseDict[param]['tuningCurve']['sem'] = semResponse
                     responseDict[param]['tuningCurve']['mean_spontSubtracted'] = spontSubtracted
                     responseDict[param]['tuningCurve']['zscored'] = zscored
-                    
-                    
+                     
+                     
                 x,y = np.meshgrid(azimuthSpikeRate-meanItiRate,elevSpikeRate-meanItiRate)
                 spotRF = np.sqrt(abs(x*y))*np.sign(x+y)
                 responseDict['spotRF'] = spotRF                
-                self.units[str(unit)]['spotResponse']['spot_responseDict'] = responseDict
-                
+                self.units[str(unit)]['spotResponse' + saveTag]['spot_responseDict'] = responseDict
+                 
             if plot:   
                 a1 = plt.subplot(gs[uindex, 0])            
                 cLim = max(2,np.max(abs(spotRF)))
                 im = a1.imshow(spotRF, clim = (-cLim,cLim), cmap='bwr', interpolation='none', origin='lower')
                 plt.colorbar(im, ax=a1, fraction=0.05, pad=0.04)
                 plt.title(str(unit), fontsize='x-small')
-                
+                 
                 for paramnum, param in enumerate(['trialSpotSize', 'trialSpotDir', 'trialSpotSpeed']):
                         a = plt.subplot(gs[uindex, paramnum+1])
                         values = responseDict[param]['tuningCurve']['mean_spontSubtracted'] 
@@ -649,23 +818,15 @@ class probeData():
                         plt.ylim(min(-0.1, np.min(values - error)), max(np.max(values + error), 0.1))
                         plt.locator_params(axis = 'y', nbins = 3)
                         a.set_xticks(responseDict[param]['tuningCurve']['paramValues'])
-                
-                plt.tight_layout()
     
                                         
-    def analyzeCheckerboard(self, units, protocol=None, trials=None, plot=False):
-        if not isinstance(units,list):
-            units = [units]
-        for u in units[:]:
-            if str(u) not in self.units.keys():
-                units.remove(u)
-                print(str(u)+' not in units.keys()')
-        if len(units)<1:
-            return
+    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True, saveTag=''):
+        
+        units, unitsYPos = self.getOrderedUnits(units)
         
         if protocol is None:
             protocol = self.getProtocolIndex('checkerboard')
-        protocol = str(protocol)            
+        protocol = str(protocol)          
         p = self.visstimData[protocol]
         assert(set(p['bckgndDir'])=={0,180} and set(p['patchDir'])=={0,180} and 0 in p['bckgndSpeed'] and 0 in p['patchSpeed'])
         
@@ -679,22 +840,22 @@ class probeData():
         trialEndSamples = p['frameSamples'][trialStartFrame+trialDuration]
         
         if plot:
-            plt.figure(facecolor='w')
+            plt.figure(figsize=(10,3*len(units)),facecolor='w')
             gs = gridspec.GridSpec(2*len(units),4)
             row = 0
         bckgndSpeed = np.concatenate((-p['bckgndSpeed'][:0:-1],p['bckgndSpeed']))
         patchSpeed = np.concatenate((-p['patchSpeed'][:0:-1],p['patchSpeed']))
         resp = np.full((bckgndSpeed.size,patchSpeed.size,p['patchSize'].size,p['patchElevation'].size),np.nan)
         resp = np.tile(resp[:,:,:,:,None],math.ceil(trials.size/(resp.size-2*p['patchSpeed'].size*p['patchSize'].size))+3)
-        for u in units:
+        for uindex,u in enumerate(units):
             spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,self.units[str(u)]['times'][protocol])
             trialSpikeRate = spikesPerTrial/((1/p['frameRate'])*trialDuration)
-            for n in trials:
-                i = patchSpeed==p['trialPatchSpeed'][n] if p['trialPatchDir'][n]==0 else patchSpeed==-p['trialPatchSpeed'][n]
-                j = bckgndSpeed==p['trialBckgndSpeed'][n] if p['trialBckgndDir'][n]==0 else bckgndSpeed==-p['trialBckgndSpeed'][n]
-                k = p['patchSize']==p['trialPatchSize'][n]
-                l = p['patchElevation']==p['trialPatchPos'][n]
-                resp[i,j,k,l,np.count_nonzero(np.logical_not(np.isnan(resp[i,j,k,l,:])))] = trialSpikeRate[n]
+            for ind,trial in enumerate(trials):
+                i = patchSpeed==p['trialPatchSpeed'][trial] if p['trialPatchDir'][trial]==0 else patchSpeed==-p['trialPatchSpeed'][trial]
+                j = bckgndSpeed==p['trialBckgndSpeed'][trial] if p['trialBckgndDir'][trial]==0 else bckgndSpeed==-p['trialBckgndSpeed'][trial]
+                k = p['patchSize']==p['trialPatchSize'][trial]
+                l = p['patchElevation']==p['trialPatchPos'][trial]
+                resp[i,j,k,l,np.count_nonzero(np.logical_not(np.isnan(resp[i,j,k,l,:])))] = trialSpikeRate[ind]
             meanResp = np.nanmean(resp,axis=4)
             meanResp -= np.nanmean(resp[patchSpeed.size//2,bckgndSpeed.size//2,:,:,:])
             #meanResp /= np.nanstd(resp[patchSpeed.size//2,bckgndSpeed.size//2,:,:,:])
@@ -705,7 +866,7 @@ class probeData():
                 for j in range(bckgndSpeed.size):
                     if patchSpeed[i]==bckgndSpeed[j]:
                         meanResp[i,j,:,:] = meanResp[patchSpeed.size//2,j]            
-            self.units[str(u)]['checkerboard'] = {'meanResp':meanResp}
+            self.units[str(u)]['checkerboard' + saveTag] = {'meanResp':meanResp}
             resp[:] = np.nan
             
             if plot:
@@ -783,53 +944,387 @@ class probeData():
                 ax.set_xticks(p['patchElevation'])
                 ax.set_xlabel('Patch Elevation',fontsize='x-small')
                 ax.set_yticks([int(min(r)),int(max(r))])
-
+                
                 row += 2
+    
+    
+    def parseRunning(self, protocol, runThresh = 5.0, statThresh = 1.0, trialStarts = None, trialEnds = None, wheelDownsampleFactor = 500.0):
+        if not 'running' in self.behaviorData[str(protocol)]:
+            self.decodeWheel(self.d[protocol]['data'][::500, self.wheelChannel]*self.d[protocol]['gains'][self.wheelChannel])
+        
+        wheelData = -self.behaviorData[str(protocol)]['running']
+        
+        if trialStarts is not None:
+            runningTrials = []
+            stationaryTrials = []
+            for trial in range(trialStarts.size):
+                trialSpeed = np.mean(wheelData[round(trialStarts[trial]/wheelDownsampleFactor):round(trialEnds[trial]/wheelDownsampleFactor)])
+                if trialSpeed >= runThresh:
+                    runningTrials.append(trial)
+                elif trialSpeed <= statThresh:
+                    stationaryTrials.append(trial)
+        return stationaryTrials, runningTrials, trialSpeed
+    
+    
+    def analyzeRunning(self, units, protocol, plot=True):
+        
+        units, unitsYPos = self.getOrderedUnits(units)
+        
         if plot:
-            plt.tight_layout()
+            plt.figure(figsize=(10,3*len(units)),facecolor='w')
+            gs = gridspec.GridSpec(len(units),1)
+                        
+        kernelWidth=500.0
+        for uindex, u in enumerate(units):
+            spikes = self.units[str(u)]['times'][str(protocol)]
+            wd = -self.behaviorData[str(protocol)]['running']
+            fh, _ = np.histogram(spikes, np.arange(0, (wd.size+1)*int(kernelWidth), int(kernelWidth)))
+            frc = np.convolve(fh, np.ones(kernelWidth),'same')/kernelWidth
+            
+            speedBins = [0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
+            binnedSpeed = np.digitize(wd, speedBins)
+            fr_binned = []
+            fr_std = []
+            for sbin, _ in enumerate(speedBins):
+                binIndices = binnedSpeed==sbin
+                #print binIndices
+                fr_thisbin = np.mean(frc[binIndices])
+                fr_stdThisBin = np.std(frc[binIndices])
+                fr_binned.append(fr_thisbin)
+                fr_std.append(fr_stdThisBin)
+            
+            fr_binned = np.array(fr_binned)
+            fr_std = np.array(fr_std)
+            self.units[str(u)]['runModulation'] = {}
+            self.units[str(u)]['runModulation'][str(protocol)] = [speedBins, fr_binned, fr_std] 
+            
+            if plot:
+                ax = plt.subplot(gs[uindex, 0])
+                ax.plot(speedBins, fr_binned)
+#                ax.set_xscale('log', basex=2)
+                plt.fill_between(speedBins, fr_binned+fr_std, fr_binned-fr_std, alpha=0.3)
     
     
+    def plotISIHist(self,units=None,protocol=None,binWidth=0.001,maxInterval=0.02):
+        units,unitsYPos = self.getOrderedUnits(units)
+        if protocol is None:
+            protocol = range(len(self.kwdFileList))
+        elif not isinstance(protocol,list):
+            protocol = [protocol]
+        bins = np.arange(0,maxInterval+binWidth,binWidth)
+        plt.figure(facecolor='w')
+        gs = gridspec.GridSpec(len(units),len(protocol))
+        for i,u in enumerate(units):
+            ax = []
+            ymax = 0
+            for j,p in enumerate(protocol):
+                spikeTimes = self.units[u]['times'][str(p)]/self.sampleRate
+                isiHist,_ = np.histogram(np.diff(spikeTimes),bins)
+                isiProb = isiHist/spikeTimes.size
+                ymax = max(ymax,isiProb.max())
+                ax.append(plt.subplot(gs[i,j]))
+                ax[-1].bar(bins[:-1],isiProb,binWidth,color='b',edgecolor='b')
+                ax[-1].set_xlim([0,maxInterval])
+                ax[-1].spines['right'].set_visible(False)
+                ax[-1].spines['top'].set_visible(False)
+                ax[-1].tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+                if i==0:
+                    protocolName = os.path.dirname(self.kwdFileList[j])
+                    ax[-1].set_title(protocolName[protocolName.rfind('_')+1:],fontsize='x-small')
+                if i==len(units)-1 and j==len(protocol)-1:
+                    ax[-1].set_xticks([0,maxInterval])
+                    ax[-1].set_xlabel('ISI (s)',fontsize='x-small')
+                else:
+                    ax[-1].set_xticks([])
+            for j,a in enumerate(ax):
+                a.set_ylim([0,ymax])
+                if j==0:
+                    a.set_yticks([int(ymax*100)/100])
+                    a.set_ylabel(u,fontsize='x-small')
+                else:
+                    a.set_yticks([])
+                    
+    
+    def plotSDF(self,unit,protocol,startSamples=None,offset=0,windowDur=None,sigma=0.02,sampInt=0.001,paramNames=None):
+        # offset in seconds
+        # windowDur input in seconds then converted to samples
+        if paramNames is not None and len(paramNames)>2:
+            raise ValueError('plotSDF does not accept more than 2 parameters')
+        protocol = str(protocol)
+        if windowDur is not None:
+            windowDur = int(windowDur*self.sampleRate)
+        params = []
+        if startSamples is None:
+            p = self.visstimData[str(protocol)]
+            try:
+                trialStartFrame = p['trialStartFrame']
+            except:
+                trialStartFrame = p['stimStartFrames']
+            startSamples = p['frameSamples'][trialStartFrame]
+            if windowDur is None:
+                windowDur = np.diff(startSamples)
+            startSamples = startSamples[:-1]
+            if paramNames is not None:
+                for name in paramNames:
+                    params.append(p[name][:-1])
+        else:
+            windowDur = [windowDur for _ in startSamples]
+        paramSet = [np.unique(param) for param in params]
+        startSamples += int(offset*self.sampleRate)
+        spikes = self.units[str(unit)]['times'][protocol]
+        
+        if len(params)==0:
+            rows = cols = [0]
+        elif len(params)==1:
+            rows = range(len(set(params[0])))
+            cols = [0]
+        else:
+            cols,rows = [range(len(set(params[i]))) for i in (0,1)]
+        plt.figure(facecolor='w')
+        gs = gridspec.GridSpec(len(rows),len(cols))
+        ax = []
+        xmax = max(windowDur)/self.sampleRate+offset
+        ymax = 0
+        for i in rows:
+            if len(params)>0:
+                trials = np.where(params[len(params)-1]==paramSet[len(params)-1][::-1][i])[0]
+            else:
+                trials = np.arange(len(startSamples))
+            for j in cols:
+                if len(params)>1:
+                    trialIndex = np.intersect1d(trials,np.where(params[0]==paramSet[0][j])[0])
+                else:
+                    trialIndex = trials
+                sdf,bins = self.getMeanSDF(spikes,startSamples[trialIndex],max(windowDur[trialIndex]))
+                ymax = max(ymax,sdf.max())
+                ax.append(plt.subplot(gs[i,j]))
+                ax[-1].plot(bins+offset,sdf)
+        ymax *= 1.05
+        for ind,a in enumerate(ax):
+            a.spines['right'].set_visible(False)
+            a.spines['top'].set_visible(False)
+            a.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+            a.set_xlim([offset,xmax])
+            a.set_ylim([0,ymax])
+            if ind==len(ax)-1:
+                a.set_xticks([0,xmax])
+                a.set_xlabel('Time (s)',fontsize='x-small')
+            else:
+                a.set_xticks([])
+            if ind==0:
+                a.set_yticks([0,ymax])
+                a.set_ylabel('Spikes/s',fontsize='x-small')
+                a.set_title('Unit '+str(unit),fontsize='small')
+            else:
+                a.set_yticks([])
+                
+                
+    def getMeanSDF(self,spikes,startSamples,windowSamples,sigma=0.02,sampInt=0.001):
+        binSamples = sampInt*self.sampleRate
+        bins = np.arange(0,windowSamples+binSamples,binSamples)
+        binnedSpikeCount = np.zeros((len(startSamples),len(bins)-1))
+        for i,start in enumerate(startSamples):
+            binnedSpikeCount[i],_ = np.histogram(spikes[np.logical_and(spikes>=start,spikes<=start+windowSamples)]-start,bins)
+        sdf = np.mean(scipy.ndimage.filters.gaussian_filter1d(binnedSpikeCount,sigma/sampInt,axis=1),axis=0)/sampInt
+        return sdf,bins[:-1]/self.sampleRate
+            
+    
+    def plotRaster(self,unit,protocol,startSamples=None,offset=0,windowDur=None,paramNames=None,paramColors=None,grid=False):
+        # offset and windowDur input in seconds then converted to samples
+        protocol = str(protocol)
+        offset = int(offset*self.sampleRate)
+        if windowDur is not None:
+            windowDur = int(windowDur*self.sampleRate)
+        params = []
+        if startSamples is None:
+            p = self.visstimData[str(protocol)]
+            try:
+                trialStartFrame = p['trialStartFrame']
+            except:
+                trialStartFrame = p['stimStartFrames']
+            startSamples = p['frameSamples'][trialStartFrame]
+            if windowDur is None:
+                windowDur = np.diff(startSamples)
+            startSamples = startSamples[:-1]
+            if paramNames is not None:
+                for name in paramNames:
+                    params.append(p[name][:-1])
+        else:
+            windowDur = [windowDur for _ in startSamples]
+        startSamples += offset
+        spikes = self.units[str(unit)]['times'][protocol]
+        
+        if paramColors is None:
+            paramColors = [None]*len(params)
+        else:
+            for i,c in enumerate(paramColors):
+                if c=='auto' and i<len(params):
+                    paramColors[i] = cm.Dark2(range(0,256,int(256/len(set(params[i])))))
+                    break
+        grid = True if grid and len(paramNames)==2 else False
+         
+        plt.figure(facecolor='w')
+        if grid:
+            axes = []
+            rows = []
+            gs = gridspec.GridSpec(len(set(params[1])),len(set(params[0])))
+        else:
+            axes = [plt.subplot(1,1,1)]
+            rows = [0]
+            gs = None
+        if len(params)<1:
+            self.appendToRaster(axes,spikes,startSamples,offset,windowDur,rows=rows)
+        else:
+            self.parseRaster(axes,spikes,startSamples,offset,windowDur,params,paramColors,rows=rows,grid=grid,gs=gs)
+        for ax,r in zip(axes,rows):
+            ax.set_xlim([offset/self.sampleRate,(max(windowDur)+offset)/self.sampleRate])
+            ax.set_ylim([-0.5,r+0.5])
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False)
+            if grid:
+                ax.set_xticks([])
+                ax.set_yticks([])
+            else:
+                ax.set_xlabel('Time (s)')
+                ax.set_ylabel('Trial')
+        axes[-1].set_title('Unit '+str(unit))
+         
+         
+    def parseRaster(self,axes,spikes,startSamples,offset,windowDur,params,paramColors,paramIndex=0,trialsIn=None,rows=[0],grid=False,gs=None,grow=None,gcol=0):
+        paramVals = np.unique(params[paramIndex])
+        if grid and grow is None:
+            grow = gs.get_geometry()[0]-1
+        for i,val in enumerate(paramVals):
+            if grid:
+                axes.append(plt.subplot(gs[grow,gcol]))
+                rows.append(0)
+                grow -= 1
+            trialIndex = np.where(params[paramIndex]==val)[0]
+            if trialsIn is not None:
+                trialIndex = np.intersect1d(trialsIn,trialIndex)
+            if paramIndex<len(params)-1:
+                if paramColors[paramIndex] is not None:
+                    paramColors[paramIndex+1] = [paramColors[paramIndex][i]]*len(set(params[paramIndex+1]))
+                self.parseRaster(axes,spikes,startSamples,offset,windowDur,params,paramColors,paramIndex+1,trialIndex,rows,grid,gs,None,gcol)
+                if grid:
+                    gcol += 1
+            else:
+                color = 'k' if paramColors[paramIndex] is None else paramColors[paramIndex][i]
+                self.appendToRaster(axes,spikes,startSamples,offset,windowDur,trialIndex,rows,color)
+ 
+ 
+    def appendToRaster(self,axes,spikes,startSamples,offset,windowDur,trialIndex=None,rows=[0],color='k'):
+        if trialIndex is None:
+            trialIndex = range(len(startSamples))
+        for i in trialIndex:
+            spikeTimes = (spikes[np.logical_and(spikes>startSamples[i],spikes<startSamples[i]+windowDur[i])]-startSamples[i]+offset)/self.sampleRate
+            axes[-1].vlines(spikeTimes,rows[-1]-0.4,rows[-1]+0.4,color=color)
+            rows[-1] += 1
+    
+    
+    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'gratings', 'gratings_ori', 'spots', 'checkerboard'], splitRunning = False, useCache=False):
+
+        for pro in protocolsToRun:
+            
+            try:            
+                protocol = self.getProtocolIndex(pro)
+                
+                if 'gratings'==pro:
+                    if splitRunning:
+                        trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames'][:-1]
+                        trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['stimTime']
+                        trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
+                        trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                        
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials, saveTag='_stat')
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials, saveTag='_run')
+                    else:
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf')
+    
+                elif 'gratings_ori'==pro:
+                    if splitRunning:
+                        trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames'][:-1]
+                        trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['stimTime']
+                        trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
+                        trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                        
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials, saveTag='_stat')
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials, saveTag='_run')
+                    else:
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori')
+    
+                elif 'sparseNoise' in pro:
+                    if splitRunning:
+                        trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames'][:-1]
+                        trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['boxDuration']
+                        trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
+                        trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                        
+                        self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
+                        self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
+                    else:                    
+                        self.findRF(units, protocol=protocol, useCache=useCache)
+                elif 'spots' in pro:
+                    if splitRunning:
+                        trialStartFrames = self.visstimData[str(protocol)]['trialStartFrame'][:-1]
+                        trialDuration = (self.visstimData[str(protocol)]['trialNumFrames']).astype(np.int)
+                        trialEndFrames = trialStartFrames + trialDuration[:-1]
+                        frameSamples = self.visstimData[str(protocol)]['frameSamples']     
+                        trialStarts = frameSamples[trialStartFrames]
+                        trialEnds = frameSamples[trialEndFrames]
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                        
+                        self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
+                        self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
+                    else:
+                        self.analyzeSpots(units, protocol=protocol, useCache=useCache)
+                elif 'checkerboard' in pro:
+                    if splitRunning:
+                        trialStartFrame = self.visstimData[str(protocol)]['trialStartFrame'][:-1]
+                        trialDuration = (self.visstimData[str(protocol)]['trialNumFrames']).astype(int)
+                        trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame]
+                        trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame+trialDuration]
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                        
+                        self.analyzeCheckerboard(units, protocol=protocol, trials=statTrials, saveTag='_stat')
+                        self.analyzeCheckerboard(units, protocol=protocol, trials=runTrials, saveTag='_run')
+                    else:
+                        self.analyzeCheckerboard(units, protocol=protocol)
+                else:
+                    print("Couldn't find analysis script for protocol type:", pro)
+            except:
+                print("Skipping protocol:", pro )                        
+                
+     
     def getProtocolIndex(self, label):
         protocol = []
-        protocol.extend([i for i,f in enumerate(self.kwdFileList) if os.path.dirname(f).endswith(label)])
+        protocol.extend([i for i,f in enumerate(self.kwdFileList) if ntpath.dirname(f).endswith(label)])
         if len(protocol)<1:
             raise ValueError('No protocols found matching: '+label)
         elif len(protocol)>1:
             raise ValueError('Multiple protocols found matching: '+label)
         return protocol[0]
-    
-    
-    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'gratings', 'spots', 'checkerboard'], useCache=False):
-        if units is None:
-            units = self.units.keys()
-        if type(units) is int:
-            units = [units]
         
-        for pro in protocolsToRun:
-            protocol = self.getProtocolIndex(pro)
-     
-            if 'gratings' in pro:
-                self.analyzeGratings(units, protocol = protocol, useCache=useCache)
-            elif 'sparseNoise' in pro:
-                self.findRF(units, protocol=protocol, fit=True, useCache=useCache)
-            elif 'spots' in pro:
-                self.analyzeSpots(units, protocol=protocol, useCache=useCache)
-            elif 'checkerboard' in pro:
-                self.analyzeCheckerboard(units, protocol=protocol, plot=True)
-            else:
-                print("Couldn't find analysis script for protocol type:", pro)
-                
-                
+          
     def getOrderedUnits(self,units=None):
-        '''
-        orderedUnits, position = self.getOrderedUnits(units)
-        '''
+        # orderedUnits, yPosition = self.getOrderedUnits(units)
         if units is None:
-            units = self.units.keys()
-        if not isinstance(units,list):
-            units = [units]
-        units = [str(u) for u in units]
-        orderedUnits = [(u,self.units[u]['ypos']) for u in self.units.keys() if u in units]
+            units = [u for u in self.units]
+        elif isinstance(units,list):
+            units = [str(u) for u in units]
+        else:
+            units = [str(units)]
+        for u in units:
+            if u not in self.units:
+                units.remove(u)
+                print(str(u)+' not in units')
+        if len(units)<1:
+            raise ValueError('Found no matching units')
+        orderedUnits = [(u,self.units[u]['ypos']) for u in self.units if u in units]
         orderedUnits.sort(key=lambda i: i[1], reverse=True)
         return zip(*orderedUnits)
     
@@ -837,16 +1332,11 @@ class probeData():
     def getSingleUnits(self, fileDir = None, protocolsToAnalyze = None):
         if fileDir is None:
             fileDir = getDir()
-        fileList, nsamps = self.getKwdInfo(fileDir=fileDir)
+        fileList, nsamps = getKwdInfo(dirPath=fileDir)
         if protocolsToAnalyze is None:
             self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir)
         else:
             self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir, protocolsToAnalyze=protocolsToAnalyze)
-            
-    
-    def getKwdInfo(self, fileDir=None):
-        fileList, nsamps = getKwdFiles(fileDir)
-        return fileList, nsamps
     
     
     def loadClusteredData(self, kwdNsamplesList = None, protocolsToAnalyze = None, fileDir = None):
@@ -859,7 +1349,7 @@ class probeData():
             protocolsToAnalyze = np.arange(len(self.d))
         
         self.units = load_phy_template(fileDir, sampling_rate = self.sampleRate)
-        for unit in self.units.keys():
+        for unit in self.units:
             spikeTimes = (self.units[unit]['times']).astype(int)
            
             if kwdNsamplesList is not None:
@@ -875,7 +1365,10 @@ class probeData():
 
     def saveHDF5(self, fileSaveName = None, fileOut = None, saveDict = None, grp = None):
         if fileSaveName is None and fileOut is None:
-            fileOut = h5py.File(saveFile(), 'w')
+            fileSaveName = saveFile()
+            if fileSaveName=='':
+                return
+            fileOut = h5py.File(fileSaveName, 'w')
         elif fileSaveName is not None and fileOut is None:            
             fileOut = h5py.File(fileSaveName,'w')
 
@@ -886,12 +1379,16 @@ class probeData():
         
         for key in saveDict:    
             if type(saveDict[key]) is dict:
+                print key
                 self.saveHDF5(fileOut=fileOut, saveDict=saveDict[key], grp=grp.create_group(key))
             else:
                 try:
                     grp[key] = saveDict[key]
                 except:
-                    print 'Could not save: ', key
+                    try:
+                        grp.create_dataset(key,data=np.array(saveDict[key],dtype=object),dtype=h5py.special_dtype(vlen=str))
+                    except:
+                        print('Could not save: ', key)
                     
                     
     def loadHDF5(self, fileName=None, grp=None, loadDict=None):
@@ -901,12 +1398,15 @@ class probeData():
                 return
         if grp is None:
             grp = h5py.File(fileName)
-        for key,val in grp.iteritems():
+        for key,val in grp.items():
             if isinstance(val,h5py._hl.dataset.Dataset):
+                v = val.value
+                if isinstance(v,np.ndarray) and v.dtype==np.object:
+                    v = v.astype('U')
                 if loadDict is None:
-                    setattr(self,key,val.value)
+                    setattr(self,key,v)
                 else:
-                    loadDict[key] = val.value
+                    loadDict[key] = v
             elif isinstance(val,h5py._hl.group.Group):
                 if loadDict is None:
                     setattr(self,key,{})
@@ -916,12 +1416,12 @@ class probeData():
                     self.loadHDF5(grp=val,loadDict=loadDict[key])
                     
     
-    def saveWorkspace(self, variables=None, saveGlobals = False, filename=None, exceptVars = []):
-        if filename is None:
-            ftemp = self.filePath[:self.filePath.rfind('/')]
-            ftemp = ftemp[ftemp.rfind('/')+1:]
-            filename = self.filePath[:self.filePath.rfind('/')+1] + ftemp + '.out' 
-        shelf = shelve.open(filename, 'n')
+    def saveWorkspace(self, variables=None, saveGlobals = False, fileName=None, exceptVars = []):
+        if fileName is None:
+            fileName = saveFile()
+            if fileName=='':
+                return
+        shelf = shelve.open(fileName, 'n')
         
         if variables is None:
             if not saveGlobals:
@@ -958,28 +1458,28 @@ def getFile():
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getOpenFileName(None,'Choose File',dataDir)
+    return QtGui.QFileDialog.getOpenFileName(None,'Choose File')
     
     
-def getDir():
+def getDir(rootDir=''):
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory',dataDir) 
+    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory',rootDir) 
     
 
 def saveFile():
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getSaveFileName(None,'Save As','','*.hdf5')
+    return QtGui.QFileDialog.getSaveFileName(None,'Save As')
 
 
-def getKwdFiles(dirPath=None):
-    # kwdFiles,nSamples = getKwdFiles()
+def getKwdInfo(dirPath=None):
+    # kwdFiles, nSamples = getKwdInfo()
     # returns kwd file paths and number of samples in each file ordered by file start time
-    if dirPath is None:
-        dirPath = getDir()
+    if dirPath is None:    
+        dirPath = getDir(dataDir)
         if dirPath == '':
             return
     kwdFiles = []
@@ -997,19 +1497,24 @@ def getKwdFiles(dirPath=None):
     return zip(*[n[1:] for n in sorted(zip(startTime,kwdFiles,nSamples),key=lambda z: z[0])])
 
 
-def makeDat(kwdFiles):
+def makeDat(kwdFiles=None):
+    if kwdFiles is None:
+        kwdFiles, _ = getKwdInfo()
     dirPath = os.path.dirname(os.path.dirname(kwdFiles[0]))
     datFilePath = os.path.join(dirPath,os.path.basename(dirPath)+'.dat')
     datFile = open(datFilePath,'wb')
-    for filePath in kwdFiles:
+    for filenum, filePath in enumerate(kwdFiles):
         kwd = h5py.File(filePath,'r')
         dset = kwd['recordings']['0']['data']
         i = 0
         while i<dset.shape[0]:
             (dset[i:i+dset.chunks[0],:128]).tofile(datFile)                        
             i += dset.chunks[0]
+        print('Completed file ' + str(filenum + 1) + ' of ' + str(len(kwdFiles)))
     datFile.close()
-    shutil.copy(datFilePath,r'\\10.128.38.3\data_local_1\corbett')
+    copyPath = r'\\10.128.38.3\data_local_1\corbett'
+    print('copying dat file to ' + copyPath)
+    shutil.copy(datFilePath,copyPath)
     
     
 def gauss2D(xyTuple,x0,y0,sigX,sigY,theta,amplitude):
@@ -1124,6 +1629,25 @@ def getStfContour(sf,tf,fitParams):
         contourLine = np.concatenate((contourLine,contourLine[0,:][None,:]),axis=0)
     x,y = (np.log2(contourLine)-np.log2([sfIntp[0],tfIntp[0]])).T-1
     return x,y
+    
+    
+def getDSI(resp,theta):
+    theta = np.copy(theta)*math.pi/180
+    sumX = np.sum(resp*np.cos(theta))
+    sumY = np.sum(resp*np.sin(theta))
+    dsi = np.sqrt(sumX**2+sumY**2)/resp.sum()
+    # corbett's beautiful method
+    prefTheta = ((math.atan2(sumY,sumX)*180/math.pi) + 360)%360
+# sam's eqivalent ugly method
+#    prefTheta = math.atan(sumY/sumX)*180/math.pi
+#    if sumX<0:
+#        if sumY>0:
+#            prefTheta += 180
+#        else:
+#            prefTheta += 180
+#    elif sumY<0:
+#        prefTheta += 360
+    return dsi, prefTheta
 
 
    
