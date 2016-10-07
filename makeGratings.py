@@ -7,7 +7,6 @@ Created on Mon Jan 18 13:36:05 2016
 
 import random, itertools
 from psychopy import visual, event
-from matplotlib import pyplot as plt
 from VisStimControl import VisStimControl
 import numpy as np
 
@@ -16,11 +15,12 @@ class makeGratings(VisStimControl):
     def __init__(self):
         VisStimControl.__init__(self)
         self.experimentType = 'stf'
+        self.gratingType = 'sqr' # or sin
         self.phase = [0]
         self.posx = [0]                                     #x position of center of grating patch, in degrees
         self.posy = [0]                                     #y position of center of grating patch, in degrees
         self.size = [self.fieldWidth/self.pixelsPerDeg]     #size of grating patch in degrees
-        self.numCycles = 10                                 #number of times to cycle through parameters
+        self.numCycles = 15                                #number of times to cycle through parameters
         self.shuffle = True
         self.closedloop = False
         self.preTime = 30                                   #num frames of gray before gratings
@@ -29,7 +29,7 @@ class makeGratings(VisStimControl):
         self.mask = 'none'                                  #determines mask shape for grating patches, for instance 'gauss'
         self.ori = [0, 90]        
         self.tf = [0.5, 1, 2, 4, 8]                         #cycles per second
-        self.sf = [0.02, 0.04, 0.08, 0.16, 0.32]            #cycLes per degree
+        self.sf = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32]            #cycLes per degree
         self.contrast = [1]
         self.interleavedGrayScreen = True
         
@@ -51,7 +51,7 @@ class makeGratings(VisStimControl):
         self._win.setRecordFrameIntervals(True)
         
         #setup grating object         
-        self._grating = visual.GratingStim(win=self._win, mask=self.mask, size=self.pixelsPerDeg*self.size[0], 
+        self._grating = visual.GratingStim(win=self._win, mask=self.mask, tex=self.gratingType, size=self.pixelsPerDeg*self.size[0], 
                                            pos=[self.pixelsPerDeg*self.posx[0],self.pixelsPerDeg*self.posy[0]], sf=3, units='pix')
         
         #initialize stim parameters (shuffle if necessary)
@@ -105,7 +105,6 @@ class makeGratings(VisStimControl):
         self.stimulusHistory = dict(zip(self.stimulusParams, list(np.array(stimHist).T)))
         self.stimulusHistory['sf'] *= self.pixelsPerDeg
         self.stimulusHistory['size'] /= self.pixelsPerDeg
-        plt.plot(self._win.frameIntervals)
         self.completeRun()
         
     def set_params(self):
@@ -131,7 +130,7 @@ class makeGratings(VisStimControl):
         if expType == 'stf':
             self.ori = [0, 90]        
             self.tf = [0.5, 1, 2, 4, 8]                     #cycles per second
-            self.sf = [0.02, 0.04, 0.08, 0.16, 0.32]        #cycLes per degree
+            self.sf = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32]        #cycLes per degree
             self.contrast = [1]
         
         elif expType == 'ori':

@@ -27,7 +27,7 @@ class MovingCheckerboard(VisStimControl):
         self.patchElevation = [0,40] # for horizontal motion trials
         self.patchAzimuth = [50] # for vertical motion trials
         self.interTrialInterval = [0.5,0.5] # [min,max] seconds
-        self.numLoops = 5
+        self.numLoops = 12
           
     def checkParameterValues(self):
         for param in ('bckgndSpeed','bckgndDir','patchSize','patchSpeed','patchDir','patchElevation','patchAzimuth'):

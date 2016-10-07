@@ -15,8 +15,8 @@ class MovingSpotGrid(VisStimControl):
 
     def __init__(self):
         VisStimControl.__init__(self)
-        self.gridBoundaries = [30,-10,90,50] # [left,bottom,right,top]
-        self.gridSpacing = 30 # degrees
+        self.gridBoundaries = [40,0,80,40] # [left,bottom,right,top]
+        self.gridSpacing = 40 # degrees
         self.spotColor = [-1] # -1 (black) to 1 (white)
         self.spotSize = [4,8,16,32] # degerees
         self.spotSpeed = [10,30,90] # degrees/s

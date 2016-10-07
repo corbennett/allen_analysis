@@ -15,14 +15,14 @@ class makeSparseNoise(VisStimControl):
     
     def __init__(self):
         VisStimControl.__init__(self)        
-        self.boxSize = [10]                         #degrees
+        self.boxSize = [5,10,20]                         #degrees
         self.boxColors = [1, -1]
         self.prestimtime = 60                       #number of gray refreshes show before boxes begin
         self.interBoxInterval = 0                 #frequency to display boxes
         self.boxDuration = 6                      #number of frames to show each box
         self.trialBoxPosition = [0, 0]              # x and y
         self.trialBoxColor = 1        
-        self.gridBoundaries = [10, -30, 0.5*self.fieldWidth/self.pixelsPerDeg, 90]    #Screen coordinates define presentation window (degrees): x1 y1 for lower left, x2 y2 for upper right corner
+        self.gridBoundaries = [-20, -30, 120, 90]    #Screen coordinates define presentation window (degrees): x1 y1 for lower left, x2 y2 for upper right corner
         self.gridSpacing = 10                        #Spacing between grid nodes (degrees)
         
      
