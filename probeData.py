@@ -287,8 +287,8 @@ class probeData():
         gridExtent = self.visstimData[str(protocol)]['gridBoundaries']
         
         onVsOff = np.full(len(units),np.nan)
-        respNormArea = np.copy(onVsOff)
-        respHalfWidth = np.copy(onVsOff)
+        respNormArea = np.full((len(units),2),np.nan)
+        respHalfWidth = np.copy(respNormArea)
         if fit:
             onCenters = np.full((len(units),2),np.nan)
             offCenters = np.copy(onCenters)
@@ -366,30 +366,32 @@ class probeData():
                     if offFit is not None and gridExtent[0]<offFit[0]<gridExtent[2] and gridExtent[1]<offFit[1]<gridExtent[3]:
                         offCenters[uindex,:] = offFit[0:2]
                 
-                onMax = gridOnSpikes.max()
-                offMax = gridOffSpikes.max()
+                onMax = gridOnSpikes_filter.max()
+                offMax = gridOffSpikes_filter.max()
                 onVsOff[uindex] = (onMax-offMax)/(onMax+offMax)
                 
                 # SDF time is minLatency before stim onset through 2*maxLatency
                 # Hence stim starts at minLatency and analysisWindow starts at 2*minLatency
                 # Search analysisWindow for peak but allow searching outside analaysisWindow for halfMax
                 inAnalysisWindow = np.logical_and(sdfTime>minLatency*2,sdfTime<minLatency+maxLatency)
-                ind = np.s_[:,:,inAnalysisWindow]
-                s,sdfMaxIsOn = (sdfOn,True) if np.nanmax(sdfOn[ind])>np.nanmax(sdfOff[ind]) else (sdfOff,False)
-                sdfMaxInd = np.unravel_index(np.nanargmax(s[ind]),s[ind].shape)
-                bestSDF = np.copy(s[sdfMaxInd[0],sdfMaxInd[1],:])
-                maxInd = np.argmax(bestSDF[inAnalysisWindow])+np.where(inAnalysisWindow)[0][0]
-                # respNormArea = (area under SDF in analysisWindow) / (peak * analysisWindow duration)
-                respNormArea[uindex] = np.trapz(bestSDF[inAnalysisWindow])*sdfSampInt/(bestSDF[maxInd]*(maxLatency-minLatency))
-                # subtract median(SDF[stimOnset : minLatency])
-                bestSDF -= np.median(bestSDF[np.logical_and(sdfTime>minLatency,sdfTime<minLatency*2)])
-                halfMax = 0.5*bestSDF[maxInd]
-                # find last thresh cross before peak
-                preHalfMaxInd = np.where(bestSDF[:maxInd]<halfMax)[0][-1]+1
-                # find first thresh cross after peak
-                postHalfMaxInd = np.where(bestSDF[maxInd:]<halfMax)[0]
-                postHalfMaxInd = maxInd+postHalfMaxInd[0]-1 if any(postHalfMaxInd) else bestSDF.size-1
-                respHalfWidth[uindex] = (postHalfMaxInd-preHalfMaxInd)*sdfSampInt
+                sdfMaxInd = np.full((2,3),np.nan)
+                preHalfMaxInd = np.full(2,np.nan)
+                postHalfMaxInd = np.full(2,np.nan)
+                for i,sdf in enumerate((sdfOn,sdfOff)):
+                    sdfMaxInd[i,:] = np.unravel_index(np.nanargmax(sdf[:,:,inAnalysisWindow]),sdf[:,:,inAnalysisWindow].shape)
+                    bestSDF = np.copy(sdf[sdfMaxInd[i,0],sdfMaxInd[i,1],:])
+                    maxInd = np.argmax(bestSDF[inAnalysisWindow])+np.where(inAnalysisWindow)[0][0]
+                    # respNormArea = (area under SDF in analysisWindow) / (peak * analysisWindow duration)
+                    respNormArea[uindex,i] = np.trapz(bestSDF[inAnalysisWindow])*sdfSampInt/(bestSDF[maxInd]*(maxLatency-minLatency))
+                    # subtract median(SDF[stimOnset : minLatency])
+                    bestSDF -= np.median(bestSDF[np.logical_and(sdfTime>minLatency,sdfTime<minLatency*2)])
+                    halfMax = 0.5*bestSDF[maxInd]
+                    # find last thresh cross before peak
+                    preHalfMaxInd[i] = np.where(bestSDF[:maxInd]<halfMax)[0][-1]+1
+                    # find first thresh cross after peak
+                    postHalfMax = np.where(bestSDF[maxInd:]<halfMax)[0]
+                    postHalfMaxInd[i] = maxInd+postHalfMax[0]-1 if any(postHalfMax) else bestSDF.size-1
+                respHalfWidth[uindex,:] = (postHalfMaxInd-preHalfMaxInd)*sdfSampInt
                 
 #                fwhm = {}
 #                indexName = ['on', 'off']                
@@ -428,8 +430,8 @@ class probeData():
                     for i,_ in enumerate(ypos):
                         for j,_ in enumerate(xpos):
                             ax.plot(x+sdfTime,y+sdf[i,j,:],color='k')
-                            if ((title=='On' and sdfMaxIsOn) or (title=='Off' and not sdfMaxIsOn)) and i==sdfMaxInd[0] and j==sdfMaxInd[1]:
-                                halfMaxInd = [preHalfMaxInd,postHalfMaxInd]
+                            if i==sdfMaxInd[ind,0] and j==sdfMaxInd[ind,1]:
+                                halfMaxInd = [preHalfMaxInd[ind],postHalfMaxInd[ind]]
                                 ax.plot(x+sdfTime[halfMaxInd],y+sdf[i,j,halfMaxInd],color='r',linewidth=2)
                             x += sdfXMax*(1+spacing)
                         x = 0
@@ -467,17 +469,26 @@ class probeData():
         if plot and len(units)>1:
             
             plt.figure(facecolor='w')
-            for i,(respDur,label) in enumerate(zip((respNormArea,respHalfWidth),('Norm Area','Half-width'))):
-                ax = plt.subplot(1,2,i+1)
-                ax.plot(onVsOff,respDur,'ko')
-                ax.spines['right'].set_visible(False)
-                ax.spines['top'].set_visible(False)
-                ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
-                ax.set_xlim([-1,1])
-                ax.set_ylim([0.9*respDur.min(),1.1*respDur.max()])
-                ax.set_xticks([-1,0,1])
-                ax.set_xlabel('On vs Off Index')
-                ax.set_ylabel(label)
+            gspec = gridspec.GridSpec(2,2)
+            for i,(respDur,ylabel) in enumerate(zip((respNormArea,respHalfWidth),('Norm Area','Half-width'))):
+                for j,title in enumerate(('On','Off')):                
+                    ax = plt.subplot(gspec[i,j])
+                    ax.plot(onVsOff,respDur[:,j],'ko')
+                    ax.spines['right'].set_visible(False)
+                    ax.spines['top'].set_visible(False)
+                    ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
+                    ax.set_xlim([-1,1])
+                    ax.set_ylim([0.9*respDur.min(),1.1*respDur.max()])
+                    ax.set_xticks([-1,0,1])
+                    if i==0:
+                        ax.set_xticklabels([])
+                        ax.set_title(title,fontsize='small')
+                    else:
+                        ax.set_xlabel('On vs Off Index',fontsize='small')
+                    if j==0:
+                        ax.set_ylabel(ylabel,fontsize='small')
+                    else:
+                        ax.set_yticklabels([])
             
             if fit:
                 # comparison of RF and probe position
