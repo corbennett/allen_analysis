@@ -259,7 +259,7 @@ class probeData():
         return spikesPerTrial
         
             
-    def findRF(self, units=None, sigma = 2, plot = True, minLatency = 0.05, maxLatency = 0.15, trials = None, protocol=None, fit=True, useCache=False, saveTag=''):
+    def findRF(self, units=None, usePeakResp = True, sigma = 1, plot = True, minLatency = 0.05, maxLatency = 0.15, trials = None, protocol=None, fit=True, useCache=False, saveTag=''):
 
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -342,6 +342,11 @@ class probeData():
                 gridOnSpikes /= maxLatency-minLatency
                 gridOffSpikes /= maxLatency-minLatency
                 
+                inAnalysisWindow = np.logical_and(sdfTime>minLatency*2,sdfTime<minLatency+maxLatency)
+                if usePeakResp:
+                    gridOnSpikes = np.max(sdfOn[:,:,inAnalysisWindow],axis=2)
+                    gridOffSpikes = np.max(sdfOff[:,:,inAnalysisWindow],axis=2)
+                
                 gaussianKernel = Gaussian2DKernel(stddev=sigma)
                 gridOnSpikes_filter = convolve(gridOnSpikes, gaussianKernel, boundary='extend')
                 gridOffSpikes_filter = convolve(gridOffSpikes, gaussianKernel, boundary='extend')
@@ -373,14 +378,25 @@ class probeData():
                 # SDF time is minLatency before stim onset through 2*maxLatency
                 # Hence stim starts at minLatency and analysisWindow starts at 2*minLatency
                 # Search analysisWindow for peak but allow searching outside analaysisWindow for halfMax
-                inAnalysisWindow = np.logical_and(sdfTime>minLatency*2,sdfTime<minLatency+maxLatency)
                 sdfMaxInd = np.full((2,3),np.nan)
                 preHalfMaxInd = np.full(2,np.nan)
                 postHalfMaxInd = np.full(2,np.nan)
+                windowOffset = np.where(inAnalysisWindow)[0][0]
                 for i,sdf in enumerate((sdfOn,sdfOff)):
-                    sdfMaxInd[i,:] = np.unravel_index(np.nanargmax(sdf[:,:,inAnalysisWindow]),sdf[:,:,inAnalysisWindow].shape)
-                    bestSDF = np.copy(sdf[sdfMaxInd[i,0],sdfMaxInd[i,1],:])
-                    maxInd = np.argmax(bestSDF[inAnalysisWindow])+np.where(inAnalysisWindow)[0][0]
+                    s = np.copy(sdf)
+                    while True:
+                        if np.all(np.isnan(s)):
+                            break
+                        globalMaxInd = list(np.unravel_index(np.nanargmax(s),s.shape))
+                        localMaxInd = list(np.unravel_index(np.nanargmax(s[:,:,inAnalysisWindow]),s[:,:,inAnalysisWindow].shape))
+                        localMaxInd[2] += windowOffset
+                        if globalMaxInd==localMaxInd:
+                            sdfMaxInd[i,:] = globalMaxInd
+                            break
+                        else:
+                            s[globalMaxInd[0],globalMaxInd[1],:] = np.nan
+                    bestSDF = s[sdfMaxInd[i,0],sdfMaxInd[i,1],:]
+                    maxInd = sdfMaxInd[i,2]
                     # respNormArea = (area under SDF in analysisWindow) / (peak * analysisWindow duration)
                     respNormArea[uindex,i] = np.trapz(bestSDF[inAnalysisWindow])*sdfSampInt/(bestSDF[maxInd]*(maxLatency-minLatency))
                     # subtract median(SDF[stimOnset : minLatency])
@@ -430,7 +446,7 @@ class probeData():
                     for i,_ in enumerate(ypos):
                         for j,_ in enumerate(xpos):
                             ax.plot(x+sdfTime,y+sdf[i,j,:],color='k')
-                            if i==sdfMaxInd[ind,0] and j==sdfMaxInd[ind,1]:
+                            if not np.isnan(respHalfWidth[uindex,ind]) and i==sdfMaxInd[ind,0] and j==sdfMaxInd[ind,1]:
                                 halfMaxInd = [preHalfMaxInd[ind],postHalfMaxInd[ind]]
                                 ax.plot(x+sdfTime[halfMaxInd],y+sdf[i,j,halfMaxInd],color='r',linewidth=2)
                             x += sdfXMax*(1+spacing)
