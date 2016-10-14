@@ -6,7 +6,7 @@ Created on Fri Jun 17 12:19:20 2016
 """
 
 from __future__ import division
-import datetime, h5py, json, math, ntpath, os, shelve, shutil
+import copy, datetime, h5py, json, math, ntpath, os, shelve, shutil
 import numpy as np
 import scipy.ndimage.filters
 import scipy.optimize
@@ -16,11 +16,13 @@ from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib import cm
 from PyQt4 import QtGui
-from astropy.convolution import Gaussian2DKernel, convolve
-
+from astropy.convolution import Gaussian2DKernel, Gaussian1DKernel, convolve
+import pandas
 
 
 dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
+lastFileOpenPath = os.path.dirname(os.path.realpath(__file__))
+lastFileSavePath = copy.copy(lastFileOpenPath)
 
 class probeData():
     
@@ -362,13 +364,14 @@ class probeData():
                         # params: x0 , y0, sigX, sigY, theta, amplitude
                         data = np.copy(d)-d.min()
                         i,j = np.unravel_index(np.argmax(data),data.shape)
-                        initialParams = (azim[j], elev[i], azim[1]-azim[0], elev[1]-elev[0], 0, data.max())
+                        sigmaGuess = (azim[1]-azim[0])*(np.count_nonzero(data>0.5*data.max())**0.5)
+                        initialParams = (azim[j],elev[i],sigmaGuess,sigmaGuess,0,data.max())
                         if not np.any(np.isnan(data)):
                             fitParams.append(fitGauss2D(azim,elev,data,initialParams))
                     onFit,offFit = fitParams
-                    if onFit is not None and gridExtent[0]<onFit[0]<gridExtent[2] and gridExtent[1]<onFit[1]<gridExtent[3]:
+                    if onFit is not None:
                         onCenters[uindex,:] = onFit[0:2]
-                    if offFit is not None and gridExtent[0]<offFit[0]<gridExtent[2] and gridExtent[1]<offFit[1]<gridExtent[3]:
+                    if offFit is not None:
                         offCenters[uindex,:] = offFit[0:2]
                 
                 onMax = gridOnSpikes_filter.max()
@@ -507,6 +510,20 @@ class probeData():
                         ax.set_yticklabels([])
             
             if fit:
+                plt.figure(facecolor='w')
+                ax = plt.subplot(1,1,1)
+                ax.plot(gridExtent[[0,2,2,0,0]],gridExtent[[1,1,3,3,1]],'k')
+                ax.plot(onCenters[:,0],onCenters[:,1],'ro')
+                ax.plot(offCenters[:,0],offCenters[:,1],'bo')
+                ax.spines['right'].set_visible(False)
+                ax.spines['top'].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+                ax.set_xlim(gridExtent[[0,2]]+[-30,30])
+                ax.set_ylim(gridExtent[[1,3]]+[-30,30])
+                ax.set_xlabel('Azimuth',fontsize='small')
+                ax.set_ylabel('Elevation',fontsize='small')
+                ax.set_title('RF center (red = on, blue = off)',fontsize='small')
+                
                 # comparison of RF and probe position
                 plt.figure(facecolor='w')
                 unitsYPos = np.array(unitsYPos)
@@ -514,10 +531,7 @@ class probeData():
                 # for (azim,elev) in (on,off)...
                 for i,rfCenters in enumerate((c[:,xy] for xy in (0,1) for c in (onCenters,offCenters))):
                     ax = plt.subplot(2,2,i+1)
-                    self.rfCenters=rfCenters
                     hasRF = np.logical_not(np.isnan(rfCenters))
-                    self.hasRF=hasRF
-                    self.unitsYPos=unitsYPos
                     if np.count_nonzero(hasRF)>1:
                         # linFit = (slope, intercept, r-value, p-value, stderror)
                         linFit = scipy.stats.linregress(unitsYPos[hasRF],rfCenters[hasRF])
@@ -537,9 +551,9 @@ class probeData():
                     elif i==2:
                         ax.set_ylabel('Elevation',fontsize='medium')
                     if i in (0,1):
-                        ax.set_ylim(gridExtent[[0,2]]+[-5,5])
+                        ax.set_ylim(gridExtent[[0,2]]+[-30,30])
                     else:
-                        ax.set_ylim(gridExtent[[1,3]]+[-5,5])
+                        ax.set_ylim(gridExtent[[1,3]]+[-30,30])
                         ax.set_xlabel('Probe Y Pos',fontsize='medium')
             
     
@@ -1597,22 +1611,24 @@ class probeData():
               self.units[unit]['times'] = spikeTimes       
 
 
-    def saveHDF5(self, fileSaveName = None, fileOut = None, saveDict = None, grp = None):
-        if fileSaveName is None and fileOut is None:
-            fileSaveName = saveFile()
-            if fileSaveName=='':
+    def saveHDF5(self, filePath = None, fileOut = None, saveDict = None, grp = None):
+        if filePath is None and fileOut is None:
+            filePath = saveFile(fileType='*.hdf5')
+            if filePath=='':
                 return
-            fileOut = h5py.File(fileSaveName, 'w')
-        elif fileSaveName is not None and fileOut is None:            
-            fileOut = h5py.File(fileSaveName,'w')
+            fileOut = h5py.File(filePath, 'w')
+        elif filePath is not None and fileOut is None:            
+            fileOut = h5py.File(filePath,'w')
 
         if saveDict is None:
             saveDict = self.__dict__
         if grp is None:    
             grp = fileOut['/']
         
-        for key in saveDict:    
-            if type(saveDict[key]) is dict:
+        for key in saveDict:
+            if key[0]=='_':
+                continue
+            elif type(saveDict[key]) is dict:
                 self.saveHDF5(fileOut=fileOut, saveDict=saveDict[key], grp=grp.create_group(key))
             else:
                 try:
@@ -1624,13 +1640,13 @@ class probeData():
                         print('Could not save: ', key)
                     
                     
-    def loadHDF5(self, fileName=None, grp=None, loadDict=None):
-        if fileName is None and grp is None:        
-            fileName = getFile()
-            if fileName=='':
+    def loadHDF5(self, filePath=None, grp=None, loadDict=None):
+        if filePath is None and grp is None:        
+            filePath = getFile(fileType='*.hdf5')
+            if filePath=='':
                 return
         if grp is None:
-            grp = h5py.File(str(fileName))
+            grp = h5py.File(filePath)
         for key,val in grp.items():
             if isinstance(val,h5py._hl.dataset.Dataset):
                 v = val.value
@@ -1685,27 +1701,83 @@ class probeData():
         shelf.close()
 
 
+    def readExcelFile(self, sheetname = None, fileName = None):
+        if sheetname is None:            
+            expDate = os.path.basename(os.path.dirname(os.path.dirname(self.kwdFileList[0])))        
+            expDate = expDate[0:8]
+            sheetname = expDate
+            if sheetname=='':
+                return
+        if fileName is None:        
+            fileName = getFile()
+            if fileName=='':
+                return        
+        
+        table = pandas.read_excel(fileName, sheetname=sheetname, parse_cols="A, B")
+        
+        for u in xrange(table.shape[0]):
+            unit = table.Cell[u]
+            label = table.Label[u]
+            self.units[str(unit)]['label'] = label
+
+
+    def getUnitsByLabel(self, labelID, criterion, notFlag=False):
+        units = []
+        for unit in self.units.keys():
+            label = self.units[unit][labelID]
+            if notFlag:                
+                if label not in criterion:
+                    units.append(unit)
+            else:
+                if label in criterion:
+                    units.append(unit)
+        return units
+        
+        
+    def findCCFCoords(self, tipPos, entryPos, tipProbePos=-1300):
+        tipPos = np.array(tipPos)
+        entryPos = np.array(entryPos)        
+        
+        xRange = entryPos[0] - tipPos[0]
+        yRange = entryPos[1] - tipPos[1]
+        zRange = entryPos[2] - tipPos[2]
+        
+        trackLength = math.sqrt(xRange**2 + yRange**2 + zRange**2)
+        
+        xSlope = xRange/trackLength
+        ySlope = yRange/trackLength
+        zSlope = zRange/trackLength
+                        
+        units, unitsYPos = self.getOrderedUnits(self.units.keys())
+        for i, unit in enumerate(units):
+            distFromTip = unitsYPos[i] - tipProbePos
+            pos = np.array([xSlope, ySlope, zSlope])*distFromTip
+            pos+=tipPos
+            
+            self.units[str(unit)]['CCFCoords'] = pos
+            
+        
 # utility functions
 
-def getFile():
+def getFile(rootDir='',fileType=''):
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getOpenFileName(None,'Choose File')
+    return str(QtGui.QFileDialog.getOpenFileName(None,'Choose File',rootDir,fileType))
     
     
 def getDir(rootDir=''):
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory',rootDir) 
+    return str(QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory',rootDir)) 
     
 
-def saveFile():
+def saveFile(rootDir='',fileType=''):
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return QtGui.QFileDialog.getSaveFileName(None,'Save As')
+    return str(QtGui.QFileDialog.getSaveFileName(None,'Save As',rootDir,fileType))
 
 
 def getKwdInfo(dirPath=None):
@@ -1762,8 +1834,10 @@ def gauss2D(xyTuple,x0,y0,sigX,sigY,theta,amplitude):
 
 def fitGauss2D(x,y,data,initialParams):
     try:
-        lowerBounds = np.array([-np.inf,-np.inf,0,0,0,0])
-        upperBounds = np.array([np.inf,np.inf,np.inf,np.inf,2*math.pi,1.5*initialParams[-1]])
+        gridSize = max(x[-1]-x[0],y[-1]-y[0])
+        maxOffGrid = 0.2*gridSize
+        lowerBounds = np.array([x[0]-maxOffGrid,y[0]-maxOffGrid,0,0,0,0])
+        upperBounds = np.array([x[-1]+maxOffGrid,y[-1]+maxOffGrid,gridSize,gridSize,2*math.pi,1.5*data.max()])
         fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except RuntimeError:
         print('fit failed')
@@ -1859,5 +1933,18 @@ def findFWatHM(data):
     return [hStart, hEnd], hEnd-hStart
 
 
+def gaussianConvolve3D(data, sigma):
+    gaussian2DKernel = Gaussian2DKernel(stddev=sigma)
+    data_c = np.zeros_like(data)
+    for z in xrange(data.shape[2]):
+        data_c[:, :, z] = convolve(data[:, :, z], gaussian2DKernel, boundary='extend')
+
+    gaussian1DKernel = Gaussian1DKernel(stddev=sigma)
+    for x in xrange(data.shape[0]):
+        for y in xrange(data.shape[1]):
+            data_c[x, y, :] = convolve(data_c[x, y, :], gaussian1DKernel, boundary='extend')
+    
+    return data_c    
+    
 if __name__=="__main__":
     pass       
