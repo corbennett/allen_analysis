@@ -296,13 +296,6 @@ class probeData():
         else:
             if not isinstance(boxSize,list):
                 boxSize = [boxSize]
-                
-        if plot:        
-            fig = plt.figure(figsize = (10, 3*len(units)), facecolor='w')
-            gridWidth = 6*len(boxSize)
-            if len(boxSize)>1:
-                gridWidth += 1
-            gs = gridspec.GridSpec(len(units), gridWidth)
         
         onVsOff = np.full((len(boxSize),len(units)),np.nan)
         respNormArea = np.full((len(boxSize),len(units),2),np.nan)
@@ -445,6 +438,11 @@ class probeData():
                 self.units[str(unit)]['rf' + saveTag]['offFit'] = offFit
             
             if plot:
+                fig = plt.figure(figsize = (10, 2*len(units)), facecolor='w')
+                gridWidth = 6*len(boxSize)
+                if len(boxSize)>1:
+                    gridWidth += 1
+                gs = gridspec.GridSpec(len(units), gridWidth)
                 maxVal = max(np.nanmax(gridOnSpikes), np.nanmax(gridOffSpikes))
                 minVal = min(np.nanmin(gridOnSpikes), np.nanmin(gridOffSpikes))
                 sdfMax = max(np.nanmax(sdfOn),np.nanmax(sdfOff))
@@ -586,7 +584,7 @@ class probeData():
                         ax.set_xlabel('Probe Y Pos',fontsize='medium')
             
     
-    def analyzeGratings(self, units=None, trials = None, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', avgOri = True, fit = True, useCache=False, saveTag=''):
+    def analyzeGratings(self, units=None, trials = None, usePeakResp=False, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', stfOri='avg', oriSF='avg', oriTF='avg', fit = True, useCache=False, saveTag=''):
     
         units, unitsYPos = self.getOrderedUnits(units) 
             
@@ -597,14 +595,6 @@ class probeData():
                 label = 'gratings_ori'
             protocol = self.getProtocolIndex(label)
         protocol = str(protocol)
-               
-        if plot:
-            plt.figure(figsize =(10, 4*len(units)),facecolor='w')
-            if protocolType=='stf':
-                gridWidth = 4 if avgOri else 8
-            else:
-                gridWidth = 1
-            gs = gridspec.GridSpec(len(units), gridWidth)
 
         if trials is None:
             trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
@@ -639,7 +629,23 @@ class probeData():
         ori[ori>0] = -(ori[ori>0]-360)
         ori = np.sort(ori)  
         
-        stfOri = ['avg'] if avgOri else ori
+        if protocolType=='stf':
+            oriSF = oriTF = 'all'
+        else:
+            stfOri = 'all'
+        param = [oriSF,oriTF,stfOri]
+        val = [sf,tf,ori]
+        for i,p in enumerate(param):
+            if isinstance(p,str):
+                if p=='avg':
+                    val[i] = ['avg']
+                elif p!='all':
+                    raise ValueError('stfOri, oriTF, and oriSF must be avg, all, a list, or a number')
+            elif isinstance(p,list):
+                val[i] = p
+            else:
+                val[i] = [p]
+        sf,tf,ori = val
         
         trialStartFrame = self.visstimData[protocol]['stimStartFrames'][trials]
         trialDuration = self.visstimData[protocol]['stimTime']
@@ -652,41 +658,40 @@ class probeData():
         sdfSamples = round((preTime+stimTime+postTime)*self.sampleRate)
         sdfSigma = 0.02
         sdfSampInt = 0.001
+        inAnalysisWindow = None
         
         for uindex, unit in enumerate(units):
             if ('stf' + saveTag) in self.units[str(unit)] and protocolType=='stf' and useCache:
-                stfMat = self.units[str(unit)]['stf' + saveTag]['stfMat']
+                respMat = self.units[str(unit)]['stf' + saveTag]['respMat']
                 sf = self.units[str(unit)]['stf' + saveTag]['sf']
                 tf = self.units[str(unit)]['stf' + saveTag]['tf']
-                fitParams = self.units[str(unit)]['stf' + saveTag]['fitParams']
-            elif ('ori' + saveTag) in self.units[str(unit)] and protocolType=='ori' and useCache:
-                oriList = self.units[str(unit)]['ori' + saveTag]['tuningCurve']
+                if protocolType=='stf':
+                    stfFitParams = self.units[str(unit)]['stf' + saveTag]['stfFitParams']
+                else:
+                    dsi,prefDir = self.units[str(unit)]['stf' + saveTag]['dsi']
+                    osi,prefOri = self.units[str(unit)]['stf' + saveTag]['osi']
             else:
-                self.units[str(unit)][protocolType + saveTag] = {}
+                respMat = np.zeros((len(tf),len(sf),len(ori)))
+                respCount = np.zeros_like(respMat)
                 
-                #spontaneous firing rate taken from interspersed gray trials
                 spontRate = 0
                 spontCount = 0
-                
-                stfMat = np.zeros((tf.size,sf.size,ori.size))
-                stfCountMat = np.zeros_like(stfMat)
-                oriList = [[] for i in range(ori.size)]
                 
                 spikes = self.units[str(unit)]['times'][protocol]
                 spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,spikes)
                 trialResponse = spikesPerTrial/((trialEndSamples-trialStartSamples)/self.sampleRate)
                 
-                #make STF mat for specified trials (default all trials)
+                #make resp matrix organized by tf x sf x ori
                 for trial,_ in enumerate(trials):
                     spikeRateThisTrial = trialResponse[trial]
                     if trialContrast[trial] > 0+tol:
-                        sfIndex = np.where(np.isclose(sf, trialSF[trial]))[0]
-                        tfIndex = np.where(np.isclose(tf, trialTF[trial]))[0]
-                        oriIndex = np.where(np.isclose(ori,trialOri[trial]))[0]
-                        stfMat[tfIndex, sfIndex, oriIndex] += spikeRateThisTrial
-                        stfCountMat[tfIndex, sfIndex, oriIndex] += 1
-                        oriList[oriIndex].append(spikeRateThisTrial)
+                        sfIndex = 0 if sf[0]=='avg' else np.where(np.isclose(sf, trialSF[trial]))[0]
+                        tfIndex = 0 if tf[0]=='avg' else np.where(np.isclose(tf, trialTF[trial]))[0]
+                        oriIndex = 0 if ori[0]=='avg' else np.where(np.isclose(ori,trialOri[trial]))[0]
+                        respMat[tfIndex, sfIndex, oriIndex] += spikeRateThisTrial
+                        respCount[tfIndex, sfIndex, oriIndex] += 1
                     else:
+                        #spontaneous firing rate taken from interspersed gray trials
                         spontRate += spikeRateThisTrial
                         spontCount += 1
                 
@@ -694,86 +699,94 @@ class probeData():
                     spontRate /= spontCount
                 else:
                     spontRate = np.nan
-                    
-                self.units[str(unit)][protocolType + saveTag]['spontRate'] = spontRate
                 
-                stfCountMat[stfCountMat==0] = np.nan
-                stfMat /= stfCountMat
-                if avgOri:
-                    stfMat = np.nanmean(stfMat,axis=2)
+                respCount[respCount==0] = np.nan
+                respMat /= respCount
                 
-                oriMean = np.zeros(len(oriList))                
-                oriError = np.zeros(len(oriList))
-                for oindex in range(len(oriList)):
-                    oriMean[oindex] = np.mean(np.array(oriList[oindex]))
-                    oriError[oindex] = np.std(np.array(oriList[oindex]))
-                
-                sdf = np.full((tf.size,sf.size,round(sdfSamples/self.sampleRate/sdfSampInt),len(stfOri)),np.nan)
-                f1Mat = np.full((tf.size,sf.size,len(stfOri)),np.nan)
+                # get spike density functons and f1/f0
+                sdf = np.full((len(tf),len(sf),len(ori),round(sdfSamples/self.sampleRate/sdfSampInt)),np.nan)
+                f1Mat = np.full((len(tf),len(sf),len(ori)),np.nan)
+                allTrials = np.ones(trials.size,dtype=bool)
                 contrastTrials = trialContrast>0+tol
                 for tfInd,thisTF in enumerate(tf):
-                    tfTrials = np.isclose(trialTF,thisTF)
+                    tfTrials = allTrials if tf[0]=='avg' else np.isclose(trialTF,thisTF)
                     for sfInd,thisSF in enumerate(sf):
-                        sfTrials = np.isclose(trialSF,thisSF)
-                        for oriInd,thisOri in enumerate(stfOri):
-                            if avgOri:
-                                trialIndex = np.ones(trials.size,dtype=bool)
-                            else:
-                                trialIndex = np.isclose(trialOri,thisOri)
+                        sfTrials = allTrials if sf[0]=='avg' else np.isclose(trialSF,thisSF)
+                        for oriInd,thisOri in enumerate(ori):
+                            trialIndex = allTrials if ori[0]=='avg' else np.isclose(trialOri,thisOri)
                             for i in (contrastTrials,tfTrials,sfTrials):
                                 trialIndex = np.logical_and(trialIndex,i)
                             if any(trialIndex):
-                                sdf[tfInd,sfInd,:,oriInd],sdfTime = self.getMeanSDF(spikes,trialStartSamples[trialIndex]-latencySamples-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
-                                inAnalysisWindow = np.logical_and(sdfTime>preTime+responseLatency,sdfTime<preTime+stimTime)
-                                s = sdf[tfInd,sfInd,inAnalysisWindow,oriInd]
-                                f,pwr = scipy.signal.welch(s,1/sdfTime[1],nperseg=s.size,detrend='constant',scaling='spectrum')
-                                pwr **= 0.5
-                                f1Ind = np.argmin(np.absolute(f-thisTF))
-                                f1Mat[tfInd,sfInd,oriInd] = pwr[f1Ind-1:f1Ind+2].max()/s.mean()
-                if avgOri:
-                    sdf = np.squeeze(sdf)
-                    f1Mat = np.squeeze(f1Mat)
+                                sdf[tfInd,sfInd,oriInd,:],sdfTime = self.getMeanSDF(spikes,trialStartSamples[trialIndex]-latencySamples-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
+                                if inAnalysisWindow is None:
+                                    inAnalysisWindow = np.logical_and(sdfTime>preTime+responseLatency,sdfTime<preTime+stimTime)
+                                if tf[0]!='avg':
+                                    s = sdf[tfInd,sfInd,oriInd,inAnalysisWindow]
+                                    f,pwr = scipy.signal.welch(s,1/sdfTime[1],nperseg=s.size,detrend='constant',scaling='spectrum')
+                                    pwr **= 0.5
+                                    f1Ind = np.argmin(np.absolute(f-thisTF))
+                                    f1Mat[tfInd,sfInd,oriInd] = pwr[f1Ind-1:f1Ind+2].max()/s.mean()
+                                    
+                if usePeakResp:
+                    respMat = np.nanmax(sdf[:,:,:,inAnalysisWindow],axis=3)
                 
+                # fit stf matrix for each ori
+                stfFitParams = []
                 if fit and protocolType=='stf':
                     # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude
-                    fitParams = []
-                    for oriInd,_ in enumerate(stfOri):
-                        stfMatOri = np.copy(stfMat) if avgOri else np.copy(stfMat[:,:,oriInd])
-                        stfMatOri -= spontRate
-                        if np.any(np.isnan(stfMatOri)) or stfMatOri.max()<0:
-                            fitParams.append(None)
+                    for oriInd,_ in enumerate(ori):
+                        r = np.copy(respMat[:,:,oriInd])
+                        r -= spontRate
+                        if np.any(np.isnan(r)) or r.max()<0:
+                            stfFitParams.append(None)
                         else:
-                            i,j = np.unravel_index(np.argmax(stfMatOri),stfMatOri.shape)
-                            initialParams = (sf[j], tf[i], 1, 1, 0.5, stfMatOri.max())
-                            fitParams.append(fitStfLogGauss2D(sf,tf,stfMatOri,initialParams))   
-                    self.units[str(unit)]['stf' + saveTag]['fitParams'] = fitParams
-                    
-                if protocolType=='stf':
-                    self.units[str(unit)]['stf' + saveTag]['stfMat'] = stfMat
-                    self.units[str(unit)]['stf' + saveTag]['sf'] = sf
-                    self.units[str(unit)]['stf' + saveTag]['tf'] = tf
-                    
+                            i,j = np.unravel_index(np.argmax(r),r.shape)
+                            initialParams = (sf[j], tf[i], 1, 1, 0.5, r.max())
+                            stfFitParams.append(fitStfLogGauss2D(sf,tf,r,initialParams))
+                
+                # calculate DSI and OSI
                 if protocolType=='ori':
-                    dsi,prefDir = getDSI(oriMean,ori)
-                    osi,prefOri = getDSI(oriMean,2*ori)
-                    prefOri /= 2
+                    dsi = np.full((len(tf),len(sf)),np.nan)
+                    prefDir = np.copy(dsi)
+                    osi = np.copy(dsi)
+                    prefOri = np.copy(dsi)
+                    for i,_ in enumerate(tf):
+                        for j,_ in enumerate(sf):
+                            dsi[i,j],prefDir[i,j] = getDSI(respMat[i,j,:],ori)
+                            osi[i,j],prefOri[i,j] = getDSI(respMat[i,j,:],2*ori)
+                            prefOri[i,j] /= 2
+                
+                # cache results
+                self.units[str(unit)][protocolType + saveTag] = {}
+                self.units[str(unit)][protocolType + saveTag]['spontRate'] = spontRate
+                self.units[str(unit)]['stf' + saveTag]['respMat'] = respMat
+                self.units[str(unit)]['stf' + saveTag]['sf'] = sf
+                self.units[str(unit)]['stf' + saveTag]['tf'] = tf
+                if protocolType=='stf':
+                    self.units[str(unit)]['stf' + saveTag]['stfFitParams'] = stfFitParams
+                elif protocolType=='ori':
                     self.units[str(unit)]['ori' + saveTag]['dsi'] = [dsi, prefDir]
                     self.units[str(unit)]['ori' + saveTag]['osi'] = [osi, prefOri]
-                    self.units[str(unit)]['ori' + saveTag]['tuningCurve'] = [oriMean, oriError]
         
             if plot:
+                plt.figure(figsize =(10, 4*len(units)),facecolor='w')
                 if protocolType=='stf':
-                    for oriInd,thisOri in enumerate(stfOri):
+                    gridWidth = 4*len(ori)
+                else:
+                    gridWidth = len(tf)*len(sf)
+                gs = gridspec.GridSpec(len(units), gridWidth)                
+                
+                if protocolType=='stf':
+                    for oriInd,thisOri in enumerate(ori):
                         ax = plt.subplot(gs[uindex,oriInd*4:oriInd*4+2])
-                        sdfOri = sdf if avgOri else sdf[:,:,:,oriInd]
                         spacing = 0.2
                         sdfXMax = sdfTime[-1]
-                        sdfYMax = np.nanmax(sdfOri)
+                        sdfYMax = np.nanmax(sdf[:,:,oriInd,:])
                         x = 0
                         y = 0
                         for i,_ in enumerate(tf):
                             for j,_ in enumerate(sf):
-                                ax.plot(x+sdfTime,y+sdfOri[i,j,:],color='k')
+                                ax.plot(x+sdfTime,y+sdf[i,j,oriInd,:],color='k')
                                 x += sdfXMax*(1+spacing)
                             x = 0
                             y += sdfYMax*(1+spacing)
@@ -793,20 +806,20 @@ class probeData():
                             ax.set_title('ori = '+str(thisOri),fontsize='medium') 
                        
                         ax = plt.subplot(gs[uindex,oriInd*4+2])
-                        stfMatOri = np.copy(stfMat) if avgOri else np.copy(stfMat[:,:,oriInd])
-                        f1MatOri = np.copy(f1Mat) if avgOri else np.copy(f1Mat[:,:,oriInd])
-                        xyNan = np.transpose(np.where(np.isnan(stfMatOri)))
-                        nanTrials = np.isnan(stfMatOri)
-                        stfMatOri[nanTrials] = 0
+                        respMatOri = np.copy(respMat[:,:,oriInd])
+                        f1MatOri = np.copy(f1Mat[:,:,oriInd])
+                        xyNan = np.transpose(np.where(np.isnan(respMatOri)))
+                        nanTrials = np.isnan(respMatOri)
+                        respMatOri[nanTrials] = 0
                         f1MatOri[nanTrials] = 0
-                        centerPoint = spontRate if not np.isnan(spontRate) else np.nanmedian(stfMatOri)
-                        cLim = np.nanmax(abs(stfMatOri-centerPoint))
-                        im = ax.imshow(stfMatOri, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
+                        centerPoint = spontRate if not np.isnan(spontRate) else np.nanmedian(respMatOri)
+                        cLim = np.nanmax(abs(respMatOri-centerPoint))
+                        im = ax.imshow(respMatOri, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
                         for xypair in xyNan:    
                             ax.text(xypair[1], xypair[0], 'nan', color='white', ha='center')
-                        if fit and fitParams[oriInd] is not None:
-                            ax.plot(np.log2(fitParams[oriInd][0])-np.log2(sf[0]),np.log2(fitParams[oriInd][1])-np.log2(tf[0]),'kx',markeredgewidth=2)
-                            fitX,fitY = getStfContour(sf,tf,fitParams[oriInd])
+                        if fit and stfFitParams[oriInd] is not None:
+                            ax.plot(np.log2(stfFitParams[oriInd][0])-np.log2(sf[0]),np.log2(stfFitParams[oriInd][1])-np.log2(tf[0]),'kx',markeredgewidth=2)
+                            fitX,fitY = getStfContour(sf,tf,stfFitParams[oriInd])
                             ax.plot(fitX,fitY,'k',linewidth=2)
                             ax.set_xlim([-0.5,sf.size-0.5])
                             ax.set_ylim([-0.5,tf.size-0.5])
@@ -855,13 +868,16 @@ class probeData():
 #                    plt.xticks(tf)
               
                 elif protocolType=='ori':
-                    a1 = plt.subplot(gs[uindex,0], projection='polar')
-                    theta = ori * (np.pi/180.0)
-                    theta = np.append(theta, theta[0])
-                    rho = np.append(oriMean, oriMean[0])
-                    a1.plot(theta, rho)
-                    ax.set_ylabel('Unit '+str(unit))
-                    a1.set_title('DSI = '+str(round(dsi,2))+', prefDir = '+str(round(prefDir))+'\n'+'OSI = '+str(round(osi,2))+', prefOri = '+str(round(prefOri)),fontsize='x-small')
+                    for i,_ in enumerate(tf):
+                        for j,_ in enumerate(sf):
+                            ax = plt.subplot(gs[uindex,i*len(tf)+j], projection='polar')
+                            theta = ori * (np.pi/180.0)
+                            theta = np.append(theta, theta[0])
+                            rho = np.append(respMat[i,j,:], respMat[i,j,0])
+                            ax.plot(theta, rho)
+                            ax.set_title('DSI = '+str(round(dsi[i,j],2))+', prefDir = '+str(round(prefDir[i,j]))+'\n'+'OSI = '+str(round(osi[i,j],2))+', prefOri = '+str(round(prefOri[i,j])),fontsize='x-small')
+                            if i==0 and j==0:
+                                ax.set_ylabel('Unit '+str(unit))
                     
 #                    a2 = plt.subplot(gs[uindex,1])
 #                    plt.xlabel('ori')
@@ -1092,7 +1108,7 @@ class probeData():
                         axInd += 1
     
                                         
-    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True, saveTag=''):
+    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True, usePeakResp=False, saveTag=''):
         
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -1110,10 +1126,6 @@ class probeData():
         trialEndSamples = p['frameSamples'][trialStartFrame+trialNumFrames]
         minInterTrialTime = p['interTrialInterval'][0]
         minInterTrialSamples = int(minInterTrialTime*self.sampleRate)
-        
-        if plot:
-            plt.figure(figsize=(10,4*len(units)),facecolor='w')
-            gs = gridspec.GridSpec(len(units),3)
         
         bckgndSpeed = np.concatenate((-p['bckgndSpeed'][:0:-1],p['bckgndSpeed']))
         patchSpeed = np.concatenate((-p['patchSpeed'][:0:-1],p['patchSpeed']))
@@ -1180,6 +1192,8 @@ class probeData():
                                                             'peakSpontRate':peakSpontRate}
             
             if plot:
+                plt.figure(figsize=(10,4*len(units)),facecolor='w')
+                gs = gridspec.GridSpec(len(units),3)
                 ax = plt.subplot(gs[uInd,0:2])
                 spacing = 0.2
                 sdfXMax = sdfTime[-1]
@@ -1206,8 +1220,9 @@ class probeData():
                 ax.set_ylabel('Unit '+str(u), fontsize='medium')
                 
                 ax = plt.subplot(gs[uInd,2])
-                respMat = np.nanmax(np.nanmax(meanResp,axis=3),axis=2) # max resp over all patch sizes and elevations
-                centerPoint = meanSpontRate if not np.isnan(meanSpontRate) else np.nanmedian(respMat)
+                r,spRate = (peakResp,peakSpontRate) if usePeakResp else (meanResp,meanSpontRate)
+                respMat = np.nanmax(np.nanmax(r,axis=3),axis=2) # max resp over all patch sizes and elevations
+                centerPoint = spRate if not np.isnan(spRate) else np.nanmedian(r)
                 cLim = np.nanmax(abs(respMat-centerPoint))
                 plt.imshow(respMat,cmap='bwr',clim=(centerPoint-cLim,centerPoint+cLim),interpolation='none',origin='lower')
                 ax.spines['left'].set_visible(False)
@@ -1330,8 +1345,6 @@ class probeData():
         if paramNames is not None and len(paramNames)>2:
             raise ValueError('plotSDF does not accept more than 2 parameters')
         protocol = str(protocol)
-        if windowDur is not None:
-            windowDur = int(windowDur*self.sampleRate)
         params = []
         if startSamples is None:
             p = self.visstimData[str(protocol)]
@@ -1346,8 +1359,9 @@ class probeData():
             if paramNames is not None:
                 for name in paramNames:
                     params.append(p[name][:-1])
-        else:
-            windowDur = [windowDur for _ in startSamples]
+        if windowDur is not None and not isinstance(windowDur,np.ndarray):
+            windowDur = int(windowDur*self.sampleRate)
+            windowDur = np.array([windowDur for _ in startSamples])
         paramSet = [np.unique(param) for param in params]
         startSamples += int(offset*self.sampleRate)
         spikes = self.units[str(unit)]['times'][protocol]
@@ -1374,7 +1388,7 @@ class probeData():
                     trialIndex = np.intersect1d(trials,np.where(params[0]==paramSet[0][j])[0])
                 else:
                     trialIndex = trials
-                sdf,t = self.getMeanSDF(spikes,startSamples[trialIndex],max(windowDur[trialIndex]),sigma=sigma)
+                sdf,t = self.getMeanSDF(spikes,startSamples[trialIndex],max(windowDur[trialIndex]),sigma=sigma,sampInt=sampInt)
                 ymax = max(ymax,sdf.max())
                 ax.append(plt.subplot(gs[i,j]))
                 ax[-1].plot(t+offset,sdf)
@@ -1413,8 +1427,6 @@ class probeData():
         # offset and windowDur input in seconds then converted to samples
         protocol = str(protocol)
         offset = int(offset*self.sampleRate)
-        if windowDur is not None:
-            windowDur = int(windowDur*self.sampleRate)
         params = []
         if startSamples is None:
             p = self.visstimData[str(protocol)]
@@ -1429,7 +1441,8 @@ class probeData():
             if paramNames is not None:
                 for name in paramNames:
                     params.append(p[name][:-1])
-        else:
+        if windowDur is not None and not isinstance(windowDur,np.ndarray):
+            windowDur = int(windowDur*self.sampleRate)
             windowDur = [windowDur for _ in startSamples]
         startSamples += offset
         spikes = self.units[str(unit)]['times'][protocol]
