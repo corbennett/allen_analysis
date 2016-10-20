@@ -260,7 +260,7 @@ class probeData():
         return spikesPerTrial
         
             
-    def findRF(self, units=None, boxSize='avg', usePeakResp = True, sigma = 1, plot = True, minLatency = 0.05, maxLatency = 0.15, trials = None, protocol=None, fit=True, useCache=False, saveTag=''):
+    def findRF(self, units=None, boxSize='all', usePeakResp = True, sigma = 1, plot = True, minLatency = 0.05, maxLatency = 0.15, trials = None, protocol=None, fit=True, useCache=False, saveTag=''):
 
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -300,14 +300,19 @@ class probeData():
         respNormArea = np.full((len(boxSize),len(units),2),np.nan)
         respHalfWidth = np.copy(respNormArea)
         if fit:
-            onFit = []
-            offFit = []
             onCenters = np.full((len(boxSize),len(units),2),np.nan)
             offCenters = np.copy(onCenters)
             
         sdfSampInt = 0.001
         sdfSigma = 0.01
         sdfSamples = minLatencySamples+2*maxLatencySamples
+        
+        if plot:
+            fig = plt.figure(figsize = (10, 2*len(units)), facecolor='w')
+            gridWidth = 6*len(boxSize)
+            if len(boxSize)>1:
+                gridWidth += 1
+            gs = gridspec.GridSpec(len(units), gridWidth)
         
         for uindex, unit in enumerate(units):
             if ('rf' + saveTag) in self.units[unit] and useCache:
@@ -357,6 +362,8 @@ class probeData():
                 
                 inAnalysisWindow = np.logical_and(sdfTime>minLatency*2,sdfTime<minLatency+maxLatency)
                 gaussianKernel = Gaussian2DKernel(stddev=sigma)
+                onFit = []
+                offFit = []
                 for sizeInd,_ in enumerate(boxSize):
                     if usePeakResp:
                         gridOnSpikes[sizeInd] = np.nanmax(sdfOn[sizeInd][:,:,inAnalysisWindow],axis=2)
@@ -437,11 +444,6 @@ class probeData():
                 self.units[str(unit)]['rf' + saveTag]['offFit'] = offFit
             
             if plot:
-                fig = plt.figure(figsize = (10, 2*len(units)), facecolor='w')
-                gridWidth = 6*len(boxSize)
-                if len(boxSize)>1:
-                    gridWidth += 1
-                gs = gridspec.GridSpec(len(units), gridWidth)
                 maxVal = max(np.nanmax(gridOnSpikes), np.nanmax(gridOffSpikes))
                 minVal = min(np.nanmin(gridOnSpikes), np.nanmin(gridOffSpikes))
                 sdfMax = max(np.nanmax(sdfOn),np.nanmax(sdfOff))
@@ -507,7 +509,7 @@ class probeData():
                     ax.set_ylabel('Spikes/s')
                     
         if plot and len(units)>1:
-            markerSize = 6 if boxSize[0]=='avg' else boxSize
+            markerSize = [6] if boxSize[0]=='avg' else boxSize
             
             plt.figure(facecolor='w')
             gspec = gridspec.GridSpec(2,2)
@@ -553,7 +555,7 @@ class probeData():
                 unitsYPos = np.array(unitsYPos)
                 xlim = np.array([min(unitsYPos)-10,max(unitsYPos)+10])
                 # for (azim,elev) in (on,off)...
-                for i,rfCenters in enumerate((c[:,xy] for xy in (0,1) for c in (onCenters,offCenters))):
+                for i,rfCenters in enumerate((c[:,:,xy] for xy in (0,1) for c in (onCenters,offCenters))):
                     ax = plt.subplot(2,2,i+1)
                     rfCentersSizeAvg = np.nanmean(rfCenters,axis=0)
                     hasRF = np.logical_not(np.isnan(rfCentersSizeAvg))
@@ -636,7 +638,7 @@ class probeData():
                 else:
                     ax.tick_params(bottom='off', labelbottom='off')
                     
-    def analyzeGratings(self, units=None, trials = None, usePeakResp=False, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', stfOri='avg', oriSF='avg', oriTF='avg', fit = True, useCache=False, saveTag=''):
+    def analyzeGratings(self, units=None, trials = None, usePeakResp=False, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', stfOri='all', oriSF='all', oriTF='all', fit = True, useCache=False, saveTag=''):
     
         units, unitsYPos = self.getOrderedUnits(units) 
             
@@ -711,6 +713,14 @@ class probeData():
         sdfSigma = 0.02
         sdfSampInt = 0.001
         inAnalysisWindow = None
+        
+        if plot:
+            plt.figure(figsize =(10, 4*len(units)),facecolor='w')
+            if protocolType=='stf':
+                gridWidth = 4*len(ori)
+            else:
+                gridWidth = len(tf)*len(sf)
+            gs = gridspec.GridSpec(len(units), gridWidth)   
         
         for uindex, unit in enumerate(units):
             if ('stf' + saveTag) in self.units[str(unit)] and protocolType=='stf' and useCache:
@@ -821,13 +831,6 @@ class probeData():
                     self.units[str(unit)]['ori' + saveTag]['osi'] = [osi, prefOri]
         
             if plot:
-                plt.figure(figsize =(10, 4*len(units)),facecolor='w')
-                if protocolType=='stf':
-                    gridWidth = 4*len(ori)
-                else:
-                    gridWidth = len(tf)*len(sf)
-                gs = gridspec.GridSpec(len(units), gridWidth)                
-                
                 if protocolType=='stf':
                     for oriInd,thisOri in enumerate(ori):
                         ax = plt.subplot(gs[uindex,oriInd*4:oriInd*4+2])
@@ -980,7 +983,11 @@ class probeData():
         numTrialTypes = spotSpeed.size*spotSize.size*(2*azimuths.size+elevs.size)*spotColor.size
         maxTrialsPerType = math.ceil(trials.size/numTrialTypes)
         resp = np.full((spotSpeed.size,spotSize.size,spotDir.size,spotPos.size,spotColor.size,maxTrialsPerType),np.nan)
-         
+        
+        if plot:
+            plt.figure(figsize=(10,4*len(units)),facecolor='w')
+            gs = gridspec.GridSpec(len(units),3)        
+        
         for uindex, unit in enumerate(units):
             if ('spotResponse' + saveTag) in self.units[str(unit)] and useCache:
                 responseDict = self.units[str(unit)]['spotResponse' + saveTag]['spot_responseDict']
@@ -1244,8 +1251,6 @@ class probeData():
                                                             'peakSpontRate':peakSpontRate}
             
             if plot:
-                plt.figure(figsize=(10,4*len(units)),facecolor='w')
-                gs = gridspec.GridSpec(len(units),3)
                 ax = plt.subplot(gs[uInd,0:2])
                 spacing = 0.2
                 sdfXMax = sdfTime[-1]
