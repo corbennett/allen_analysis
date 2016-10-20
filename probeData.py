@@ -167,8 +167,7 @@ class probeData():
     
     def alignFramesToDiode(self, frameSampleAdjustment = None, plot = False, protocol=0):
         if frameSampleAdjustment is None:
-            frameSampleAdjustment = np.round((4.5/60.0) * 30000) 
-        self.visstimData[str(protocol)]['frameSamples'] =  (self.TTL[str(protocol)]['VisstimOn']['falling'] + frameSampleAdjustment).astype(int)
+            frameSampleAdjustment = np.round((4.5/60.0) * self.sampleRate) 
         self.visstimData[str(protocol)]['frameSamples'] = (self.TTL[str(protocol)]['VisstimOn']['falling'] + frameSampleAdjustment).astype(int)
         self._frameSampleAdjustment = frameSampleAdjustment
         
@@ -583,7 +582,60 @@ class probeData():
                         ax.set_ylim(gridExtent[[1,3]]+[-30,30])
                         ax.set_xlabel('Probe Y Pos',fontsize='medium')
             
-    
+    def analyzeFlash(self, units=None, trials=None, protocol=None, responseLatency=0.25, plot=True, sdfSigma=0.005):
+        units, unitsYPos = self.getOrderedUnits(units) 
+            
+        if protocol is None:
+            label = 'flash'
+            protocol = self.getProtocolIndex(label)
+            
+        protocol = str(protocol)
+        
+        if trials is None:
+            trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
+        else:
+            trials = np.array(trials)
+        
+        if plot:
+            plt.figure(figsize =(10, 4*len(units)),facecolor='w')
+            gs = gridspec.GridSpec(len(units), 1)
+
+        trialStartFrames = self.visstimData[protocol]['stimStartFrames'][trials]
+        trialStartSamples = self.visstimData[protocol]['frameSamples'][trialStartFrames]
+        
+        lumValues = np.unique(self.visstimData[protocol]['stimHistory'])
+        trialLumValues = self.visstimData[protocol]['stimHistory'][trials]
+        
+        preTime = self.visstimData[protocol]['grayDur']/self.visstimData[protocol]['frameRate']
+        stimTime = self.visstimData[protocol]['stimDur']/self.visstimData[protocol]['frameRate']
+        postTime = preTime
+        sdfSamples = round((preTime+stimTime+postTime)*self.sampleRate)
+        sdfSampInt = 0.001
+        for uindex, unit in enumerate(units):
+            sdf = np.full((lumValues.size,round(sdfSamples/self.sampleRate/sdfSampInt)),np.nan)
+            spikes = self.units[str(unit)]['times'][protocol]
+ 
+            for lumindex, lum in enumerate(lumValues):
+                lumTrials = np.where(trialLumValues==lum)[0]
+                if any(lumTrials):
+                    sdf[lumindex], sdfTime = self.getMeanSDF(spikes, trialStartSamples[lumTrials] - preTime*self.sampleRate, sdfSamples, sigma=sdfSigma)
+                    
+            if plot:
+                ax = plt.subplot(gs[uindex,0])
+                ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
+                for lumi, lum in enumerate(sdf):
+                    rval = 1 if lumValues[lumi]>0 else 0
+                    bval = 1 if lumValues[lumi]<0 else 0
+                    color = (rval, 0, bval) if np.max([rval, bval])>0 else (1,1,1)
+                    alpha = abs(lumValues[lumi]) if abs(lumValues[lumi])>0 else 0.5
+                    
+                    ax.plot(lum, color=color, alpha=alpha)
+                ax.set_ylabel(str(unit), fontsize='small')
+                if uindex==len(units)-1:
+                    ax.set_xlabel('Time, ms', fontsize='medium')
+                else:
+                    ax.tick_params(bottom='off', labelbottom='off')
+                    
     def analyzeGratings(self, units=None, trials = None, usePeakResp=False, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', stfOri='avg', oriSF='avg', oriTF='avg', fit = True, useCache=False, saveTag=''):
     
         units, unitsYPos = self.getOrderedUnits(units) 
