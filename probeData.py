@@ -276,6 +276,9 @@ class probeData():
         minLatencySamples = minLatency*self.sampleRate
         maxLatencySamples = maxLatency*self.sampleRate
         
+        stimStartFrames = self.visstimData[protocol]['stimStartFrames'][trials]
+        stimStartSamples = self.visstimData[protocol]['frameSamples'][stimStartFrames]
+        
         posHistory = self.visstimData[protocol]['boxPositionHistory'][trials]
         xpos = np.unique(posHistory[:,0])
         ypos = np.unique(posHistory[:,1])
@@ -307,6 +310,8 @@ class probeData():
         sdfSigma = 0.01
         sdfSamples = minLatencySamples+2*maxLatencySamples
         
+        gaussianKernel = Gaussian2DKernel(stddev=sigma)
+        
         if plot:
             fig = plt.figure(figsize = (10, 2*len(units)), facecolor='w')
             gridWidth = 6*len(boxSize)
@@ -323,6 +328,7 @@ class probeData():
             else:
                 self.units[unit]['rf' + saveTag] = {}
                 spikes = self.units[unit]['times'][str(protocol)]
+                spontSpikes = np.zeros((len(boxSize),ypos.size,xpos.size,2))
                 gridOnSpikes = np.zeros((len(boxSize),ypos.size,xpos.size))
                 gridOffSpikes = np.zeros_like(gridOnSpikes)
                 sdfOn = np.zeros((len(boxSize),ypos.size,xpos.size,round(sdfSamples/self.sampleRate/sdfSampInt)))
@@ -338,20 +344,14 @@ class probeData():
                             posOnTrials = np.logical_and(po, colorHistory == 1)
                             posOffTrials = np.logical_and(po, colorHistory == -1)
                             
-                            posOnFrames = self.visstimData[protocol]['stimStartFrames'][trials][np.logical_and(posOnTrials,boxSizeTrials)]
-                            posOffFrames = self.visstimData[protocol]['stimStartFrames'][trials][np.logical_and(posOffTrials,boxSizeTrials)]
-    
-                            posOnSamples = self.visstimData[protocol]['frameSamples'][posOnFrames]
-                            posOffSamples = self.visstimData[protocol]['frameSamples'][posOffFrames]
+                            posOnSamples = stimStartSamples[np.logical_and(posOnTrials,boxSizeTrials)]
+                            posOffSamples = stimStartSamples[np.logical_and(posOffTrials,boxSizeTrials)]
                             
-                            for p in posOnSamples:
-                                gridOnSpikes[sizeInd,i,j] += np.count_nonzero(np.logical_and(spikes>=p+minLatencySamples,spikes<p+maxLatencySamples))
+                            gridOnSpikes[sizeInd,i,j] = self.findSpikesPerTrial(posOnSamples+minLatencySamples,posOnSamples+maxLatencySamples,spikes).mean()
+                            gridOffSpikes[sizeInd,i,j] = self.findSpikesPerTrial(posOffSamples+minLatencySamples,posOffSamples+maxLatencySamples,spikes).mean()
                             
-                            for p in posOffSamples:
-                                gridOffSpikes[sizeInd,i,j] += np.count_nonzero(np.logical_and(spikes>=p+minLatencySamples,spikes<p+maxLatencySamples))
-                            
-                            gridOnSpikes[sizeInd,i,j] /= posOnSamples.size
-                            gridOffSpikes[sizeInd,i,j] /= posOffSamples.size
+                            spontSpikes[sizeInd,i,j,0] = self.findSpikesPerTrial(posOnSamples+int(minLatencySamples/2),posOnSamples+minLatencySamples,spikes).mean()
+                            spontSpikes[sizeInd,i,j,1] = self.findSpikesPerTrial(posOffSamples+int(minLatencySamples/2),posOffSamples+minLatencySamples,spikes).mean()
                             
                             sdfOn[sizeInd,i,j,:],sdfTime = self.getMeanSDF(spikes,posOnSamples-minLatencySamples,sdfSamples,sdfSigma,sdfSampInt)
                             sdfOff[sizeInd,i,j,:],_ = self.getMeanSDF(spikes,posOffSamples-minLatencySamples,sdfSamples,sdfSigma,sdfSampInt)
@@ -359,35 +359,46 @@ class probeData():
                 # convert spike count to spike rate
                 gridOnSpikes /= maxLatency-minLatency
                 gridOffSpikes /= maxLatency-minLatency
+                spontSpikes /= minLatency/2
                 
                 inAnalysisWindow = np.logical_and(sdfTime>minLatency*2,sdfTime<minLatency+maxLatency)
-                gaussianKernel = Gaussian2DKernel(stddev=sigma)
-                onFit = []
-                offFit = []
-                for sizeInd,_ in enumerate(boxSize):
-                    if usePeakResp:
+                inSpontWindow = np.logical_and(sdfTime>minLatency/2,sdfTime<2*minLatency)
+                if usePeakResp:
+                    for sizeInd,_ in enumerate(boxSize):
                         gridOnSpikes[sizeInd] = np.nanmax(sdfOn[sizeInd][:,:,inAnalysisWindow],axis=2)
                         gridOffSpikes[sizeInd] = np.nanmax(sdfOff[sizeInd][:,:,inAnalysisWindow],axis=2)
+                        spontSpikes[sizeInd,:,:,0] = np.nanmax(sdfOn[sizeInd][:,:,inSpontWindow],axis=2)
+                        spontSpikes[sizeInd,:,:,1] = np.nanmax(sdfOff[sizeInd][:,:,inSpontWindow],axis=2)
+                        
+                # filter response and spont rate and cacluate resp thresh
+                for sizeInd,_ in enumerate(boxSize):
                     gridOnSpikes[sizeInd] = convolve(gridOnSpikes[sizeInd], gaussianKernel, boundary='extend')
                     gridOffSpikes[sizeInd] = convolve(gridOffSpikes[sizeInd], gaussianKernel, boundary='extend')
-#                    gridOnSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOnSpikes, sigma)
-#                    gridOffSpikes_filter = scipy.ndimage.filters.gaussian_filter(gridOffSpikes, sigma)
+                    for i in (0,1):
+                        spontSpikes[sizeInd,:,:,i] = convolve(spontSpikes[sizeInd,:,:,i], gaussianKernel, boundary='extend')
+                respThresh = np.nanmean(spontSpikes)+3*np.nanstd(spontSpikes)
+                hasOnResp = np.zeros(len(boxSize),dtype=bool)
+                hasOffResp = np.copy(hasOnResp)
+                for sizeInd,_ in enumerate(boxSize):
+                    hasOnResp[sizeInd] = np.nanmax(gridOnSpikes[sizeInd])>respThresh
+                    hasOffResp[sizeInd] = np.nanmax(gridOffSpikes[sizeInd])>respThresh
                 
+                # fit resp and calculate parameters
+                onFit = np.full((len(boxSize),7),np.nan)
+                offFit = np.copy(onFit)
+                for sizeInd,_ in enumerate(boxSize):
                     if fit:
-                        for fitParams,data in zip((onFit,offFit),(gridOnSpikes[sizeInd],gridOffSpikes[sizeInd])):
-                            # params: x0 , y0, sigX, sigY, theta, amplitude
-                            d = np.copy(data)-data.min()
-                            i,j = np.unravel_index(np.argmax(d),d.shape)
-                            sigmaGuess = (azim[1]-azim[0])*(np.count_nonzero(data>0.5*d.max())**0.5)
-                            initialParams = (azim[j],elev[i],sigmaGuess,sigmaGuess,0,d.max())
-                            if np.any(np.isnan(data)):
-                                fitParams.append(None)
-                            else:
-                                fitParams.append(fitGauss2D(azim,elev,d,initialParams))
-                        if onFit[sizeInd] is not None:
-                            onCenters[sizeInd,uindex,:] = onFit[sizeInd][0:2]
-                        if offFit[sizeInd] is not None:
-                            offCenters[sizeInd,uindex,:] = offFit[sizeInd][0:2]
+                        for fitParams,resp,hasResp in zip((onFit,offFit),(gridOnSpikes[sizeInd],gridOffSpikes[sizeInd]),(hasOnResp[sizeInd],hasOffResp[sizeInd])):
+                            # params: x0 , y0, sigX, sigY, theta, amplitude, offset
+                            if hasResp and not np.any(np.isnan(resp)):
+                                i,j = np.unravel_index(np.argmax(resp),resp.shape)
+                                sigmaGuess = (azim[1]-azim[0])*0.5*np.sqrt(np.count_nonzero(resp>resp.min()+0.5*(resp.max()-resp.min())))
+                                initialParams = (azim[j],elev[i],sigmaGuess,sigmaGuess,0,resp.max(),np.percentile(resp,10))
+                                fitParams[sizeInd] = fitGauss2D(azim,elev,resp,initialParams)
+                        if not all(np.isnan(onFit[sizeInd])):
+                            onCenters[sizeInd,uindex,:] = onFit[sizeInd,0:2]
+                        if not all(np.isnan(offFit[sizeInd])):
+                            offCenters[sizeInd,uindex,:] = offFit[sizeInd,0:2]
                     
                     onMax = gridOnSpikes[sizeInd].max()
                     offMax = gridOffSpikes[sizeInd].max()
@@ -427,17 +438,7 @@ class probeData():
                         postHalfMaxInd[sizeInd,i] = maxInd+postHalfMax[0]-1 if any(postHalfMax) else bestSDF.size-1
                     respHalfWidth[sizeInd,uindex,:] = (postHalfMaxInd[sizeInd]-preHalfMaxInd[sizeInd])*sdfSampInt
                 
-#                fwhm = {}
-#                indexName = ['on', 'off']                
-#                for ind, sdfs in enumerate([sdfOn, sdfOff]):                  
-#                    fwhm[indexName[ind]] = {}
-#                    maxTrace = np.where(sdfs == sdfs.max())
-#                    maxData = sdfs[maxTrace[0][0], maxTrace[1][0], :]
-#                    fwhm[indexName[ind]]['range'], fwhm[indexName[ind]]['fw'] = findFWatHM(maxData)
-#                    fwhm[indexName[ind]]['trace'] = [maxTrace[0][0], maxTrace[1][0]] 
-#                fwOn.append(fwhm['on']['fw'])
-#                fwOff.append(fwhm['off']['fw'])                
-                                        
+                # cache results
                 self.units[str(unit)]['rf' + saveTag]['on'] = gridOnSpikes
                 self.units[str(unit)]['rf' + saveTag]['off'] = gridOffSpikes
                 self.units[str(unit)]['rf' + saveTag]['onFit'] = onFit
@@ -451,7 +452,7 @@ class probeData():
                 sdfXMax = sdfTime[-1]
                 sdfYMax = sdfMax
                 for sizeInd,size in enumerate(boxSize):
-                    for ind,(sdf,resp,fitPrm,title) in enumerate(zip((sdfOn[sizeInd],sdfOff[sizeInd]),(gridOnSpikes[sizeInd],gridOffSpikes[sizeInd]),(onFit[sizeInd],offFit[sizeInd]),('On','Off'))):
+                    for ind,(sdf,resp,hasResp,fitPrm,onOffTitle) in enumerate(zip((sdfOn[sizeInd],sdfOff[sizeInd]),(gridOnSpikes[sizeInd],gridOffSpikes[sizeInd]),(hasOnResp[sizeInd],hasOffResp[sizeInd]),(onFit[sizeInd],offFit[sizeInd]),('On','Off'))):
                         axIndex = sizeInd*6+ind*3
                         ax = fig.add_subplot(gs[uindex,axIndex:axIndex+2])
                         x = 0
@@ -478,19 +479,24 @@ class probeData():
                         if sizeInd==0 and ind==0:
                             ax.set_ylabel('Unit '+str(unit)+'\nypos = '+str(round(unitsYPos[uindex])), fontsize='medium')
                         if uindex==0:
-                            ax.set_title(title,fontsize='medium')                    
+                            ax.set_title(onOffTitle,fontsize='medium')                    
                         
                         ax = fig.add_subplot(gs[uindex,axIndex+2])
                         im = ax.imshow(resp, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]] )
-                        if fit and fitPrm is not None:
-                            ax.plot(fitPrm[0],fitPrm[1],'kx',markeredgewidth=2)
-                            fitX,fitY = getEllipseXY(*fitPrm[:-1])
-                            ax.plot(fitX,fitY,'k',linewidth=2)
-                            ax.set_xlim(gridExtent[[0,2]]-0.5)
-                            ax.set_ylim(gridExtent[[1,3]]-0.5)
+                        title = '' if hasResp else 'no resp'
+                        if fit and hasResp:
+                            if any(np.isnan(fitPrm)):
+                                title += 'fit failed'
+                            else:
+                                ax.plot(fitPrm[0],fitPrm[1],'kx',markeredgewidth=2)
+                                fitX,fitY = getEllipseXY(*fitPrm[:-2])
+                                ax.plot(fitX,fitY,'k',linewidth=2)
+                                ax.set_xlim(gridExtent[[0,2]]-0.5)
+                                ax.set_ylim(gridExtent[[1,3]]-0.5)
                         ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
                         ax.set_xticks(np.round(azim[[0,-1]]))
                         ax.set_yticks(np.round(elev[[0,-1]]))
+                        ax.set_title(title,fontsize='small')
                         cb = plt.colorbar(im, ax=ax, fraction=0.05, shrink=0.5, pad=0.04)
                         cb.ax.tick_params(length=0,labelsize='x-small')
                         cb.set_ticks([math.ceil(minVal),int(maxVal)])
@@ -583,7 +589,8 @@ class probeData():
                     else:
                         ax.set_ylim(gridExtent[[1,3]]+[-30,30])
                         ax.set_xlabel('Probe Y Pos',fontsize='medium')
-            
+    
+       
     def analyzeFlash(self, units=None, trials=None, protocol=None, responseLatency=0.25, plot=True, sdfSigma=0.005):
         units, unitsYPos = self.getOrderedUnits(units) 
             
@@ -621,7 +628,15 @@ class probeData():
                 lumTrials = np.where(trialLumValues==lum)[0]
                 if any(lumTrials):
                     sdf[lumindex], sdfTime = self.getMeanSDF(spikes, trialStartSamples[lumTrials] - preTime*self.sampleRate, sdfSamples, sigma=sdfSigma)
-                    
+            
+            baselineStart = 300
+            baselineEnd = 500
+            baselines = sdf[:, baselineStart:baselineEnd]
+            maxTrace = np.unravel_index(np.argmax(sdf[:, 500:1000]), sdf[:, 500:1000].shape)
+            latency = np.where(sdf[maxTrace[0], 500:1000] > baselines.mean() + 5*baselines.std())[0]
+            latency = latency[0] if any(latency) else None
+            print latency
+            
             if plot:
                 ax = plt.subplot(gs[uindex,0])
                 ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
@@ -637,8 +652,9 @@ class probeData():
                     ax.set_xlabel('Time, ms', fontsize='medium')
                 else:
                     ax.tick_params(bottom='off', labelbottom='off')
-                    
-    def analyzeGratings(self, units=None, trials = None, usePeakResp=False, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', stfOri='all', oriSF='all', oriTF='all', fit = True, useCache=False, saveTag=''):
+     
+              
+    def analyzeGratings(self, units=None, trials = None, responseLatency = 0.25, plot=True, protocol=None, protocolType='stf', fit = True, useCache=False, saveTag=''):
     
         units, unitsYPos = self.getOrderedUnits(units) 
             
@@ -681,29 +697,11 @@ class probeData():
         trialOri[trialOri>0] = -(trialOri[trialOri>0]-360)
         ori = np.copy(self.visstimData[protocol]['ori'])
         ori[ori>0] = -(ori[ori>0]-360)
-        ori = np.sort(ori)  
-        
-        if protocolType=='stf':
-            oriSF = oriTF = 'all'
-        else:
-            stfOri = 'all'
-        param = [oriSF,oriTF,stfOri]
-        val = [sf,tf,ori]
-        for i,p in enumerate(param):
-            if isinstance(p,str):
-                if p=='avg':
-                    val[i] = ['avg']
-                elif p!='all':
-                    raise ValueError('stfOri, oriTF, and oriSF must be avg, all, a list, or a number')
-            elif isinstance(p,list):
-                val[i] = p
-            else:
-                val[i] = [p]
-        sf,tf,ori = val
+        ori = np.sort(ori)
         
         trialStartFrame = self.visstimData[protocol]['stimStartFrames'][trials]
         trialDuration = self.visstimData[protocol]['stimTime']
-        trialStartSamples = self.visstimData[protocol]['frameSamples'][trialStartFrame] + latencySamples
+        trialStartSamples = self.visstimData[protocol]['frameSamples'][trialStartFrame]
         trialEndSamples = self.visstimData[protocol]['frameSamples'][trialStartFrame+trialDuration]
         
         preTime = self.visstimData[protocol]['preTime']/self.visstimData[protocol]['frameRate']
@@ -717,9 +715,9 @@ class probeData():
         if plot:
             plt.figure(figsize =(10, 4*len(units)),facecolor='w')
             if protocolType=='stf':
-                gridWidth = 4*len(ori)
+                gridWidth = 3*len(ori)+1
             else:
-                gridWidth = len(tf)*len(sf)
+                gridWidth = len(tf)*len(sf)+1
             gs = gridspec.GridSpec(len(units), gridWidth)   
         
         for uindex, unit in enumerate(units):
@@ -732,54 +730,32 @@ class probeData():
                 else:
                     dsi,prefDir = self.units[str(unit)]['stf' + saveTag]['dsi']
                     osi,prefOri = self.units[str(unit)]['stf' + saveTag]['osi']
-            else:
-                respMat = np.zeros((len(tf),len(sf),len(ori)))
-                respCount = np.zeros_like(respMat)
-                
-                spontRate = 0
-                spontCount = 0
-                
+            else:    
                 spikes = self.units[str(unit)]['times'][protocol]
-                spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,spikes)
-                trialResponse = spikesPerTrial/((trialEndSamples-trialStartSamples)/self.sampleRate)
+                trialResp = self.findSpikesPerTrial(trialStartSamples+latencySamples,trialEndSamples,spikes)
+                trialResp /= (trialEndSamples-trialStartSamples+latencySamples)/self.sampleRate
+                preTrialRate = self.findSpikesPerTrial(trialStartSamples-latencySamples,trialStartSamples,spikes)
+                preTrialRate /= responseLatency
                 
-                #make resp matrix organized by tf x sf x ori
-                for trial,_ in enumerate(trials):
-                    spikeRateThisTrial = trialResponse[trial]
-                    if trialContrast[trial] > 0+tol:
-                        sfIndex = 0 if sf[0]=='avg' else np.where(np.isclose(sf, trialSF[trial]))[0]
-                        tfIndex = 0 if tf[0]=='avg' else np.where(np.isclose(tf, trialTF[trial]))[0]
-                        oriIndex = 0 if ori[0]=='avg' else np.where(np.isclose(ori,trialOri[trial]))[0]
-                        respMat[tfIndex, sfIndex, oriIndex] += spikeRateThisTrial
-                        respCount[tfIndex, sfIndex, oriIndex] += 1
-                    else:
-                        #spontaneous firing rate taken from interspersed gray trials
-                        spontRate += spikeRateThisTrial
-                        spontCount += 1
-                
-                if spontCount>0:
-                    spontRate /= spontCount
-                else:
-                    spontRate = np.nan
-                
-                respCount[respCount==0] = np.nan
-                respMat /= respCount
-                
-                # get spike density functons and f1/f0
+                # make resp matrix with shape tf x sf x ori
+                # make similar matrices for pre-trial spike rate, spike density functons, and f1/f0
+                respMat = np.full((len(tf),len(sf),len(ori)),np.nan)
+                preTrialMat = np.copy(respMat)
                 sdf = np.full((len(tf),len(sf),len(ori),round(sdfSamples/self.sampleRate/sdfSampInt)),np.nan)
                 f1Mat = np.full((len(tf),len(sf),len(ori)),np.nan)
-                allTrials = np.ones(trials.size,dtype=bool)
                 contrastTrials = trialContrast>0+tol
                 for tfInd,thisTF in enumerate(tf):
-                    tfTrials = allTrials if tf[0]=='avg' else np.isclose(trialTF,thisTF)
+                    tfTrials = np.isclose(trialTF,thisTF)
                     for sfInd,thisSF in enumerate(sf):
-                        sfTrials = allTrials if sf[0]=='avg' else np.isclose(trialSF,thisSF)
+                        sfTrials = np.isclose(trialSF,thisSF)
                         for oriInd,thisOri in enumerate(ori):
-                            trialIndex = allTrials if ori[0]=='avg' else np.isclose(trialOri,thisOri)
+                            trialIndex = np.isclose(trialOri,thisOri)
                             for i in (contrastTrials,tfTrials,sfTrials):
                                 trialIndex = np.logical_and(trialIndex,i)
                             if any(trialIndex):
-                                sdf[tfInd,sfInd,oriInd,:],sdfTime = self.getMeanSDF(spikes,trialStartSamples[trialIndex]-latencySamples-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
+                                respMat[tfInd,sfInd,oriInd] = np.mean(trialResp[trialIndex])
+                                preTrialMat[tfInd,sfInd,oriInd] = np.mean(preTrialRate[trialIndex])
+                                sdf[tfInd,sfInd,oriInd,:],sdfTime = self.getMeanSDF(spikes,trialStartSamples[trialIndex]-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
                                 if inAnalysisWindow is None:
                                     inAnalysisWindow = np.logical_and(sdfTime>preTime+responseLatency,sdfTime<preTime+stimTime)
                                 if tf[0]!='avg':
@@ -788,35 +764,36 @@ class probeData():
                                     pwr **= 0.5
                                     f1Ind = np.argmin(np.absolute(f-thisTF))
                                     f1Mat[tfInd,sfInd,oriInd] = pwr[f1Ind-1:f1Ind+2].max()/s.mean()
-                                    
-                if usePeakResp:
-                    respMat = np.nanmax(sdf[:,:,:,inAnalysisWindow],axis=3)
                 
-                # fit stf matrix for each ori
-                stfFitParams = []
-                if fit and protocolType=='stf':
-                    # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude
-                    for oriInd,_ in enumerate(ori):
-                        r = np.copy(respMat[:,:,oriInd])
-                        r -= spontRate
-                        if np.any(np.isnan(r)) or r.max()<0:
-                            stfFitParams.append(None)
-                        else:
-                            i,j = np.unravel_index(np.argmax(r),r.shape)
-                            initialParams = (sf[j], tf[i], 1, 1, 0.5, r.max())
-                            stfFitParams.append(fitStfLogGauss2D(sf,tf,r,initialParams))
+                # calculate spontRate from gray screen trials
+                grayTrials = trialContrast<0+tol
+                spontRate = trialResp[grayTrials].mean()
+                spontSDF = self.getMeanSDF(spikes,trialStartSamples[grayTrials]-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
                 
-                # calculate DSI and OSI
-                if protocolType=='ori':
-                    dsi = np.full((len(tf),len(sf)),np.nan)
-                    prefDir = np.copy(dsi)
-                    osi = np.copy(dsi)
-                    prefOri = np.copy(dsi)
-                    for i,_ in enumerate(tf):
-                        for j,_ in enumerate(sf):
-                            dsi[i,j],prefDir[i,j] = getDSI(respMat[i,j,:],ori)
-                            osi[i,j],prefOri[i,j] = getDSI(respMat[i,j,:],2*ori)
-                            prefOri[i,j] /= 2
+                # find significant responses
+                hasResp = respMat>np.nanmean(preTrialMat)+3*np.nanstd(preTrialMat)
+                tfHasResp,sfHasResp,oriHasResp = [np.unique(np.where(hasResp)[i]) for i in (0,1,2)]
+                
+                meanResp = None
+                if protocolType=='stf':
+                    # fit stf matrix for avg of ori's with resp
+                    if fit and oriHasResp.size>0:
+                        # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude, offset
+                        meanResp = np.nanmean(respMat[:,:,oriHasResp],axis=2)
+                        i,j = np.unravel_index(np.argmax(meanResp),meanResp.shape)
+                        initialParams = (sf[j], tf[i], 1, 1, 0.5, meanResp.max(), meanResp.min())
+                        stfFitParams = fitStfLogGauss2D(sf,tf,meanResp,initialParams)
+                    else:
+                         stfFitParams = None
+                elif protocolType=='ori':
+                    # calculate DSI and OSI for avg of sf/tf's with resp
+                    if tfHasResp.size>0 and sfHasResp.size>0:
+                        meanResp = np.nanmean(np.nanmean(respMat[tfHasResp,:,:],axis=0)[sfHasResp,:],axis=0)
+                        dsi,prefDir = getDSI(meanResp,ori)
+                        osi,prefOri = getDSI(meanResp,2*ori)
+                        prefOri /= 2
+                    else:
+                        dsi = prefDir = osi = prefOri = None
                 
                 # cache results
                 self.units[str(unit)][protocolType + saveTag] = {}
@@ -832,11 +809,11 @@ class probeData():
         
             if plot:
                 if protocolType=='stf':
+                    spacing = 0.2
+                    sdfXMax = sdfTime[-1]
+                    sdfYMax = np.nanmax(sdf)
                     for oriInd,thisOri in enumerate(ori):
-                        ax = plt.subplot(gs[uindex,oriInd*4:oriInd*4+2])
-                        spacing = 0.2
-                        sdfXMax = sdfTime[-1]
-                        sdfYMax = np.nanmax(sdf[:,:,oriInd,:])
+                        ax = plt.subplot(gs[uindex,oriInd*3:oriInd*3+2])
                         x = 0
                         y = 0
                         for i,_ in enumerate(tf):
@@ -860,21 +837,37 @@ class probeData():
                         if uindex==0:
                             ax.set_title('ori = '+str(thisOri),fontsize='medium') 
                        
-                        ax = plt.subplot(gs[uindex,oriInd*4+2])
+                        ax = plt.subplot(gs[uindex,oriInd*3+2])
                         respMatOri = np.copy(respMat[:,:,oriInd])
-                        f1MatOri = np.copy(f1Mat[:,:,oriInd])
                         xyNan = np.transpose(np.where(np.isnan(respMatOri)))
                         nanTrials = np.isnan(respMatOri)
                         respMatOri[nanTrials] = 0
-                        f1MatOri[nanTrials] = 0
                         centerPoint = spontRate if not np.isnan(spontRate) else np.nanmedian(respMatOri)
                         cLim = np.nanmax(abs(respMatOri-centerPoint))
                         im = ax.imshow(respMatOri, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
                         for xypair in xyNan:    
                             ax.text(xypair[1], xypair[0], 'nan', color='white', ha='center')
-                        if fit and stfFitParams[oriInd] is not None:
-                            ax.plot(np.log2(stfFitParams[oriInd][0])-np.log2(sf[0]),np.log2(stfFitParams[oriInd][1])-np.log2(tf[0]),'kx',markeredgewidth=2)
-                            fitX,fitY = getStfContour(sf,tf,stfFitParams[oriInd])
+                        ax.tick_params(labelsize='x-small')
+                        ax.set_xticks(range(sf.size))
+                        ax.set_yticks(range(tf.size))
+                        ax.set_xticklabels(sf)
+                        ax.set_yticklabels(tf)
+                        ax.set_xlabel('Cycles/deg',fontsize='small')
+                        ax.set_ylabel('Cycles/s',fontsize='small')
+                        if oriInd not in oriHasResp:
+                            ax.set_title('no resp',fontsize='x-small')
+                        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+                        cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
+                        cb.ax.tick_params(length=0,labelsize='xx-small')
+                    
+                    ax = plt.subplot(gs[uindex,-1])
+                    if meanResp is not None:
+                        centerPoint = spontRate if not np.isnan(spontRate) else np.nanmedian(meanResp)
+                        cLim = np.nanmax(abs(respMatOri-centerPoint))
+                        im = ax.imshow(meanResp, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
+                        if fit and stfFitParams is not None:
+                            ax.plot(np.log2(stfFitParams[0])-np.log2(sf[0]),np.log2(stfFitParams[1])-np.log2(tf[0]),'kx',markeredgewidth=2)
+                            fitX,fitY = getStfContour(sf,tf,stfFitParams)
                             ax.plot(fitX,fitY,'k',linewidth=2)
                             ax.set_xlim([-0.5,sf.size-0.5])
                             ax.set_ylim([-0.5,tf.size-0.5])
@@ -885,42 +878,13 @@ class probeData():
                         ax.set_yticklabels(tf)
                         ax.set_xlabel('Cycles/deg',fontsize='small')
                         ax.set_ylabel('Cycles/s',fontsize='small')
-                        if uindex==0:
-                            ax.set_title('Spikes/s',fontsize='small')
+                        ax.set_title('mean ori with resp',fontsize='x-small')
                         cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
                         cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
                         cb.ax.tick_params(length=0,labelsize='xx-small')
-                        
-                        ax = plt.subplot(gs[uindex,oriInd*4+3])
-                        im = ax.imshow(f1MatOri, clim=(0,f1MatOri.max()), cmap='gray', origin = 'lower', interpolation='none')
-                        ax.tick_params(labelsize='x-small')
-                        ax.set_xticks(range(sf.size))
-                        ax.set_yticks(range(tf.size))
-                        ax.set_xticklabels([])
-                        ax.set_yticklabels([])
-                        if uindex==0:
-                            ax.set_title('f1/f0',fontsize='small')
-                        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
-                        cb.set_ticks([0,round(int(f1MatOri.max()*100)/100,2)])
-                        cb.ax.tick_params(length=0,labelsize='xx-small')
-                    
-#                    a2 = plt.subplot(gs[uindex,2])
-#                    values = np.mean(stfMat, axis=0)
-#                    error = np.std(stfMat, axis=0)
-#                    a2.plot(sf, values)
-#                    plt.fill_between(sf, values+error, values-error, alpha=0.3)
-#                    plt.xlabel('sf')
-#                    plt.ylabel('spikes')
-#                    plt.xticks(sf)
-#                    
-#                    a3 = plt.subplot(gs[uindex,3])
-#                    values = np.mean(stfMat, axis=1)
-#                    error = np.std(stfMat, axis=1)
-#                    a3.plot(tf, values)
-#                    plt.fill_between(tf, values+error, values-error, alpha=0.3)
-#                    plt.xlabel('tf')
-#                    plt.ylabel('spikes')
-#                    plt.xticks(tf)
+                    else:
+                        ax.set_axis_off()
+                        ax.set_title('no resp',fontsize='small')
               
                 elif protocolType=='ori':
                     for i,_ in enumerate(tf):
@@ -930,18 +894,153 @@ class probeData():
                             theta = np.append(theta, theta[0])
                             rho = np.append(respMat[i,j,:], respMat[i,j,0])
                             ax.plot(theta, rho)
-                            ax.set_title('DSI = '+str(round(dsi[i,j],2))+', prefDir = '+str(round(prefDir[i,j]))+'\n'+'OSI = '+str(round(osi[i,j],2))+', prefOri = '+str(round(prefOri[i,j])),fontsize='x-small')
                             if i==0 and j==0:
                                 ax.set_ylabel('Unit '+str(unit))
                     
-#                    a2 = plt.subplot(gs[uindex,1])
-#                    plt.xlabel('ori')
-#                    plt.ylabel('spike rate: ' + str(unit))
-#                    a2.plot(ori, oriMean)
-#                    plt.fill_between(ori, oriMean+oriError, oriMean - oriError, alpha=0.3)
-#                    plt.xticks(ori)
+                    ax = plt.subplot(gs[uindex,i*len(tf)+j], projection='polar')
+                    if meanResp is not None:
+                        theta = ori * (np.pi/180.0)
+                        theta = np.append(theta, theta[0])
+                        rho = np.append(respMat[i,j,:], respMat[i,j,0])
+                        ax.plot(theta, rho)
+                        ax.set_title('DSI = '+str(round(dsi,2))+', prefDir = '+str(round(prefDir))+'\n'+'OSI = '+str(round(osi,2))+', prefOri = '+str(round(prefOri)),fontsize='x-small')
+                    else:
+                        ax.set_axis_off()
+                        ax.set_title('no resp',fontsize='small')
 
-
+                                    
+    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True, usePeakResp=False, saveTag=''):
+        
+        units, unitsYPos = self.getOrderedUnits(units)
+        
+        if protocol is None:
+            protocol = self.getProtocolIndex('checkerboard')
+        protocol = str(protocol)          
+        p = self.visstimData[protocol]
+        assert(set(p['bckgndDir'])=={0,180} and set(p['patchDir'])=={0,180} and 0 in p['bckgndSpeed'] and 0 in p['patchSpeed'])
+        
+        if trials is None:
+            trials = np.arange((p['trialStartFrame']).size-1)
+        trialStartFrame = p['trialStartFrame'][trials]
+        trialNumFrames = (p['trialNumFrames'][trials]).astype(int)
+        trialStartSamples = p['frameSamples'][trialStartFrame]
+        trialEndSamples = p['frameSamples'][trialStartFrame+trialNumFrames]
+        minInterTrialTime = p['interTrialInterval'][0]
+        minInterTrialSamples = int(minInterTrialTime*self.sampleRate)
+        
+        bckgndSpeed = np.concatenate((-p['bckgndSpeed'][:0:-1],p['bckgndSpeed']))
+        patchSpeed = np.concatenate((-p['patchSpeed'][:0:-1],p['patchSpeed']))
+        numTrialTypes = patchSpeed.size*bckgndSpeed.size*p['patchSize'].size*p['patchElevation'].size
+        numTrialTypes -= (bckgndSpeed.size+patchSpeed.size-1)*p['patchSize'].size*p['patchElevation'].size
+        maxTrialsPerType = math.ceil(trials.size/numTrialTypes)
+        resp = np.full((patchSpeed.size,bckgndSpeed.size,p['patchSize'].size,p['patchElevation'].size,maxTrialsPerType),np.nan)
+        sdfSigma = 0.1
+        sdfSampInt = 0.001
+        sdfTime = np.arange(0,2*minInterTrialTime+max(trialEndSamples-trialStartSamples)/self.sampleRate,sdfSampInt)
+        for uInd,u in enumerate(units):
+            spikes = self.units[str(u)]['times'][protocol]
+            
+            # get mean spikes/s and spontRate
+            spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,spikes)
+            trialSpikeRate = spikesPerTrial/((1/p['frameRate'])*trialNumFrames)
+            for i,trial in enumerate(trials):
+                pchSpeedInd = patchSpeed==p['trialPatchSpeed'][trial]if p['trialPatchDir'][trial]==0 else patchSpeed==-p['trialPatchSpeed'][trial]
+                bckSpeedInd = bckgndSpeed==p['trialBckgndSpeed'][trial] if p['trialBckgndDir'][trial]==0 else bckgndSpeed==-p['trialBckgndSpeed'][trial]
+                pchSizeInd = p['patchSize']==p['trialPatchSize'][trial]
+                pchElevInd = p['patchElevation']==p['trialPatchPos'][trial]
+                n = np.count_nonzero(np.logical_not(np.isnan(resp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,:])))
+                resp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,n] = trialSpikeRate[i]
+            meanResp = np.nanmean(resp,axis=4)
+            meanSpontRate = np.nanmean(resp[patchSpeed.size//2,bckgndSpeed.size//2,:,:,:])
+            resp[:] = np.nan
+            
+            # get sdfs and peak spikes/s
+            sdf = np.full(np.concatenate((meanResp.shape,[sdfTime.size])),np.nan)
+            peakResp = np.full(meanResp.shape,np.nan)
+            for pchSpeedInd,pchSpeed in enumerate(patchSpeed):
+                pchDir = 180 if pchSpeed<0 else 0
+                a = p['trialPatchDir'][trials]==pchDir
+                b = p['trialPatchSpeed'][trials]==abs(pchSpeed)
+                for bckSpeedInd,bckSpeed in enumerate(bckgndSpeed):
+                    bckDir = 180 if bckSpeed<0 else 0
+                    c = p['trialBckgndDir'][trials]==bckDir
+                    d = p['trialBckgndSpeed'][trials]==abs(bckSpeed)
+                    for pchSizeInd,pchSize in enumerate(p['patchSize']):
+                        e = p['trialPatchSize'][trials]==pchSize
+                        for pchElevInd,pchElev in enumerate(p['patchElevation']):
+                            trialInd = p['trialPatchPos'][trials]==pchElev
+                            for i in (a,b,c,d,e):
+                                trialInd = np.logical_and(trialInd,i)
+                            if any(trialInd):
+                                s,_ = self.getMeanSDF(spikes,trialStartSamples[trialInd]-minInterTrialSamples,2*minInterTrialSamples+max(trialEndSamples[trialInd]-trialStartSamples[trialInd]),sigma=sdfSigma,sampInt=sdfSampInt)
+                                peakResp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = s.max()
+                                sdf[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,:s.size] = s
+            peakSpontRate = np.nanmean(peakResp[patchSpeed.size//2,bckgndSpeed.size//2,:,:])
+            
+            # fill in resp for patch and bckgnd speeds not tested for every patch size and elevation
+            for r in (meanResp,peakResp):
+                for pchSizeInd,_ in enumerate(p['patchSize']):
+                    for pchElevInd,_ in enumerate(p['patchElevation']):
+                        r[patchSpeed.size//2,:,pchSizeInd,pchElevInd] = r[patchSpeed.size//2,:,0,0]
+                for pchSpeedInd,pchSpeed in enumerate(patchSpeed):
+                    for bckSpeedInd,bckSpeed in enumerate(bckgndSpeed):
+                        if pchSpeed==bckSpeed:
+                            r[pchSpeedInd,bckSpeedInd,:,:] = r[patchSpeed.size//2,bckSpeedInd]            
+            
+            self.units[str(u)]['checkerboard' + saveTag] = {'meanResp':meanResp,
+                                                            'meanSpontRate':meanSpontRate,
+                                                            'peakResp':peakResp,
+                                                            'peakSpontRate':peakSpontRate}
+            
+            if plot:
+                ax = plt.subplot(gs[uInd,0:2])
+                spacing = 0.2
+                sdfXMax = sdfTime[-1]
+                sdfYMax = np.nanmax(sdf)
+                x = 0
+                y = 0
+                for i,_ in enumerate(patchSpeed):
+                    for j,_ in enumerate(bckgndSpeed):
+                        sizeInd,elevInd = np.unravel_index(np.argmax(meanResp[i,j,:,:]),meanResp[i,j,:,:].shape)
+                        ax.plot(x+sdfTime,y+sdf[i,j,sizeInd,elevInd,:],color='k')
+                        x += sdfXMax*(1+spacing)
+                    x = 0
+                    y += sdfYMax*(1+spacing)
+                ax.spines['right'].set_visible(False)
+                ax.spines['top'].set_visible(False)
+                ax.spines['left'].set_visible(False)
+                ax.spines['bottom'].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
+                ax.set_xticks([minInterTrialTime,sdfTime[-1]-2*minInterTrialTime])
+                ax.set_xticklabels(['0',str(int(sdfTime[-1]-2*minInterTrialTime))+' s'])
+                ax.set_yticks([0,int(sdfYMax)])
+                ax.set_xlim([-sdfXMax*spacing,sdfXMax*(1+spacing)*bckgndSpeed.size])
+                ax.set_ylim([-sdfYMax*spacing,sdfYMax*(1+spacing)*patchSpeed.size])
+                ax.set_ylabel('Unit '+str(u), fontsize='medium')
+                
+                ax = plt.subplot(gs[uInd,2])
+                r,spRate = (peakResp,peakSpontRate) if usePeakResp else (meanResp,meanSpontRate)
+                respMat = np.nanmax(np.nanmax(r,axis=3),axis=2) # max resp over all patch sizes and elevations
+                centerPoint = spRate if not np.isnan(spRate) else np.nanmedian(r)
+                cLim = np.nanmax(abs(respMat-centerPoint))
+                plt.imshow(respMat,cmap='bwr',clim=(centerPoint-cLim,centerPoint+cLim),interpolation='none',origin='lower')
+                ax.spines['left'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['bottom'].set_visible(False)
+                ax.spines['top'].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
+                ax.set_xticks(range(bckgndSpeed.size))
+                ax.set_xticklabels(bckgndSpeed)
+                ax.set_yticks(range(patchSpeed.size))
+                ax.set_yticklabels(patchSpeed)
+                ax.set_xlabel('Background Speed')
+                ax.set_ylabel('Patch Speed')
+                ax.set_title('Spikes/s',fontsize='small')
+                cb = plt.colorbar(fraction=0.05,pad=0.04,shrink=0.5)
+                cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
+                cb.ax.tick_params(length=0,labelsize='xx-small')
+    
+    
     def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=False, saveTag=''):
          
         units, unitsYPos = self.getOrderedUnits(units) 
@@ -1082,26 +1181,7 @@ class probeData():
                 resp[:] = np.nan
                  
             if plot:   
-#                a1 = plt.subplot(gs[uindex, 0]) 
-#                centerPoint = spontRate if not np.isnan(spontRate) else np.nanmedian(spotRF)
-#                cLim = np.nanmax(abs(spotRF-centerPoint))
-#                im = a1.imshow(spotRF, clim=(centerPoint-cLim,centerPoint+cLim), cmap='bwr', interpolation='none', origin='lower')
-#                plt.colorbar(im, ax=a1, fraction=0.05, pad=0.04)
-#                plt.title(str(unit), fontsize='x-small')
-                 
-#                for paramnum, param in enumerate(['trialSpotSize', 'trialSpotDir', 'trialSpotSpeed']):
-#                        a = plt.subplot(gs[uindex, paramnum+1])
-#                        values = responseDict[param]['tuningCurve']['mean_spontSubtracted'] 
-#                        error = responseDict[param]['tuningCurve']['sem'] 
-#                        a.plot(responseDict[param]['tuningCurve']['paramValues'], values)
-#                        plt.fill_between(responseDict[param]['tuningCurve']['paramValues'], values+error, values-error, alpha=0.3)
-#                        a.plot(responseDict[param]['tuningCurve']['paramValues'], np.zeros(values.size), 'r--')
-#                        plt.xlabel(param) 
-#                        plt.ylim(min(-0.1, np.min(values - error)), max(np.max(values + error), 0.1))
-#                        plt.locator_params(axis = 'y', nbins = 3)
-#                        a.set_xticks(responseDict[param]['tuningCurve']['paramValues'])
-                 
-                 axInd = 0
+                axInd = 0
                  for r,spRate in zip((meanResp,peakResp),(spontRate,peakSpontRate)):
                     for m in ('mean','max'):
                         # speed vs size
@@ -1165,138 +1245,6 @@ class probeData():
                             ax.set_xticklabels(spotDir)
                         
                         axInd += 1
-    
-                                        
-    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True, usePeakResp=False, saveTag=''):
-        
-        units, unitsYPos = self.getOrderedUnits(units)
-        
-        if protocol is None:
-            protocol = self.getProtocolIndex('checkerboard')
-        protocol = str(protocol)          
-        p = self.visstimData[protocol]
-        assert(set(p['bckgndDir'])=={0,180} and set(p['patchDir'])=={0,180} and 0 in p['bckgndSpeed'] and 0 in p['patchSpeed'])
-        
-        if trials is None:
-            trials = np.arange((p['trialStartFrame']).size-1)
-        trialStartFrame = p['trialStartFrame'][trials]
-        trialNumFrames = (p['trialNumFrames'][trials]).astype(int)
-        trialStartSamples = p['frameSamples'][trialStartFrame]
-        trialEndSamples = p['frameSamples'][trialStartFrame+trialNumFrames]
-        minInterTrialTime = p['interTrialInterval'][0]
-        minInterTrialSamples = int(minInterTrialTime*self.sampleRate)
-        
-        bckgndSpeed = np.concatenate((-p['bckgndSpeed'][:0:-1],p['bckgndSpeed']))
-        patchSpeed = np.concatenate((-p['patchSpeed'][:0:-1],p['patchSpeed']))
-        numTrialTypes = patchSpeed.size*bckgndSpeed.size*p['patchSize'].size*p['patchElevation'].size
-        numTrialTypes -= (bckgndSpeed.size+patchSpeed.size-1)*p['patchSize'].size*p['patchElevation'].size
-        maxTrialsPerType = math.ceil(trials.size/numTrialTypes)
-        resp = np.full((patchSpeed.size,bckgndSpeed.size,p['patchSize'].size,p['patchElevation'].size,maxTrialsPerType),np.nan)
-        sdfSigma = 0.1
-        sdfSampInt = 0.001
-        sdfTime = np.arange(0,2*minInterTrialTime+max(trialEndSamples-trialStartSamples)/self.sampleRate,sdfSampInt)
-        for uInd,u in enumerate(units):
-            spikes = self.units[str(u)]['times'][protocol]
-            
-            # get mean spikes/s and spontRate
-            spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,spikes)
-            trialSpikeRate = spikesPerTrial/((1/p['frameRate'])*trialNumFrames)
-            for i,trial in enumerate(trials):
-                pchSpeedInd = patchSpeed==p['trialPatchSpeed'][trial]if p['trialPatchDir'][trial]==0 else patchSpeed==-p['trialPatchSpeed'][trial]
-                bckSpeedInd = bckgndSpeed==p['trialBckgndSpeed'][trial] if p['trialBckgndDir'][trial]==0 else bckgndSpeed==-p['trialBckgndSpeed'][trial]
-                pchSizeInd = p['patchSize']==p['trialPatchSize'][trial]
-                pchElevInd = p['patchElevation']==p['trialPatchPos'][trial]
-                n = np.count_nonzero(np.logical_not(np.isnan(resp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,:])))
-                resp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,n] = trialSpikeRate[i]
-            meanResp = np.nanmean(resp,axis=4)
-            meanSpontRate = np.nanmean(resp[patchSpeed.size//2,bckgndSpeed.size//2,:,:,:])
-            resp[:] = np.nan
-            
-            # get sdfs and peak spikes/s
-            sdf = np.full(np.concatenate((meanResp.shape,[sdfTime.size])),np.nan)
-            peakResp = np.full(meanResp.shape,np.nan)
-            for pchSpeedInd,pchSpeed in enumerate(patchSpeed):
-                pchDir = 180 if pchSpeed<0 else 0
-                a = p['trialPatchDir'][trials]==pchDir
-                b = p['trialPatchSpeed'][trials]==abs(pchSpeed)
-                for bckSpeedInd,bckSpeed in enumerate(bckgndSpeed):
-                    bckDir = 180 if bckSpeed<0 else 0
-                    c = p['trialBckgndDir'][trials]==bckDir
-                    d = p['trialBckgndSpeed'][trials]==abs(bckSpeed)
-                    for pchSizeInd,pchSize in enumerate(p['patchSize']):
-                        e = p['trialPatchSize'][trials]==pchSize
-                        for pchElevInd,pchElev in enumerate(p['patchElevation']):
-                            trialInd = p['trialPatchPos'][trials]==pchElev
-                            for i in (a,b,c,d,e):
-                                trialInd = np.logical_and(trialInd,i)
-                            if any(trialInd):
-                                s,_ = self.getMeanSDF(spikes,trialStartSamples[trialInd]-minInterTrialSamples,2*minInterTrialSamples+max(trialEndSamples[trialInd]-trialStartSamples[trialInd]),sigma=sdfSigma,sampInt=sdfSampInt)
-                                peakResp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = s.max()
-                                sdf[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,:s.size] = s
-            peakSpontRate = np.nanmean(peakResp[patchSpeed.size//2,bckgndSpeed.size//2,:,:])
-            
-            # fill in resp for patch and bckgnd speeds not tested for every patch size and elevation
-            for r in (meanResp,peakResp):
-                for pchSizeInd,_ in enumerate(p['patchSize']):
-                    for pchElevInd,_ in enumerate(p['patchElevation']):
-                        r[patchSpeed.size//2,:,pchSizeInd,pchElevInd] = r[patchSpeed.size//2,:,0,0]
-                for pchSpeedInd,pchSpeed in enumerate(patchSpeed):
-                    for bckSpeedInd,bckSpeed in enumerate(bckgndSpeed):
-                        if pchSpeed==bckSpeed:
-                            r[pchSpeedInd,bckSpeedInd,:,:] = r[patchSpeed.size//2,bckSpeedInd]            
-            
-            self.units[str(u)]['checkerboard' + saveTag] = {'meanResp':meanResp,
-                                                            'meanSpontRate':meanSpontRate,
-                                                            'peakResp':peakResp,
-                                                            'peakSpontRate':peakSpontRate}
-            
-            if plot:
-                ax = plt.subplot(gs[uInd,0:2])
-                spacing = 0.2
-                sdfXMax = sdfTime[-1]
-                sdfYMax = np.nanmax(sdf)
-                x = 0
-                y = 0
-                for i,_ in enumerate(patchSpeed):
-                    for j,_ in enumerate(bckgndSpeed):
-                        sizeInd,elevInd = np.unravel_index(np.argmax(meanResp[i,j,:,:]),meanResp[i,j,:,:].shape)
-                        ax.plot(x+sdfTime,y+sdf[i,j,sizeInd,elevInd,:],color='k')
-                        x += sdfXMax*(1+spacing)
-                    x = 0
-                    y += sdfYMax*(1+spacing)
-                ax.spines['right'].set_visible(False)
-                ax.spines['top'].set_visible(False)
-                ax.spines['left'].set_visible(False)
-                ax.spines['bottom'].set_visible(False)
-                ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
-                ax.set_xticks([minInterTrialTime,sdfTime[-1]-2*minInterTrialTime])
-                ax.set_xticklabels(['0',str(int(sdfTime[-1]-2*minInterTrialTime))+' s'])
-                ax.set_yticks([0,int(sdfYMax)])
-                ax.set_xlim([-sdfXMax*spacing,sdfXMax*(1+spacing)*bckgndSpeed.size])
-                ax.set_ylim([-sdfYMax*spacing,sdfYMax*(1+spacing)*patchSpeed.size])
-                ax.set_ylabel('Unit '+str(u), fontsize='medium')
-                
-                ax = plt.subplot(gs[uInd,2])
-                r,spRate = (peakResp,peakSpontRate) if usePeakResp else (meanResp,meanSpontRate)
-                respMat = np.nanmax(np.nanmax(r,axis=3),axis=2) # max resp over all patch sizes and elevations
-                centerPoint = spRate if not np.isnan(spRate) else np.nanmedian(r)
-                cLim = np.nanmax(abs(respMat-centerPoint))
-                plt.imshow(respMat,cmap='bwr',clim=(centerPoint-cLim,centerPoint+cLim),interpolation='none',origin='lower')
-                ax.spines['left'].set_visible(False)
-                ax.spines['right'].set_visible(False)
-                ax.spines['bottom'].set_visible(False)
-                ax.spines['top'].set_visible(False)
-                ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
-                ax.set_xticks(range(bckgndSpeed.size))
-                ax.set_xticklabels(bckgndSpeed)
-                ax.set_yticks(range(patchSpeed.size))
-                ax.set_yticklabels(patchSpeed)
-                ax.set_xlabel('Background Speed')
-                ax.set_ylabel('Patch Speed')
-                ax.set_title('Spikes/s',fontsize='small')
-                cb = plt.colorbar(fraction=0.05,pad=0.04,shrink=0.5)
-                cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
-                cb.ax.tick_params(length=0,labelsize='xx-small')
     
     
     def parseRunning(self, protocol, runThresh = 5.0, statThresh = 1.0, trialStarts = None, trialEnds = None, wheelDownsampleFactor = 500.0):
@@ -1920,13 +1868,13 @@ def makeDat(kwdFiles=None):
     shutil.copy(datFilePath,copyPath)
     
     
-def gauss2D(xyTuple,x0,y0,sigX,sigY,theta,amplitude):
+def gauss2D(xyTuple,x0,y0,sigX,sigY,theta,amplitude,offset):
     x,y = xyTuple # (x,y)
     y = y[:,None]                                                                                                             
     a = (math.cos(theta)**2)/(2*sigX**2)+(math.sin(theta)**2)/(2*sigY**2)   
     b = (math.sin(2*theta))/(4*sigX**2)-(math.sin(2*theta))/(4*sigY**2)    
     c = (math.sin(theta)**2)/(2*sigX**2)+(math.cos(theta)**2)/(2*sigY**2)   
-    z = amplitude * np.exp(-(a*((x-x0)**2) + 2*b*(x-x0)*(y-y0) + c*((y-y0)**2)))                                   
+    z = offset + amplitude * np.exp(-(a*((x-x0)**2) + 2*b*(x-x0)*(y-y0) + c*((y-y0)**2)))                                   
     return z.ravel()
 
 
@@ -1934,8 +1882,8 @@ def fitGauss2D(x,y,data,initialParams):
     try:
         gridSize = max(x[-1]-x[0],y[-1]-y[0])
         maxOffGrid = 0.2*gridSize
-        lowerBounds = np.array([x[0]-maxOffGrid,y[0]-maxOffGrid,0,0,0,0])
-        upperBounds = np.array([x[-1]+maxOffGrid,y[-1]+maxOffGrid,gridSize,gridSize,2*math.pi,1.5*data.max()])
+        lowerBounds = np.array([x[0]-maxOffGrid,y[0]-maxOffGrid,0,0,0,data.min(),data.min()])
+        upperBounds = np.array([x[-1]+maxOffGrid,y[-1]+maxOffGrid,0.5*gridSize,0.5*gridSize,2*math.pi,1.5*data.max(),np.median(data)])
         fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except RuntimeError:
         print('fit failed')
@@ -1952,17 +1900,17 @@ def getEllipseXY(x,y,a,b,angle):
     return X,Y
     
 
-def stfLogGauss2D(stfTuple,sf0,tf0,sigSF,sigTF,speedTuningIndex,amplitude):
+def stfLogGauss2D(stfTuple,sf0,tf0,sigSF,sigTF,speedTuningIndex,amplitude,offset):
     sf,tf = stfTuple
     tf = tf[:,None]
-    z = amplitude * np.exp(-((np.log2(sf)-np.log2(sf0))**2)/(2*sigSF**2)) * np.exp(-((np.log2(tf)-(speedTuningIndex*(np.log2(sf)-np.log2(sf0))+np.log2(tf0)))**2)/(2*sigTF**2))
+    z = offset + amplitude * np.exp(-((np.log2(sf)-np.log2(sf0))**2)/(2*sigSF**2)) * np.exp(-((np.log2(tf)-(speedTuningIndex*(np.log2(sf)-np.log2(sf0))+np.log2(tf0)))**2)/(2*sigTF**2))
     return z.ravel()
 
 
 def fitStfLogGauss2D(sf,tf,data,initialParams):
     try:
-        lowerBounds = np.array([0,0,0,0,-0.5,0])
-        upperBounds = np.array([1,16,np.inf,np.inf,1.5,1.5*initialParams[-1]])
+        lowerBounds = np.array([sf[0]-0.25*sf[0],tf[0]-0.25*tf[0],0,0,-0.5,0,data.min()])
+        upperBounds = np.array([sf[-1]+0.25*sf[-1],tf[-1]+0.25*tf[-1],0.5*tf[-1],0.5*tf[-1],1.5,1.5*data.max(),np.median(data)])
         fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except RuntimeError:
         print('fit failed')
@@ -1976,6 +1924,7 @@ def getStfContour(sf,tf,fitParams):
     sfIntp = np.logspace(np.log2(sf[0]*0.5),np.log2(sf[-1]*2),intpPts,base=2)
     tfIntp = np.logspace(np.log2(tf[0]*0.5),np.log2(tf[-1]*2),intpPts,base=2)
     intpFit = stfLogGauss2D((sfIntp,tfIntp),*fitParams).reshape(intpPts,intpPts)
+    intpFit -= intpFit.min()
     thresh = 0.6065*intpFit.max() # one stdev
     contourLine = np.full((2*intpPts,2),np.nan)
     for i in range(len(sfIntp)):
