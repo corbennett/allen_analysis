@@ -668,16 +668,16 @@ class probeData():
                 for i,(rfCenters,onOrOff) in enumerate(zip((onFit,offFit),('On','Off'))):
                     for j,azimOrElev in enumerate(('Azimuth','Elevation')):
                         ax = plt.subplot(gspec[i,j])
-                        hasRF = np.logical_not(np.isnan(rfCenters[:,i]))
+                        hasRF = np.logical_not(np.isnan(rfCenters[:,j]))
                         xlim = gridExtent[[0,2]] if j==0 else gridExtent[[1,3]]
                         xlim += [-maxOffGrid,maxOffGrid]
                         if np.count_nonzero(hasRF)>1:
                             # linFit = (slope, intercept, r-value, p-value, stderror)
-                            linFit = scipy.stats.linregress(rfCenters[hasRF,i],rfArea[hasRF,j])
+                            linFit = scipy.stats.linregress(rfCenters[hasRF,j],rfArea[hasRF,i])
                             ax.plot(xlim,linFit[0]*xlim+linFit[1],color='0.6')
                             ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(linFit[2]**2,2))+', p = '+str(round(linFit[3],2)),
                                     transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
-                        ax.plot(rfCenters[:,i],rfArea[:,j],'ko',markerfacecolor='none')
+                        ax.plot(rfCenters[:,j],rfArea[:,i],'ko',markerfacecolor='none')
                         ax.spines['right'].set_visible(False)
                         ax.spines['top'].set_visible(False)
                         ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
