@@ -6,6 +6,7 @@ Created on Fri Jun 17 12:19:20 2016
 """
 
 from __future__ import division
+import fileIO
 import copy, datetime, h5py, json, math, ntpath, os, shelve, shutil
 import numpy as np
 import scipy.ndimage.filters
@@ -15,14 +16,11 @@ import scipy.stats
 from matplotlib import pyplot as plt 
 from matplotlib import gridspec
 from matplotlib import cm
-from PyQt4 import QtGui
 from astropy.convolution import Gaussian2DKernel, Gaussian1DKernel, convolve
 import pandas
 
 
 dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
-lastFileOpenPath = os.path.dirname(os.path.realpath(__file__))
-lastFileSavePath = copy.copy(lastFileOpenPath)
 
 class probeData():
     
@@ -131,7 +129,7 @@ class probeData():
     
     def getVisStimData(self, filePath=None, protocol=0):
         if filePath is None:        
-            filePath = getFile()
+            filePath = fileIO.getFile()
         
         dataFile = h5py.File(filePath)        
         self.visstimData[str(protocol)] = {}
@@ -144,7 +142,7 @@ class probeData():
     
     def getEyeTrackData(self, filePath=None, protocol=0):
         if filePath is None:        
-            filePath = getFile()
+            filePath = fileIO.getFile()
         
         dataFile = h5py.File(filePath)
         frameTimes = dataFile['frameTimes'][:]
@@ -290,7 +288,14 @@ class probeData():
         
         boxSizeHistory = self.visstimData[protocol]['boxSizeHistory'][trials]/pixPerDeg
         boxSize = self.visstimData[protocol]['boxSize']
+        sizeTuningOn = np.full((len(units),boxSize.size),np.nan)
+        sizeTuningOff = np.copy(sizeTuningOn)
         boxSize = boxSize[boxSize<100]
+        
+        onVsOff = np.full(len(units),np.nan)
+        respLatency = np.full((len(units),2),np.nan)
+        respNormArea = np.copy(respLatency)
+        respHalfWidth = np.copy(respLatency)
             
         sdfSampInt = 0.001
         sdfSigma = 0.01
@@ -298,13 +303,6 @@ class probeData():
         
         gaussianKernel = Gaussian2DKernel(stddev=sigma)
         
-        sizeTuningSize = np.append(boxSize,boxSize[-1]*2.5)
-        sizeTuningOn = np.full((len(units),sizeTuningSize.size),np.nan)
-        sizeTuningOff = np.copy(sizeTuningOn)
-        onVsOff = np.full(len(units),np.nan)
-        respLatency = np.full((len(units),2),np.nan)
-        respNormArea = np.copy(respLatency)
-        respHalfWidth = np.copy(respLatency)
         if fit:
             onFit = np.full((len(units),7),np.nan)
             offFit = np.copy(onFit)
@@ -315,7 +313,6 @@ class probeData():
         
         for uindex, unit in enumerate(units):
             spikes = self.units[unit]['times'][str(protocol)]
-            spontSpikes = np.full((len(boxSize),ypos.size,xpos.size,2),np.nan)
             gridOnSpikes = np.full((len(boxSize),ypos.size,xpos.size),np.nan)
             gridOffSpikes = np.copy(gridOnSpikes)
             sdfOn = np.zeros((len(boxSize),ypos.size,xpos.size,int(round(sdfSamples/self.sampleRate/sdfSampInt))))
@@ -324,26 +321,23 @@ class probeData():
                 boxSizeTrials = boxSizeHistory==size
                 for i,y in enumerate(ypos):
                     for j,x in enumerate(xpos):
-                        po = np.logical_and(posHistory[:, 1] == y,posHistory[:, 0] == x)
-                        posOnTrials = np.logical_and(po, colorHistory == 1)
-                        posOffTrials = np.logical_and(po, colorHistory == -1)
+                        posTrials = np.logical_and(posHistory[:, 1] == y,posHistory[:, 0] == x)
+                        posOnTrials = np.logical_and(posTrials, colorHistory == 1)
+                        posOffTrials = np.logical_and(posTrials, colorHistory == -1)
                         
                         posOnSamples = stimStartSamples[np.logical_and(posOnTrials,boxSizeTrials)]
                         if any(posOnSamples):
                             gridOnSpikes[sizeInd,i,j] = np.mean(self.findSpikesPerTrial(posOnSamples+minLatencySamples,posOnSamples+maxLatencySamples,spikes))
-                            spontSpikes[sizeInd,i,j,0] = np.mean(self.findSpikesPerTrial(posOnSamples-int(0.5*minLatencySamples),posOnSamples+int(0.5*minLatencySamples),spikes))
-                            sdfOn[sizeInd,i,j,:],_ = self.getMeanSDF(spikes,posOnSamples-minLatencySamples,sdfSamples,sdfSigma,sdfSampInt)
+                            sdfOn[sizeInd,i,j,:],_ = self.getSDF(spikes,posOnSamples-minLatencySamples,sdfSamples,sdfSigma,sdfSampInt)
                         
                         posOffSamples = stimStartSamples[np.logical_and(posOffTrials,boxSizeTrials)]
                         if any(posOffSamples):                            
                             gridOffSpikes[sizeInd,i,j] = np.mean(self.findSpikesPerTrial(posOffSamples+minLatencySamples,posOffSamples+maxLatencySamples,spikes))
-                            spontSpikes[sizeInd,i,j,1] = np.mean(self.findSpikesPerTrial(posOffSamples-int(0.5*minLatencySamples),posOffSamples+int(0.5*minLatencySamples),spikes))
-                            sdfOff[sizeInd,i,j,:],sdfTime = self.getMeanSDF(spikes,posOffSamples-minLatencySamples,sdfSamples,sdfSigma,sdfSampInt)
+                            sdfOff[sizeInd,i,j,:],sdfTime = self.getSDF(spikes,posOffSamples-minLatencySamples,sdfSamples,sdfSigma,sdfSampInt)
             
             # convert spike count to spike rate
             gridOnSpikes /= maxLatency-minLatency
             gridOffSpikes /= maxLatency-minLatency
-            spontSpikes /= minLatency
             
             # get full field flash resp
             fullFieldOnSpikes = fullFieldOffSpikes = np.nan
@@ -353,41 +347,48 @@ class probeData():
                 if any(ffOnSamples):
                     fullFieldOnSpikes = np.mean(self.findSpikesPerTrial(ffOnSamples+minLatencySamples,ffOnSamples+maxLatencySamples,spikes))
                     fullFieldOnSpikes /= maxLatency-minLatency
-                    fullFieldOnSDF,_ = self.getMeanSDF(spikes,ffOnSamples-minLatencySamples,sdfSamples,sdfSigma,sdfSampInt)
+                    fullFieldOnSDF,_ = self.getSDF(spikes,ffOnSamples-minLatencySamples,sdfSamples,sdfSigma,sdfSampInt)
                 ffOffSamples = stimStartSamples[np.logical_and(fullFieldTrials,colorHistory==-1)]
                 if any(ffOffSamples):
                     fullFieldOffSpikes = np.mean(self.findSpikesPerTrial(ffOffSamples+minLatencySamples,ffOffSamples+maxLatencySamples,spikes))
                     fullFieldOffSpikes /= maxLatency-minLatency
-                    fullFieldOffSDF,_ = self.getMeanSDF(spikes,ffOffSamples-minLatencySamples,sdfSamples,sdfSigma,sdfSampInt)
+                    fullFieldOffSDF,_ = self.getSDF(spikes,ffOffSamples-minLatencySamples,sdfSamples,sdfSigma,sdfSampInt)
             
             # optionally use peak resp instead of mean rate
             inAnalysisWindow = np.logical_and(sdfTime>minLatency*2,sdfTime<minLatency+maxLatency)
-            inSpontWindow = np.logical_and(sdfTime>0.5*minLatency,sdfTime<1.5*minLatency)
             if usePeakResp:
                 gridOnSpikes = np.nanmax(sdfOn[:,:,:,inAnalysisWindow],axis=3)
                 gridOffSpikes = np.nanmax(sdfOff[:,:,:,inAnalysisWindow],axis=3)
-                spontSpikes[:,:,:,0] = np.nanmax(sdfOn[:,:,:,inSpontWindow],axis=3)
-                spontSpikes[:,:,:,1] = np.nanmax(sdfOff[:,:,:,inSpontWindow],axis=3)
                 if not np.isnan(fullFieldOnSpikes):
                     fullFieldOnSpikes = np.nanmax(fullFieldOnSDF[inAnalysisWindow])
                 if not np.isnan(fullFieldOffSpikes):
                     fullFieldOffSpikes = np.nanmax(fullFieldOffSDF[inAnalysisWindow])
                         
-            # calculate size tuning before spatial filtering
-            sizeTuningOn[uindex,:-1] = np.nanmax(np.nanmax(gridOnSpikes,axis=2),axis=1)
-            sizeTuningOn[uindex,-1] = fullFieldOnSpikes
-            sizeTuningOff[uindex,:-1] = np.nanmax(np.nanmax(gridOffSpikes,axis=2),axis=1)
-            sizeTuningOff[uindex,-1] = fullFieldOffSpikes        
-                    
-            # filter response and spont rate
-            for sizeInd,_ in enumerate(boxSize):
-                gridOnSpikes[sizeInd] = convolve(gridOnSpikes[sizeInd], gaussianKernel, boundary='extend')
-                gridOffSpikes[sizeInd] = convolve(gridOffSpikes[sizeInd], gaussianKernel, boundary='extend')
-                for i in (0,1):
-                    spontSpikes[sizeInd,:,:,i] = convolve(spontSpikes[sizeInd,:,:,i], gaussianKernel, boundary='extend')
+            # calculate size tuning
+            sizeTuningOn[uindex,:boxSize.size] = np.nanmax(np.nanmax(gridOnSpikes,axis=2),axis=1)
+            sizeTuningOff[uindex,:boxSize.size] = np.nanmax(np.nanmax(gridOffSpikes,axis=2),axis=1)
+            if any(fullFieldTrials):
+                sizeTuningOn[uindex,-1] = fullFieldOnSpikes
+                sizeTuningOff[uindex,-1] = fullFieldOffSpikes
+            
+            # estimate spontRate using random trials and interval 0:minLatency
+            nTrialTypes = xpos.size*ypos.size*boxSize.size*2
+            nTrials = int(np.count_nonzero(boxSizeHistory<100)/nTrialTypes)
+            spontRate = np.zeros(nTrialTypes)
+            for n in range(nTrialTypes):
+                randTrials = np.random.choice(trials,nTrials,replace=False)
+                spontRate[n] = np.max(self.getSDF(spikes,stimStartSamples[randTrials],minLatencySamples,sdfSigma,sdfSampInt))
+            peakSpontRateMean = spontRate.mean()
+            peakSpontRateStd = spontRate.std()
+            if usePeakResp:
+                spontRateMean,spontRateStd = peakSpontRateMean,peakSpontRateStd
+            else:
+                spontRate = self.findSpikesPerTrial(stimStartSamples,stimStartSamples+minLatencySamples,spikes)/(minLatency)
+                spontRateMean = spontRate.mean()
+                spontRateStd = spontRate.std()            
             
             # average significant responses                
-            respThresh = np.nanmean(spontSpikes)+3*np.nanstd(spontSpikes)
+            respThresh = spontRateMean+5*spontRateStd
             hasOnResp = np.zeros(len(boxSize),dtype=bool)
             hasOffResp = np.copy(hasOnResp)
             for sizeInd,_ in enumerate(boxSize):
@@ -396,7 +397,13 @@ class probeData():
             meanOnResp = np.nanmean(gridOnSpikes[hasOnResp],axis=0) if any(hasOnResp) else None
             meanOffResp = np.nanmean(gridOffSpikes[hasOffResp],axis=0) if any(hasOffResp) else None
             
-            # fit average on and off response
+            # filter mean response
+            if meanOnResp is not None:
+                meanOnResp = convolve(meanOnResp, gaussianKernel, boundary='extend')
+            if meanOffResp is not None:
+                meanOffResp = convolve(meanOffResp, gaussianKernel, boundary='extend')
+            
+            # fit mean response
             fitParams = []
             if fit:
                 maxOffGrid = 15
@@ -426,14 +433,13 @@ class probeData():
             sdfMaxInd = np.zeros((2,4),dtype=int)
             halfMaxInd = np.zeros((2,2),dtype=int)
             respLatencyInd = np.zeros(2,dtype=int)
+            latencyThresh = peakSpontRateMean+5*peakSpontRateStd
             for i,sdf in enumerate((sdfOn,sdfOff)):
-                spontMax = np.nanmax(sdf[:,:,:,inSpontWindow],axis=3)
-                latencyThresh = np.nanmean(spontMax)+3*np.nanstd(spontMax)
-                if not np.any(sdf>latencyThresh):
+                if not np.any(sdf[:,:,:,inAnalysisWindow]>latencyThresh):
                     continue
                 sdfMaxInd[i,:] = np.unravel_index(np.nanargmax(sdf[:,:,:,inAnalysisWindow]),sdf[:,:,:,inAnalysisWindow].shape)
                 sdfMaxInd[i,3] += np.where(inAnalysisWindow)[0][0]
-                bestSDF = sdf[sdfMaxInd[i,0],sdfMaxInd[i,1],sdfMaxInd[i,2],:]
+                bestSDF = np.copy(sdf[sdfMaxInd[i,0],sdfMaxInd[i,1],sdfMaxInd[i,2],:])
                 maxInd = sdfMaxInd[i,3]
                 # find last 3*std cross before peak for latency
                 respLatencyInd[i] = np.where(bestSDF[:maxInd]<latencyThresh)[0][-1]+1
@@ -451,18 +457,24 @@ class probeData():
                 respHalfWidth[uindex,i] = (halfMaxInd[i,1]-halfMaxInd[i,0])*sdfSampInt
             
             # cache results
-            self.units[unit]['rf' + saveTag] = {}
-            self.units[str(unit)]['rf' + saveTag]['gridOnSpikes'] = gridOnSpikes
-            self.units[str(unit)]['rf' + saveTag]['gridOffSpikes'] = gridOffSpikes
-            self.units[str(unit)]['rf' + saveTag]['onFit'] = onFit[uindex]
-            self.units[str(unit)]['rf' + saveTag]['offFit'] = offFit[uindex]
-            self.units[str(unit)]['rf' + saveTag]['sizeTuningSize'] = sizeTuningSize
-            self.units[str(unit)]['rf' + saveTag]['sizeTuningOn'] = sizeTuningOn[uindex]
-            self.units[str(unit)]['rf' + saveTag]['sizeTuningOff'] = sizeTuningOff[uindex]
-            self.units[str(unit)]['rf' + saveTag]['onVsOff'] = onVsOff[uindex]
-            self.units[str(unit)]['rf' + saveTag]['respLatency'] = respLatency[uindex]
-            self.units[str(unit)]['rf' + saveTag]['respNormArea'] = respNormArea[uindex]
-            self.units[str(unit)]['rf' + saveTag]['respHalfWidth'] = respHalfWidth[uindex]
+            self.units[unit]['sparseNoise' + saveTag] = {'gridExtent': gridExtent,
+                                                         'elev': elev,
+                                                         'azim': azim,
+                                                         'boxSize': boxSize,
+                                                         'gridOnSpikes': gridOnSpikes,
+                                                         'gridOffSpikes': gridOffSpikes,
+                                                         'spontRateMean': spontRateMean,
+                                                         'spontRateStd': spontRateStd,
+                                                         'meanOnResp': meanOnResp,
+                                                         'meanOffResp': meanOffResp,
+                                                         'onFit': onFit[uindex],
+                                                         'offFit': offFit[uindex],
+                                                         'sizeTuningOn': sizeTuningOn[uindex],
+                                                         'sizeTuningOff': sizeTuningOff[uindex],
+                                                         'onVsOff': onVsOff[uindex],
+                                                         'respLatency': respLatency[uindex],
+                                                         'respNormArea': respNormArea[uindex],
+                                                         'respHalfWidth': respHalfWidth[uindex]}
             
             if plot:
                 maxVal = max(np.nanmax(gridOnSpikes), np.nanmax(gridOffSpikes))
@@ -534,6 +546,12 @@ class probeData():
                         cb.set_ticks([math.ceil(minVal),int(maxVal)])
                 
                 if len(boxSize)>1:
+                    if any(fullFieldTrials):
+                        sizeTuningSize = np.append(boxSize,boxSize[-1]*2.5)
+                        sizeTuningLabel = list(sizeTuningSize)
+                        sizeTuningLabel[-1] = 'full'
+                    else:
+                        sizeTuningSize = sizeTuningLabel = boxSize
                     ax = fig.add_subplot(gs[uindex*3+1:uindex*3+3,7:11])
                     ax.plot(sizeTuningSize,sizeTuningOn[uindex],'r')
                     ax.plot(sizeTuningSize,sizeTuningOff[uindex],'b')
@@ -543,9 +561,7 @@ class probeData():
                     ax.set_xlim([0,boxSize[-1]+boxSize[0]])
                     ax.set_ylim([0,1.05*max(np.nanmax(sizeTuningOn[uindex]),np.nanmax(sizeTuningOff[uindex]))])
                     ax.set_xticks(sizeTuningSize)
-                    sizeTuningXLabel = list(sizeTuningSize)
-                    sizeTuningXLabel[-1] = 'full'
-                    ax.set_xticklabels(sizeTuningXLabel)
+                    ax.set_xticklabels(sizeTuningLabel)
                     ax.set_xlabel('Size',fontsize='small')
                     ax.set_ylabel('Spikes/s',fontsize='small')
                     
@@ -584,7 +600,7 @@ class probeData():
                     ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
                     ax.set_xlim([0,boxSize[-1]+boxSize[0]])
                     ax.set_xticks(sizeTuningSize)
-                    ax.set_xticklabels(sizeTuningXLabel)
+                    ax.set_xticklabels(sizeTuningLabel)
                     ax.set_xlabel('Size',fontsize='small')
                     if ind==0:
                         ax.set_ylabel('Best Size Count',fontsize='small')
@@ -736,14 +752,14 @@ class probeData():
             for lumindex, lum in enumerate(lumValues):
                 lumTrials = np.where(trialLumValues==lum)[0]
                 if any(lumTrials):
-                    sdf[lumindex], sdfTime = self.getMeanSDF(spikes, trialStartSamples[lumTrials] - preTime*self.sampleRate, sdfSamples, sigma=sdfSigma)
+                    sdf[lumindex], sdfTime = self.getSDF(spikes, trialStartSamples[lumTrials] - preTime*self.sampleRate, sdfSamples, sigma=sdfSigma)
                     if lum > 0:
                         sdfOn.append(sdf[lumindex])
-                        soff, _ = self.getMeanSDF(spikes, trialEndSamples[lumTrials] - preTime*self.sampleRate, sdfSamples, sigma=sdfSigma)
+                        soff, _ = self.getSDF(spikes, trialEndSamples[lumTrials] - preTime*self.sampleRate, sdfSamples, sigma=sdfSigma)
                         sdfOff.append(soff)
                     elif lum < 0:
                         sdfOff.append(sdf[lumindex])
-                        son, _ = self.getMeanSDF(spikes, trialEndSamples[lumTrials] - preTime*self.sampleRate, sdfSamples, sigma=sdfSigma)
+                        son, _ = self.getSDF(spikes, trialEndSamples[lumTrials] - preTime*self.sampleRate, sdfSamples, sigma=sdfSigma)
                         sdfOn.append(son)
             
             sdfOn = np.array(sdfOn)
@@ -871,9 +887,9 @@ class probeData():
             prefOri = np.copy(dsi)
         
         if plot:
-            plt.figure(figsize =(15,3*len(units)),facecolor='w')
+            fig = plt.figure(figsize =(15,3*len(units)),facecolor='w')
             gridWidth = 3*len(ori)+1 if protocolType=='stf' else len(tf)*len(sf)+1
-            gs = gridspec.GridSpec(len(units), gridWidth)   
+            gs = gridspec.GridSpec(len(units),gridWidth)   
         
         for uindex, unit in enumerate(units):    
             spikes = self.units[str(unit)]['times'][protocol]
@@ -900,7 +916,7 @@ class probeData():
                         if any(trialIndex):
                             respMat[tfInd,sfInd,oriInd] = np.mean(trialResp[trialIndex])
                             preTrialMat[tfInd,sfInd,oriInd] = np.mean(preTrialRate[trialIndex])
-                            sdf[tfInd,sfInd,oriInd,:],sdfTime = self.getMeanSDF(spikes,trialStartSamples[trialIndex]-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
+                            sdf[tfInd,sfInd,oriInd,:],sdfTime = self.getSDF(spikes,trialStartSamples[trialIndex]-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
                             if inAnalysisWindow is None:
                                 inAnalysisWindow = np.logical_and(sdfTime>preTime+responseLatency,sdfTime<preTime+stimTime)
                             s = sdf[tfInd,sfInd,oriInd,inAnalysisWindow]
@@ -911,17 +927,15 @@ class probeData():
             
             # calculate spontRate from gray screen trials
             grayTrials = trialContrast<0+tol
-            spontRate = trialResp[grayTrials].mean()
-            
-            # optionall use peak resp
             if usePeakResp:
                 respMat = np.nanmax(sdf[:,:,:,inAnalysisWindow],axis=3)
-                preTrialMat = np.nanmax(sdf[:,:,:,np.logical_and(sdfTime>preTime-responseLatency,sdfTime<preTime)],axis=3)
-                spontSDF,_ = self.getMeanSDF(spikes,trialStartSamples[grayTrials]-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
-                spontRate =  np.nanmax(spontSDF[inAnalysisWindow])
+                spontRateMean,spontRateStd = self.getSDFNoise(spikes,trialStartSamples[grayTrials],max(trialEndSamples[grayTrials]-trialStartSamples[grayTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
+            else:
+                spontRateMean = trialResp[grayTrials].mean()
+                spontRateStd = trialResp[grayTrials].std()
             
             # find significant responses
-            hasResp = respMat>np.nanmean(preTrialMat)+3*np.nanstd(preTrialMat)
+            hasResp = respMat>spontRateMean+5*spontRateStd
             tfHasResp,sfHasResp,oriHasResp = [np.unique(np.where(hasResp)[i]) for i in (0,1,2)]
             
             meanResp = None
@@ -944,26 +958,30 @@ class probeData():
                     prefOri[uindex] /= 2
             
             # cache results
-            self.units[str(unit)][protocolType + saveTag] = {}
-            self.units[str(unit)][protocolType + saveTag]['spontRate'] = spontRate
-            self.units[str(unit)][protocolType + saveTag]['respMat'] = respMat
-            self.units[str(unit)][protocolType + saveTag]['sf'] = sf
-            self.units[str(unit)][protocolType + saveTag]['tf'] = tf
+            tag = 'gratings_' + protocolType + saveTag
+            self.units[str(unit)][tag] = {'sf': sf,
+                                          'tf': tf,
+                                          'ori': ori,
+                                          'spontRateMean': spontRateMean,
+                                          'spontRateStd': spontRateStd,
+                                          'respMat': respMat}
             if protocolType=='stf':
-                self.units[str(unit)][protocolType + saveTag]['stfFitParams'] = stfFitParams[uindex]
+                self.units[str(unit)][tag]['stfFitParams'] = stfFitParams[uindex]
             elif protocolType=='ori':
-                self.units[str(unit)][protocolType + saveTag]['dsi'] = [dsi[uindex], prefDir[uindex]]
-                self.units[str(unit)][protocolType + saveTag]['osi'] = [osi[uindex], prefOri[uindex]]
+                self.units[str(unit)][tag]['dsi'] = dsi[uindex]
+                self.units[str(unit)][tag]['prefDir'] = prefDir[uindex]
+                self.units[str(unit)][tag]['osi'] = osi[uindex]
+                self.units[str(unit)][tag]['prefOri'] = prefOri[uindex]
         
             if plot:
                 if protocolType=='stf':
                     spacing = 0.2
                     sdfXMax = sdfTime[-1]
                     sdfYMax = np.nanmax(sdf)
-                    centerPoint = spontRate if not np.isnan(spontRate) else np.nanmedian(respMat)
+                    centerPoint = spontRateMean if not np.isnan(spontRateMean) else np.nanmedian(respMat)
                     cLim = np.nanmax(np.absolute(respMat-centerPoint))
                     for oriInd,thisOri in enumerate(ori):
-                        ax = plt.subplot(gs[uindex,oriInd*3:oriInd*3+2])
+                        ax = fig.add_subplot(gs[uindex,oriInd*3:oriInd*3+2])
                         x = 0
                         y = 0
                         for i,_ in enumerate(tf):
@@ -987,7 +1005,7 @@ class probeData():
                         if uindex==0:
                             ax.set_title('ori = '+str(thisOri),fontsize='medium') 
                        
-                        ax = plt.subplot(gs[uindex,oriInd*3+2])
+                        ax = fig.add_subplot(gs[uindex,oriInd*3+2])
                         respMatOri = np.copy(respMat[:,:,oriInd])
                         xyNan = np.transpose(np.where(np.isnan(respMatOri)))
                         nanTrials = np.isnan(respMatOri)
@@ -1008,7 +1026,7 @@ class probeData():
                         cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
                         cb.ax.tick_params(length=0,labelsize='xx-small')
                     
-                    ax = plt.subplot(gs[uindex,-1])
+                    ax = fig.add_subplot(gs[uindex,-1])
                     if meanResp is not None:
                         im = ax.imshow(meanResp, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
                         if fit and not all(np.isnan(stfFitParams[uindex])):
@@ -1035,7 +1053,7 @@ class probeData():
                 else:
                     for i,_ in enumerate(tf):
                         for j,_ in enumerate(sf):
-                            ax = plt.subplot(gs[uindex,i*len(tf)+j], projection='polar')
+                            ax = fig.add_subplot(gs[uindex,i*len(tf)+j], projection='polar')
                             theta = ori * (np.pi/180.0)
                             theta = np.append(theta, theta[0])
                             rho = np.append(respMat[i,j,:], respMat[i,j,0])
@@ -1044,7 +1062,7 @@ class probeData():
                             if i==0 and j==0:
                                 ax.set_ylabel('Unit '+str(unit))
                     
-                    ax = plt.subplot(gs[uindex,i*len(tf)+j+1], projection='polar')
+                    ax = fig.add_subplot(gs[uindex,i*len(tf)+j+1], projection='polar')
                     if meanResp is not None:
                         theta = ori * (np.pi/180.0)
                         theta = np.append(theta, theta[0])
@@ -1076,7 +1094,7 @@ class probeData():
                 ax = plt.subplot(1,2,2)
                 hasFit = np.logical_not(np.isnan(stfFitParams[:,4]))
                 sortedSpeedTuning = np.sort(stfFitParams[hasFit,4])
-                cumProbSpeedTuning = [np.count_nonzero(sortedSpeedTuning<=s)/sortedSpeedTuning.size for s in sortedSpeedTuning]
+                cumProbSpeedTuning = [np.count_nonzero(sortedSpeedTuning<=sti)/sortedSpeedTuning.size for sti in sortedSpeedTuning]
                 ax.plot(sortedSpeedTuning,cumProbSpeedTuning,'k')
                 ax.spines['right'].set_visible(False)
                 ax.spines['top'].set_visible(False)
@@ -1122,7 +1140,7 @@ class probeData():
                     ax.set_ylabel('Pref '+oriOrDir+' Count')
 
                                     
-    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, plot=True, saveTag='', useCache=False):
+    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, usePeakResp=True, plot=True, saveTag='', useCache=False):
         
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -1132,12 +1150,14 @@ class probeData():
         p = self.visstimData[protocol]
         assert(set(p['bckgndDir'])=={0,180} and set(p['patchDir'])=={0,180} and 0 in p['bckgndSpeed'] and 0 in p['patchSpeed'])
         
+        trialStartFrame = p['trialStartFrame']
+        trialNumFrames = p['trialNumFrames'].astype(int)
+        trialEndFrame = trialStartFrame+trialNumFrames
+        lastFullTrial = np.where(trialEndFrame<p['frameSamples'].size)[0][-1]
         if trials is None:
-            trials = np.arange((p['trialStartFrame']).size-1)
-        trialStartFrame = p['trialStartFrame'][trials]
-        trialNumFrames = (p['trialNumFrames'][trials]).astype(int)
-        trialStartSamples = p['frameSamples'][trialStartFrame]
-        trialEndSamples = p['frameSamples'][trialStartFrame+trialNumFrames]
+            trials = np.arange(lastFullTrial+1)
+        trialStartSamples = p['frameSamples'][trialStartFrame[trials]]
+        trialEndSamples = p['frameSamples'][trialEndFrame[trials]]
         minInterTrialTime = p['interTrialInterval'][0]
         minInterTrialSamples = int(minInterTrialTime*self.sampleRate)
         latency = 0.25
@@ -1145,38 +1165,22 @@ class probeData():
         
         bckgndSpeed = np.concatenate((-p['bckgndSpeed'][:0:-1],p['bckgndSpeed']))
         patchSpeed = np.concatenate((-p['patchSpeed'][:0:-1],p['patchSpeed']))
-        numTrialTypes = patchSpeed.size*bckgndSpeed.size*p['patchSize'].size*p['patchElevation'].size
-        numTrialTypes -= (bckgndSpeed.size+patchSpeed.size-1)*p['patchSize'].size*p['patchElevation'].size
-        maxTrialsPerType = math.ceil(trials.size/numTrialTypes)
-        resp = np.full((patchSpeed.size,bckgndSpeed.size,p['patchSize'].size,p['patchElevation'].size,maxTrialsPerType),np.nan)
+        
         sdfSigma = 0.1
         sdfSampInt = 0.001
         sdfTime = np.arange(0,2*minInterTrialTime+max(trialEndSamples-trialStartSamples)/self.sampleRate,sdfSampInt)
         
         if plot:
-            plt.figure(figsize=(15,3*len(units)),facecolor='w')
-            gs = gridspec.GridSpec(len(units),4)
+            fig = plt.figure(figsize=(15,3*len(units)),facecolor='w')
+            gs = gridspec.GridSpec(len(units),3)
             
         for uInd,u in enumerate(units):
             spikes = self.units[str(u)]['times'][protocol]
-            
-            # get mean spikes/s and spontRate
             spikesPerTrial = self.findSpikesPerTrial(trialStartSamples+latencySamples,trialEndSamples,spikes)
             trialSpikeRate = spikesPerTrial/((trialEndSamples-trialStartSamples-latencySamples)/self.sampleRate)
-            for i,trial in enumerate(trials):
-                pchSpeedInd = patchSpeed==p['trialPatchSpeed'][trial]if p['trialPatchDir'][trial]==0 else patchSpeed==-p['trialPatchSpeed'][trial]
-                bckSpeedInd = bckgndSpeed==p['trialBckgndSpeed'][trial] if p['trialBckgndDir'][trial]==0 else bckgndSpeed==-p['trialBckgndSpeed'][trial]
-                pchSizeInd = p['patchSize']==p['trialPatchSize'][trial]
-                pchElevInd = p['patchElevation']==p['trialPatchPos'][trial]
-                n = np.count_nonzero(np.logical_not(np.isnan(resp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,:])))
-                resp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,n] = trialSpikeRate[i]
-            meanResp = np.nanmean(resp,axis=4)
-            meanSpontRate = np.nanmean(resp[patchSpeed.size//2,bckgndSpeed.size//2,:,:,:])
-            resp[:] = np.nan
-            
-            # get sdfs and peak spikes/s
-            sdf = np.full(np.concatenate((meanResp.shape,[sdfTime.size])),np.nan)
-            peakResp = np.full(meanResp.shape,np.nan)
+            meanResp = np.full((patchSpeed.size,bckgndSpeed.size,p['patchSize'].size,p['patchElevation'].size),np.nan)
+            peakResp = np.copy(meanResp)
+            sdf = np.full((meanResp.shape+(sdfTime.size,)),np.nan)
             for pchSpeedInd,pchSpeed in enumerate(patchSpeed):
                 pchDir = 180 if pchSpeed<0 else 0
                 a = p['trialPatchDir'][trials]==pchDir
@@ -1192,37 +1196,56 @@ class probeData():
                             for i in (a,b,c,d,e):
                                 trialInd = np.logical_and(trialInd,i)
                             if any(trialInd):
-                                s,t = self.getMeanSDF(spikes,trialStartSamples[trialInd]-minInterTrialSamples,2*minInterTrialSamples+max(trialEndSamples[trialInd]-trialStartSamples[trialInd]),sigma=sdfSigma,sampInt=sdfSampInt)
+                                meanResp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = trialSpikeRate[trialInd].mean()
+                                s,t = self.getSDF(spikes,trialStartSamples[trialInd]-minInterTrialSamples,2*minInterTrialSamples+max(trialEndSamples[trialInd]-trialStartSamples[trialInd]),sigma=sdfSigma,sampInt=sdfSampInt)
                                 peakResp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = s[np.logical_and(t>minInterTrialTime+latency,t<t[-1]-minInterTrialTime)].max()
                                 sdf[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,:s.size] = s
-            peakSpontRate = np.nanmean(peakResp[patchSpeed.size//2,bckgndSpeed.size//2,:,:])
             
             # fill in resp for patch and bckgnd speeds not tested for every patch size and elevation
-            for r in (meanResp,peakResp):
+            for r in (meanResp,peakResp,sdf):
                 for pchSizeInd,_ in enumerate(p['patchSize']):
                     for pchElevInd,_ in enumerate(p['patchElevation']):
-                        r[patchSpeed.size//2,:,pchSizeInd,pchElevInd] = r[patchSpeed.size//2,:,0,0]
+                        r[patchSpeed==0,:,pchSizeInd,pchElevInd] = r[patchSpeed==0,:,0,0]
                 for pchSpeedInd,pchSpeed in enumerate(patchSpeed):
                     for bckSpeedInd,bckSpeed in enumerate(bckgndSpeed):
                         if pchSpeed==bckSpeed:
-                            r[pchSpeedInd,bckSpeedInd,:,:] = r[patchSpeed.size//2,bckSpeedInd]            
+                            r[pchSpeedInd,bckSpeedInd] = r[patchSpeed==0,bckSpeedInd]
             
-            self.units[str(u)]['checkerboard' + saveTag] = {'meanResp':meanResp,
-                                                            'meanSpontRate':meanSpontRate,
-                                                            'peakResp':peakResp,
-                                                            'peakSpontRate':peakSpontRate}
+            # get spont rate and find best resp over all patch sizes and elevations
+            spontTrials = np.logical_and(p['trialBckgndSpeed'][trials]==0,p['trialPatchSpeed'][trials]==0)
+            if usePeakResp:
+                spontRateMean,spontRateStd = self.getSDFNoise(spikes,trialStartSamples[spontTrials],max(trialEndSamples[spontTrials]-trialStartSamples[spontTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
+                respMat = peakResp.copy()
+            else:
+                spontRateMean = np.nanmean(trialSpikeRate[spontTrials])
+                spontRateStd = np.nanstd(trialSpikeRate[spontTrials])
+                respMat = meanResp.copy()
+            patchResp = respMat[patchSpeed!=0,bckgndSpeed==0,:,:]
+            bestPatchRespInd = np.unravel_index(np.argmax(patchResp),patchResp.shape)
+            respMat = respMat[:,:,bestPatchRespInd[1],bestPatchRespInd[2]]
+            
+            # cache results
+            self.units[str(u)]['checkerboard' + saveTag] = {'bckgndSpeed': bckgndSpeed,
+                                                            'patchSpeed': patchSpeed,
+                                                            'patchSize': p['patchSize'],
+                                                            'patchElevation': p['patchElevation'],
+                                                            'spontRateMean': spontRateMean,
+                                                            'spontRateStd': spontRateStd,
+                                                            'meanResp': meanResp,
+                                                            'peakResp': peakResp,
+                                                            'bestPatchRespInd': bestPatchRespInd,
+                                                            'respMat': respMat}
             
             if plot:
-                ax = plt.subplot(gs[uInd,0:2])
+                ax = fig.add_subplot(gs[uInd,0:2])
                 spacing = 0.2
                 sdfXMax = sdfTime[-1]
-                sdfYMax = np.nanmax(sdf)
+                sdfYMax = np.nanmax(sdf[:,:,bestPatchRespInd[1],bestPatchRespInd[2],:])
                 x = 0
                 y = 0
                 for i,_ in enumerate(patchSpeed):
                     for j,_ in enumerate(bckgndSpeed):
-                        sizeInd,elevInd = np.unravel_index(np.argmax(meanResp[i,j,:,:]),meanResp[i,j,:,:].shape)
-                        ax.plot(x+sdfTime,y+sdf[i,j,sizeInd,elevInd,:],color='k')
+                        ax.plot(x+sdfTime,y+sdf[i,j,bestPatchRespInd[1],bestPatchRespInd[2],:],color='k')
                         x += sdfXMax*(1+spacing)
                     x = 0
                     y += sdfYMax*(1+spacing)
@@ -1238,27 +1261,25 @@ class probeData():
                 ax.set_ylim([-sdfYMax*spacing,sdfYMax*(1+spacing)*patchSpeed.size])
                 ax.set_ylabel('Unit '+str(u), fontsize='medium')
                 
-                for ind,(r,sp,meanOrPeak) in enumerate(zip((meanResp,peakResp),(meanSpontRate,peakSpontRate),('Mean','Peak'))):
-                    ax = plt.subplot(gs[uInd,2+ind])
-                    respMat = np.nanmax(np.nanmax(r,axis=3),axis=2) # max resp over all patch sizes and elevations
-                    centerPoint = sp if not np.isnan(sp) else np.nanmedian(r)
-                    cLim = np.nanmax(abs(respMat-centerPoint))
-                    plt.imshow(respMat,cmap='bwr',clim=(centerPoint-cLim,centerPoint+cLim),interpolation='none',origin='lower')
-                    ax.spines['left'].set_visible(False)
-                    ax.spines['right'].set_visible(False)
-                    ax.spines['bottom'].set_visible(False)
-                    ax.spines['top'].set_visible(False)
-                    ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
-                    ax.set_xticks(range(bckgndSpeed.size))
-                    ax.set_xticklabels(bckgndSpeed)
-                    ax.set_yticks(range(patchSpeed.size))
-                    ax.set_yticklabels(patchSpeed)
-                    ax.set_xlabel('Background Speed')
-                    ax.set_ylabel('Patch Speed')
-                    ax.set_title(meanOrPeak+' Spikes/s',fontsize='small')
-                    cb = plt.colorbar(fraction=0.05,pad=0.04,shrink=0.5)
-                    cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
-                    cb.ax.tick_params(length=0,labelsize='xx-small')
+                ax = fig.add_subplot(gs[uInd,2])
+                centerPoint = respMat[patchSpeed==0,bckgndSpeed==0][0] if not np.isnan(respMat[patchSpeed==0,bckgndSpeed==0][0]) else np.nanmedian(respMat)
+                cLim = np.nanmax(abs(respMat-centerPoint))
+                im = ax.imshow(respMat,cmap='bwr',clim=(centerPoint-cLim,centerPoint+cLim),interpolation='none',origin='lower')
+                ax.spines['left'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['bottom'].set_visible(False)
+                ax.spines['top'].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
+                ax.set_xticks(range(bckgndSpeed.size))
+                ax.set_xticklabels(bckgndSpeed)
+                ax.set_yticks(range(patchSpeed.size))
+                ax.set_yticklabels(patchSpeed)
+                ax.set_xlabel('Background Speed')
+                ax.set_ylabel('Patch Speed')
+                ax.set_title('Spikes/s',fontsize='small')
+                cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+                cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
+                cb.ax.tick_params(length=0,labelsize='xx-small')
     
     
     def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=False, saveTag=''):
@@ -1346,7 +1367,7 @@ class probeData():
                 itiRate = itiSpikes/((1/60.0)*(interTrialEnds - interTrialStarts))
                 spontRate = itiRate.mean()
                 sdfSigma = 0.1
-                sdf,_ = self.getMeanSDF(spikes,frameSamples[interTrialStarts],max(frameSamples[interTrialEnds]-frameSamples[interTrialStarts]),sigma=sdfSigma)
+                sdf,_ = self.getSDF(spikes,frameSamples[interTrialStarts],max(frameSamples[interTrialEnds]-frameSamples[interTrialStarts]),sigma=sdfSigma)
                 peakSpontRate = sdf.max()
                  
                 #make tuning curves for various spot parameters        
@@ -1395,7 +1416,7 @@ class probeData():
                                         trialInd = np.logical_and(trialInd,i)
                                     if any(trialInd):
                                         resp[speedInd,sizeInd,dirInd,posInd,colorInd,:np.count_nonzero(trialInd)] = trialSpikeRate[trialInd]
-                                        sdf,_ = self.getMeanSDF(spikes,trialStartSamples[trialInd],max(trialEndSamples[trialInd]-trialStartSamples[trialInd]),sigma=sdfSigma)
+                                        sdf,_ = self.getSDF(spikes,trialStartSamples[trialInd],max(trialEndSamples[trialInd]-trialStartSamples[trialInd]),sigma=sdfSigma)
                                         peakResp[speedInd,sizeInd,dirInd,posInd,colorInd] = sdf.max()
                 meanResp = np.nanmean(resp,axis=5)
                 resp[:] = np.nan
@@ -1613,7 +1634,7 @@ class probeData():
                     trialIndex = np.intersect1d(trials,np.where(params[0]==paramSet[0][j])[0])
                 else:
                     trialIndex = trials
-                sdf,t = self.getMeanSDF(spikes,startSamples[trialIndex],max(windowDur[trialIndex]),sigma=sigma,sampInt=sampInt)
+                sdf,t = self.getSDF(spikes,startSamples[trialIndex],max(windowDur[trialIndex]),sigma=sigma,sampInt=sampInt)
                 ymax = max(ymax,sdf.max())
                 ax.append(plt.subplot(gs[i,j]))
                 ax[-1].plot(t+offset,sdf)
@@ -1635,18 +1656,36 @@ class probeData():
                 a.set_title('Unit '+str(unit),fontsize='small')
             else:
                 a.set_yticks([])
-                
-                
-    def getMeanSDF(self,spikes,startSamples,windowSamples,sigma=0.02,sampInt=0.001):
-        binSamples = sampInt*self.sampleRate
+    
+           
+    def getSDF(self,spikes,startSamples,windowSamples,sigma=0.02,sampInt=0.001,avg=True):
+        binSamples = int(sampInt*self.sampleRate)
         bins = np.arange(0,windowSamples+binSamples,binSamples)
         binnedSpikeCount = np.zeros((len(startSamples),len(bins)-1))
         for i,start in enumerate(startSamples):
             binnedSpikeCount[i],_ = np.histogram(spikes[np.logical_and(spikes>=start,spikes<=start+windowSamples)]-start,bins)
-        sdf = np.mean(scipy.ndimage.filters.gaussian_filter1d(binnedSpikeCount,sigma/sampInt,axis=1),axis=0)/sampInt
+        sdf = scipy.ndimage.filters.gaussian_filter1d(binnedSpikeCount,sigma/sampInt,axis=1)
+        if avg:
+            sdf = sdf.mean(axis=0)
+        sdf /= sampInt
         t = bins[:-1]/self.sampleRate
         return sdf,t
-            
+        
+        
+    def getSDFNoise(self,spikes,startSamples,windowSamples,sigma=0.02,sampInt=0.001,nReps=None):
+        if nReps is None:
+            nReps = int(windowSamples/self.sampleRate/sampInt)
+        bufferTime = sigma*5
+        bufferSamples = int(bufferTime*self.sampleRate)
+        sdf,t = self.getSDF(spikes,startSamples-bufferSamples,windowSamples+2*bufferSamples,sigma=sigma,sampInt=sampInt,avg=False)
+        sdf = sdf[:,np.logical_and(t>bufferTime,t<t[-1]-bufferTime)]
+        peaks = np.zeros(nReps)
+        for n in range(nReps):
+            for i,_ in enumerate(sdf):
+                sdf[i] = np.roll(sdf[i],np.random.randint(0,sdf.shape[1]))
+            peaks[n] = sdf.mean(axis=0).max()
+        return peaks.mean(),peaks.std()
+    
     
     def plotRaster(self,unit,protocol,startSamples=None,offset=0,windowDur=None,paramNames=None,paramColors=None,grid=False):
         # offset and windowDur input in seconds then converted to samples
@@ -1817,11 +1856,12 @@ class probeData():
     def getProtocolIndex(self, label):
         protocol = []
         protocol.extend([i for i,f in enumerate(self.kwdFileList) if ntpath.dirname(str(f)).endswith(label)])
-        if len(protocol)<1:
-            raise ValueError('No protocols found matching: '+label)
-        elif len(protocol)>1:
+        if len(protocol)>1:
             raise ValueError('Multiple protocols found matching: '+label)
-        return protocol[0]
+        elif len(protocol)<1:
+            return None
+        else:
+            return protocol[0]
         
           
     def getOrderedUnits(self,units=None):
@@ -1845,7 +1885,7 @@ class probeData():
     
     def getSingleUnits(self, fileDir = None, protocolsToAnalyze = None):
         if fileDir is None:
-            fileDir = getDir()
+            fileDir = fileIO.getDir()
         fileList, nsamps = getKwdInfo(dirPath=fileDir)
         if protocolsToAnalyze is None:
             self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir)
@@ -1857,7 +1897,7 @@ class probeData():
         from load_phy_template import load_phy_template
                  
         if fileDir is None:
-            fileDir = getDir()
+            fileDir = fileIO.getDir()
         
         if protocolsToAnalyze is None:
             protocolsToAnalyze = np.arange(len(self.d))
@@ -1877,63 +1917,17 @@ class probeData():
               self.units[unit]['times'] = spikeTimes       
 
 
-    def saveHDF5(self, filePath = None, fileOut = None, saveDict = None, grp = None):
-        if filePath is None and fileOut is None:
-            filePath = saveFile(fileType='*.hdf5')
-            if filePath=='':
-                return
-            fileOut = h5py.File(filePath, 'w')
-        elif filePath is not None and fileOut is None:            
-            fileOut = h5py.File(filePath,'w')
-
-        if saveDict is None:
-            saveDict = self.__dict__
-        if grp is None:    
-            grp = fileOut['/']
-        
-        for key in saveDict:
-            if key[0]=='_':
-                continue
-            elif type(saveDict[key]) is dict:
-                self.saveHDF5(fileOut=fileOut, saveDict=saveDict[key], grp=grp.create_group(key))
-            else:
-                try:
-                    grp[key] = saveDict[key]
-                except:
-                    try:
-                        grp.create_dataset(key,data=np.array(saveDict[key],dtype=object),dtype=h5py.special_dtype(vlen=str))
-                    except:
-                        print('Could not save: ', key)
+    def saveHDF5(self,filePath=None):
+        fileIO.objToHDF5(self,filePath)
                     
                     
-    def loadHDF5(self, filePath=None, grp=None, loadDict=None):
-        if filePath is None and grp is None:        
-            filePath = getFile(fileType='*.hdf5')
-            if filePath=='':
-                return
-        if grp is None:
-            grp = h5py.File(filePath)
-        for key,val in grp.items():
-            if isinstance(val,h5py._hl.dataset.Dataset):
-                v = val.value
-                if isinstance(v,np.ndarray) and v.dtype==np.object:
-                    v = v.astype('U')
-                if loadDict is None:
-                    setattr(self,key,v)
-                else:
-                    loadDict[key] = v
-            elif isinstance(val,h5py._hl.group.Group):
-                if loadDict is None:
-                    setattr(self,key,{})
-                    self.loadHDF5(grp=val,loadDict=getattr(self,key))
-                else:
-                    loadDict[key] = {}
-                    self.loadHDF5(grp=val,loadDict=loadDict[key])
+    def loadHDF5(self,filePath=None):
+        fileIO.hdf5ToObj(self,filePath)
                     
     
     def saveWorkspace(self, variables=None, saveGlobals = False, fileName=None, exceptVars = []):
         if fileName is None:
-            fileName = saveFile()
+            fileName = fileIO.saveFile()
             if fileName=='':
                 return
         shelf = shelve.open(fileName, 'n')
@@ -1958,33 +1952,45 @@ class probeData():
 
     def loadWorkspace(self, fileName = None):
         if fileName is None:        
-            fileName = getFile()
+            fileName = fileIO.getFile()
             if fileName=='':
                 return
         shelf = shelve.open(fileName)
         for key in shelf:
             setattr(self, key, shelf[key])
         shelf.close()
+        
+        
+    def getExperimentInfo(self):
+        expName = ntpath.basename(ntpath.dirname(ntpath.dirname(self.kwdFileList[0])))
+        if isinstance(expName,bytes):
+            expName = expName.decode('utf8')
+        date,animalID = expName.split('_')
+        return date,animalID
 
 
     def readExcelFile(self, sheetname = None, fileName = None):
         if sheetname is None:            
-            expDate = os.path.basename(os.path.dirname(os.path.dirname(self.kwdFileList[0])))        
-            expDate = expDate[0:8]
-            sheetname = expDate
-            if sheetname=='':
-                return
+            expDate,_ = self.getExperimentInfo()
         if fileName is None:        
-            fileName = getFile()
+            fileName = fileIO.getFile()
             if fileName=='':
                 return        
         
-        table = pandas.read_excel(fileName, sheetname=sheetname, parse_cols="A, B")
-        
-        for u in xrange(table.shape[0]):
+        table = pandas.read_excel(fileName, sheetname=expDate)
+        for u in range(table.shape[0]):
             unit = table.Cell[u]
             label = table.Label[u]
             self.units[str(unit)]['label'] = label
+            
+        try:
+            self.CCFTipPosition = np.array(table.Tip[0:3])
+            self.CCFLPEntryPosition = np.array(table.Entry[0:3])
+            self.findCCFCoords()
+        except:
+            for u in self.units:
+                self.units[str(u)]['CCFCoords'] = np.full(3,np.nan)
+            print('Could not fine CCF Tip or Entry positions')
 
 
     def getUnitsByLabel(self, labelID, criterion, notFlag=False):
@@ -2000,9 +2006,11 @@ class probeData():
         return units
         
         
-    def findCCFCoords(self, tipPos, entryPos, tipProbePos=-1300):
-        tipPos = np.array(tipPos)
-        entryPos = np.array(entryPos)        
+    def findCCFCoords(self, tipPos=None, entryPos=None, tipProbePos=-1300):
+        if tipPos is None:
+            tipPos = self.CCFTipPosition
+        if entryPos is None:
+            entryPos = self.CCFLPEntryPosition      
         
         xRange = entryPos[0] - tipPos[0]
         yRange = entryPos[1] - tipPos[1]
@@ -2014,44 +2022,22 @@ class probeData():
         ySlope = yRange/trackLength
         zSlope = zRange/trackLength
                         
-        units, unitsYPos = self.getOrderedUnits(self.units.keys())
+        units, unitsYPos = self.getOrderedUnits()
         for i, unit in enumerate(units):
             distFromTip = unitsYPos[i] - tipProbePos
             pos = np.array([xSlope, ySlope, zSlope])*distFromTip
             pos+=tipPos
-            
             self.units[str(unit)]['CCFCoords'] = pos
             
         
 # utility functions
 
-def getFile(rootDir='',fileType=''):
-    app = QtGui.QApplication.instance()
-    if app is None:
-        app = QtGui.QApplication([])
-    return str(QtGui.QFileDialog.getOpenFileName(None,'Choose File',rootDir,fileType))
-    
-    
-def getDir(rootDir=''):
-    app = QtGui.QApplication.instance()
-    if app is None:
-        app = QtGui.QApplication([])
-    return str(QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory',rootDir)) 
-    
-
-def saveFile(rootDir='',fileType=''):
-    app = QtGui.QApplication.instance()
-    if app is None:
-        app = QtGui.QApplication([])
-    return str(QtGui.QFileDialog.getSaveFileName(None,'Save As',rootDir,fileType))
-
-
 def getKwdInfo(dirPath=None):
     # kwdFiles, nSamples = getKwdInfo()
     # returns kwd file paths and number of samples in each file ordered by file start time
     if dirPath is None:    
-        dirPath = getDir(dataDir)
-        if dirPath == '':
+        dirPath = fileIO.getDir(dataDir)
+        if dirPath=='':
             return
     kwdFiles = []
     startTime = []
@@ -2182,12 +2168,12 @@ def getDSI(resp,theta):
 def gaussianConvolve3D(data, sigma):
     gaussian2DKernel = Gaussian2DKernel(stddev=sigma)
     data_c = np.zeros_like(data)
-    for z in xrange(data.shape[2]):
+    for z in range(data.shape[2]):
         data_c[:, :, z] = convolve(data[:, :, z], gaussian2DKernel, boundary='extend')
 
     gaussian1DKernel = Gaussian1DKernel(stddev=sigma)
-    for x in xrange(data.shape[0]):
-        for y in xrange(data.shape[1]):
+    for x in range(data.shape[0]):
+        for y in range(data.shape[1]):
             data_c[x, y, :] = convolve(data_c[x, y, :], gaussian1DKernel, boundary='extend')
     
     return data_c    
