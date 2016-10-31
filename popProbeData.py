@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
+import nrrd, cv2
 
 
 class popProbeData():
@@ -260,7 +261,80 @@ class popProbeData():
                 ax = fig.add_subplot(round(k**0.5),math.ceil(k**0.5),ind+1)
                 ax.imshow(respMat[clustID==i].mean(axis=0),cmap='bwr',interpolation='none',origin='lower')
 
+    
+    def makeRFVolume(self, padding=10, sigma=1, annotationDataFile=None):
+        if annotationDataFile is None:
+            annotationDataFile = fileIO.getFile() 
         
+        annotationData,_ = nrrd.read(annotationDataFile)
+        annotationData = annotationData.transpose((1,2,0))
+        inLP = np.where(annotationData == 218)
+        inLPbinary = annotationData==218
+        
+        yRange = [np.min(inLP[0])-padding, np.max(inLP[0])+padding]
+        xRange = [np.min(inLP[1])-padding, np.max(inLP[1])/2+padding]
+        zRange = [np.min(inLP[2])-padding, np.max(inLP[2])+padding]
+        
+        LPmask = inLPbinary[yRange[0]:yRange[1], xRange[0]:xRange[1], zRange[0]:zRange[1]].astype(np.float)
+        LPmask[LPmask==0] = np.nan
+        
+        CCFCoords = self.data.probe.CCFCoords
+        
+        counts = np.zeros([np.diff(yRange), np.diff(xRange), np.diff(zRange)])
+        elev = np.zeros_like(counts)
+        azi = np.zeros_like(counts)
+        for fitType in ['onFit', 'offFit']:
+            for uindex, coords in enumerate(CCFCoords):
+                
+                if any(np.isnan(coords)):
+                    continue
+                else:
+                    ccf = coords/25
+                    ccf = ccf.astype(int)
+                    ccf -= np.array([xRange[0], yRange[0], zRange[0]])
+                    
+                    counts[ccf[1], ccf[0], ccf[2]]+=1
+                    elev[ccf[1], ccf[0], ccf[2]] += self.data.sparseNoise[fitType][uindex][1]
+                    azi[ccf[1], ccf[0], ccf[2]] += self.data.sparseNoise[fitType][uindex][0]
+                
+        elev /= counts
+        azi /= counts
+        
+        
+        elev_s = probeData.gaussianConvolve3D(elev,sigma)
+        azi_s = probeData.gaussianConvolve3D(azi, sigma)
+        
+        elev_s *= LPmask
+        azi_s *= LPmask
+                
+        
+        for z in xrange(elev_s.shape[2]):
+            lpSlice = inLPbinary[yRange[0]:yRange[1], xRange[0]:xRange[1], zRange[0] + z].astype(np.uint8)
+            _,contour,_ = cv2.findContours(np.copy(lpSlice, order='C').astype(np.uint8),cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+            eslice = np.copy(elev_s[:, :, z], order='C')
+            aslice = np.copy(azi_s[:, :, z], order='C')
+            cv2.drawContours(eslice,contour,-1,(0,0,0),1)
+            cv2.drawContours(aslice,contour,-1,(0,0,0),1)
+            
+            elev_s[:, :, z] = eslice
+            azi_s[:, :, z] = aslice
+#            xs = []
+#            ys = []
+#            for c in contour[1]:
+#                xs.append(c[0][0] - xRange[0])
+#                ys.append(c[0][1] - yRange[0])
+##        
+#
+#        plt.figure()
+#        plt.imshow(elev_s[:, :, goodSlice-zRange[0]], interpolation='none')
+#        plt.plot(xs, ys, 'k')
+#        plt.colorbar() 
+#        
+#        plt.figure()
+#        plt.imshow(azi_s[:, :, goodSlice-zRange[0]], interpolation='none')
+#        plt.plot(xs, ys, 'k')
+#        plt.colorbar() 
+        return elev_s, azi_s
 
 
 if __name__=="__main__":

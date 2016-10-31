@@ -1490,7 +1490,7 @@ class probeData():
     
     def parseRunning(self, protocol, runThresh = 5.0, statThresh = 1.0, trialStarts = None, trialEnds = None, wheelDownsampleFactor = 500.0):
         if not 'running' in self.behaviorData[str(protocol)]:
-            self.decodeWheel(self.d[protocol]['data'][::500, self.wheelChannel]*self.d[protocol]['gains'][self.wheelChannel])
+            self.behaviorData[str(protocol)]['running'] = self.decodeWheel(self.d[protocol]['data'][::500, self.wheelChannel]*self.d[protocol]['gains'][self.wheelChannel])
         
         wheelData = -self.behaviorData[str(protocol)]['running']
         
@@ -1784,15 +1784,10 @@ class probeData():
 
         for pro in protocolsToRun:
             protocol = self.getProtocolIndex(pro)
-            
+            trialStarts, trialEnds = self.getTrialStartsEnds(protocol)
             if 'gratings'==pro:
                 if splitRunning:
-                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames'][:-1]
-                    trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['stimTime']
-                    trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
-                    trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
-                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
-                    
+                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)   
                     self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials, saveTag='_stat')
                     self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials, saveTag='_run')
                 else:
@@ -1800,12 +1795,7 @@ class probeData():
 
             elif 'gratings_ori'==pro:
                 if splitRunning:
-                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames'][:-1]
-                    trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['stimTime']
-                    trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
-                    trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
-                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
-                    
+                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)  
                     self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials, saveTag='_stat')
                     self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials, saveTag='_run')
                 else:
@@ -1813,44 +1803,60 @@ class probeData():
 
             elif 'sparseNoise' in pro:
                 if splitRunning:
-                    trialStartFrames = self.visstimData[str(protocol)]['stimStartFrames'][:-1]
-                    trialEndFrames = trialStartFrames + self.visstimData[str(protocol)]['boxDuration']
-                    trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrames]
-                    trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialEndFrames]
-                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
-                    
+                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                 
                     self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
                     self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
                 else:                    
                     self.findRF(units, protocol=protocol, useCache=useCache)
             elif 'spots' in pro:
                 if splitRunning:
-                    trialStartFrames = self.visstimData[str(protocol)]['trialStartFrame'][:-1]
-                    trialDuration = (self.visstimData[str(protocol)]['trialNumFrames']).astype(np.int)
-                    trialEndFrames = trialStartFrames + trialDuration[:-1]
-                    frameSamples = self.visstimData[str(protocol)]['frameSamples']     
-                    trialStarts = frameSamples[trialStartFrames]
-                    trialEnds = frameSamples[trialEndFrames]
-                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
-                    
+                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                    
                     self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
                     self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
                 else:
                     self.analyzeSpots(units, protocol=protocol, useCache=useCache)
             elif 'checkerboard' in pro:
                 if splitRunning:
-                    trialStartFrame = self.visstimData[str(protocol)]['trialStartFrame'][:-1]
-                    trialDuration = (self.visstimData[str(protocol)]['trialNumFrames']).astype(int)
-                    trialStarts = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame]
-                    trialEnds = self.visstimData[str(protocol)]['frameSamples'][trialStartFrame+trialDuration]
-                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
-                    
+                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)            
                     self.analyzeCheckerboard(units, protocol=protocol, trials=statTrials, saveTag='_stat')
                     self.analyzeCheckerboard(units, protocol=protocol, trials=runTrials, saveTag='_run')
                 else:
                     self.analyzeCheckerboard(units, protocol=protocol)
             else:
                 print("Couldn't find analysis script for protocol type:", pro)
+                
+    def getTrialStartsEnds(self, protocol, timeUnit='samples'):
+        if isinstance(protocol, str):
+            protocol = self.getProtocolIndex(protocol)
+
+        trialStarts = None
+        trialEnds = None
+            
+        v = self.visstimData[str(protocol)]
+        
+        for param in ['trialStartFrame', 'stimStartFrames']:
+            if param in v:
+                trialStarts = v[param][:-1]
+        
+        if trialStarts is None:
+            print('Could not find trial starts: key must be either trialStartFrame or stimStartFrames')
+            return
+        
+        for param in ['trialNumFrames', 'boxDuration', 'stimTime', 'stimDur']:
+            if param in v:
+                if isinstance(v[param], int):
+                    trialDuration = v[param]
+                else:
+                    trialDuration = v[param][:len(trialStarts)].astype(np.int)
+                trialEnds = trialStarts + trialDuration
+        
+        if timeUnit=='samples':    
+            return v['frameSamples'][trialStarts], v['frameSamples'][trialEnds]
+        elif timeUnit=='frames':
+            return trialStarts, trialEnds
+        else:
+            print('Did not recognize timeUnit. Must be either samples or frames.')
+            return
                 
      
     def getProtocolIndex(self, label):
