@@ -521,8 +521,8 @@ class probeData():
                         title = '' if hasResp else 'no resp'
                         ax.set_title(title,fontsize='x-small')
                 
-                minOn,maxOn = (0,0) if meanOnResp is None else (np.nanmin(meanOnResp),np.nanmax(meanOnResp))
-                minOff,maxOff = (0,0) if meanOffResp is None else (np.nanmin(meanOffResp),np.nanmax(meanOffResp))
+                minOn,maxOn = (np.inf,-np.inf) if meanOnResp is None else (np.nanmin(meanOnResp),np.nanmax(meanOnResp))
+                minOff,maxOff = (np.inf,-np.inf) if meanOffResp is None else (np.nanmin(meanOffResp),np.nanmax(meanOffResp))
                 minVal,maxVal = min(minOn,minOff),max(maxOn,maxOff)
                 for ind,(resp,fitParams,onOrOff) in enumerate(zip((meanOnResp,meanOffResp),(onFit[uindex],offFit[uindex]),('On','Off'))):
                     ax = fig.add_subplot(gs[uindex*3+1:uindex*3+3,ind*3+1:ind*3+3])
@@ -888,7 +888,7 @@ class probeData():
         
         if plot:
             fig = plt.figure(figsize =(15,3*len(units)),facecolor='w')
-            gridWidth = 3*len(ori)+1 if protocolType=='stf' else len(tf)*len(sf)+1
+            gridWidth = 3*len(ori) if protocolType=='stf' else len(tf)*len(sf)
             gs = gridspec.GridSpec(len(units),gridWidth)   
         
         for uindex, unit in enumerate(units):    
@@ -937,24 +937,24 @@ class probeData():
             # find significant responses
             hasResp = respMat>spontRateMean+5*spontRateStd
             tfHasResp,sfHasResp,oriHasResp = [np.unique(np.where(hasResp)[i]) for i in (0,1,2)]
+            maxRespInd = np.unravel_index(np.nanargmax(respMat),respMat.shape)
             
-            meanResp = None
             if protocolType=='stf':
                 # fit stf matrix for avg of ori's with resp
                 if fit and oriHasResp.size>0:
                     # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude, offset
-                    meanResp = np.nanmean(respMat[:,:,oriHasResp],axis=2)
-                    i,j = np.unravel_index(np.argmax(meanResp),meanResp.shape)
-                    initialParams = (sf[j], tf[i], 1, 1, 0.5, meanResp.max(), meanResp.min())
-                    fitPrms = fitStf(sf,tf,meanResp,initialParams)
+                    resp = respMat[:,:,maxRespInd[2]]
+                    i,j = np.unravel_index(np.argmax(resp),resp.shape)
+                    initialParams = (sf[j], tf[i], 1, 1, 0.5, resp.max(), resp.min())
+                    fitPrms = fitStf(sf,tf,resp,initialParams)
                     if fitPrms is not None:
                         stfFitParams[uindex] = fitPrms
             elif protocolType=='ori':
                 # calculate DSI and OSI for avg of sf/tf's with resp
                 if tfHasResp.size>0 and sfHasResp.size>0:
-                    meanResp = np.nanmean(np.nanmean(respMat[tfHasResp,:,:],axis=0)[sfHasResp,:],axis=0)
-                    dsi[uindex],prefDir[uindex] = getDSI(meanResp,ori)
-                    osi[uindex],prefOri[uindex] = getDSI(meanResp,2*ori)
+                    resp = respMat[maxRespInd[0],maxRespInd[1],:]
+                    dsi[uindex],prefDir[uindex] = getDSI(resp,ori)
+                    osi[uindex],prefOri[uindex] = getDSI(resp,2*ori)
                     prefOri[uindex] /= 2
             
             # cache results
@@ -1013,23 +1013,7 @@ class probeData():
                         im = ax.imshow(respMatOri, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
                         for xypair in xyNan:    
                             ax.text(xypair[1], xypair[0], 'nan', color='white', ha='center')
-                        ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
-                        ax.set_xticks([0,sf.size-1])
-                        ax.set_yticks([0,tf.size-1])
-                        ax.set_xticklabels([sf[0],sf[-1]])
-                        ax.set_yticklabels([tf[0],tf[-1]])
-                        ax.set_xlabel('Cycles/deg',fontsize='small')
-                        ax.set_ylabel('Cycles/s',fontsize='small')
-                        if oriInd not in oriHasResp:
-                            ax.set_title('no resp',fontsize='x-small')
-                        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
-                        cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
-                        cb.ax.tick_params(length=0,labelsize='xx-small')
-                    
-                    ax = fig.add_subplot(gs[uindex,-1])
-                    if meanResp is not None:
-                        im = ax.imshow(meanResp, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
-                        if fit and not all(np.isnan(stfFitParams[uindex])):
+                        if fit and oriInd==maxRespInd[2] and not all(np.isnan(stfFitParams[uindex])):
                             ax.plot(np.log2(stfFitParams[uindex][0])-np.log2(sf[0]),np.log2(stfFitParams[uindex][1])-np.log2(tf[0]),'kx',markeredgewidth=2)
                             fitX,fitY = getStfContour(sf,tf,stfFitParams[uindex])
                             ax.plot(fitX,fitY,'k',linewidth=2)
@@ -1042,14 +1026,11 @@ class probeData():
                         ax.set_yticklabels([tf[0],tf[-1]])
                         ax.set_xlabel('Cycles/deg',fontsize='small')
                         ax.set_ylabel('Cycles/s',fontsize='small')
-                        ax.set_title('mean',fontsize='x-small')
+                        if oriInd not in oriHasResp:
+                            ax.set_title('no resp',fontsize='x-small')
                         cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
                         cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
                         cb.ax.tick_params(length=0,labelsize='xx-small')
-                    else:
-                        ax.set_axis_off()
-                        ax.set_title('no resp',fontsize='small')
-                        
                 else:
                     for i,_ in enumerate(tf):
                         for j,_ in enumerate(sf):
@@ -1059,20 +1040,11 @@ class probeData():
                             rho = np.append(respMat[i,j,:], respMat[i,j,0])
                             ax.plot(theta, rho)
                             ax.set_rmax(np.nanmax(respMat)*1.05)
+                            if i==maxRespInd[0] and j==maxRespInd[1] and not np.isnan(dsi[uindex]):
+                                ax.set_title('DSI = '+str(round(dsi[uindex],2))+', prefDir = '+str(round(prefDir[uindex]))+'\n'+
+                                             'OSI = '+str(round(osi[uindex],2))+', prefOri = '+str(round(prefOri[uindex])),fontsize='x-small')
                             if i==0 and j==0:
                                 ax.set_ylabel('Unit '+str(unit))
-                    
-                    ax = fig.add_subplot(gs[uindex,i*len(tf)+j+1], projection='polar')
-                    if meanResp is not None:
-                        theta = ori * (np.pi/180.0)
-                        theta = np.append(theta, theta[0])
-                        rho = np.append(meanResp,meanResp[0])
-                        ax.plot(theta, rho)
-                        ax.set_rmax(np.nanmax(meanResp)*1.05)
-                        ax.set_title('meanResp'+'\n'+'DSI = '+str(round(dsi[uindex],2))+', prefDir = '+str(round(prefDir[uindex]))+'\n'+'OSI = '+str(round(osi[uindex],2))+', prefOri = '+str(round(prefOri[uindex])),fontsize='x-small')
-                    else:
-                        ax.set_axis_off()
-                        ax.set_title('no resp',fontsize='small')
                         
         if plot and len(units)>1:
             if protocolType=='stf':
@@ -1253,7 +1225,7 @@ class probeData():
                 ax.spines['top'].set_visible(False)
                 ax.spines['left'].set_visible(False)
                 ax.spines['bottom'].set_visible(False)
-                ax.tick_params(direction='out',top=False,right=False,labelsize='mdium')
+                ax.tick_params(direction='out',top=False,right=False,labelsize='medium')
                 ax.set_xticks([minInterTrialTime,sdfTime[-1]-2*minInterTrialTime])
                 ax.set_xticklabels(['0',str(int(sdfTime[-1]-2*minInterTrialTime))+' s'])
                 ax.set_yticks([0,int(sdfYMax)])
@@ -2123,7 +2095,7 @@ def stfLogGauss2D(stfTuple,sf0,tf0,sigSF,sigTF,speedTuningIndex,amplitude,offset
 def fitStf(sf,tf,data,initialParams):
     try:
         lowerBounds = np.array([sf[0]-0.25*sf[0],tf[0]-0.25*tf[0],0,0,-0.25,0,data.min()])
-        upperBounds = np.array([sf[-1]+0.25*sf[-1],tf[-1]+0.25*tf[-1],0.5*tf[-1],0.5*tf[-1],1.25,1.5*data.max(),np.median(data)])
+        upperBounds = np.array([sf[-1]+0.25*sf[-1],tf[-1]+0.25*tf[-1],0.25*tf[-1],0.25*tf[-1],1.25,1.5*data.max(),np.median(data)])
         fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except RuntimeError:
         print('fit failed')
