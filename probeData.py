@@ -709,7 +709,7 @@ class probeData():
                             ax.set_yticklabels([])
     
     
-    def analyzeFlash(self, units=None, trials=None, protocol=None, responseLatency=0.25, plot=True, sdfSigma=0.005):
+    def analyzeFlash(self, units=None, trials=None, protocol=None, responseLatency=0.25, plot=True, sdfSigma=0.005, useCache=False):
         units, unitsYPos = self.getOrderedUnits(units) 
             
         if protocol is None:
@@ -1752,50 +1752,58 @@ class probeData():
             rows[-1] += 1
     
     
-    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'gratings', 'gratings_ori', 'spots', 'checkerboard'], splitRunning = False, useCache=False):
+    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard'], splitRunning = False, useCache=False):
 
         for pro in protocolsToRun:
             protocol = self.getProtocolIndex(pro)
-            trialStarts, trialEnds = self.getTrialStartsEnds(protocol)
-            if 'gratings'==pro:
-                if splitRunning:
-                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)   
-                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials, saveTag='_stat')
-                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials, saveTag='_run')
-                else:
-                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf')
-
-            elif 'gratings_ori'==pro:
-                if splitRunning:
-                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)  
-                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials, saveTag='_stat')
-                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials, saveTag='_run')
-                else:
-                    self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori')
-
-            elif 'sparseNoise' in pro:
-                if splitRunning:
-                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                 
-                    self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
-                    self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
-                else:                    
-                    self.findRF(units, protocol=protocol, useCache=useCache)
-            elif 'spots' in pro:
-                if splitRunning:
-                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                    
-                    self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
-                    self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
-                else:
-                    self.analyzeSpots(units, protocol=protocol, useCache=useCache)
-            elif 'checkerboard' in pro:
-                if splitRunning:
-                    statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)            
-                    self.analyzeCheckerboard(units, protocol=protocol, trials=statTrials, saveTag='_stat')
-                    self.analyzeCheckerboard(units, protocol=protocol, trials=runTrials, saveTag='_run')
-                else:
-                    self.analyzeCheckerboard(units, protocol=protocol)
+            if protocol is None:
+                print(pro+ ' not found')
             else:
-                print("Couldn't find analysis script for protocol type:", pro)
+                trialStarts, trialEnds = self.getTrialStartsEnds(protocol)
+                if 'gratings'==pro:
+                    if splitRunning:
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)   
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials, saveTag='_stat')
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials, saveTag='_run')
+                    else:
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf')
+    
+                elif 'gratings_ori'==pro:
+                    if splitRunning:
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)  
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials, saveTag='_stat')
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials, saveTag='_run')
+                    else:
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori')
+    
+                elif 'sparseNoise' in pro:
+                    if splitRunning:
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                 
+                        self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
+                        self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
+                    else:                    
+                        self.findRF(units, protocol=protocol, useCache=useCache)
+                elif 'flash' in pro:
+                    if splitRunning:
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                 
+                        self.analyzeFlash(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
+                        self.analyzeFlash(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
+                    else:                    
+                        self.analyzeFlash(units, protocol=protocol, useCache=useCache)
+                elif 'spots' in pro:
+                    if splitRunning:
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                    
+                        self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat')
+                        self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run')
+                    else:
+                        self.analyzeSpots(units, protocol=protocol, useCache=useCache)
+                elif 'checkerboard' in pro:
+                    if splitRunning:
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)            
+                        self.analyzeCheckerboard(units, protocol=protocol, trials=statTrials, saveTag='_stat')
+                        self.analyzeCheckerboard(units, protocol=protocol, trials=runTrials, saveTag='_run')
+                    else:
+                        self.analyzeCheckerboard(units, protocol=protocol)
                 
     def getTrialStartsEnds(self, protocol, timeUnit='samples'):
         if isinstance(protocol, str):
@@ -1803,12 +1811,12 @@ class probeData():
 
         trialStarts = None
         trialEnds = None
-            
+        
         v = self.visstimData[str(protocol)]
         
         for param in ['trialStartFrame', 'stimStartFrames']:
             if param in v:
-                trialStarts = v[param][:-1]
+                trialStarts = v[param]
         
         if trialStarts is None:
             print('Could not find trial starts: key must be either trialStartFrame or stimStartFrames')
@@ -1821,6 +1829,10 @@ class probeData():
                 else:
                     trialDuration = v[param][:len(trialStarts)].astype(np.int)
                 trialEnds = trialStarts + trialDuration
+                
+        lastFullTrial = np.where(trialEnds<v['frameSamples'].size)[0][-1]
+        trialStarts = trialStarts[:lastFullTrial+1]        
+        trialEnds = trialEnds[:lastFullTrial+1]
         
         if timeUnit=='samples':    
             return v['frameSamples'][trialStarts], v['frameSamples'][trialEnds]
