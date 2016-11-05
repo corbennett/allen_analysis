@@ -12,6 +12,7 @@ import pandas as pd
 import scipy.stats
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
+from matplotlib.patches import Ellipse
 
 
 class popProbeData():
@@ -245,7 +246,29 @@ class popProbeData():
                     ax.set_xlabel('Probe Position (microns)',fontsize='x-large')
                     ax.set_ylabel(azimOrElev+' (degrees)',fontsize='x-large')
                     plt.tight_layout()
-                    
+    
+        colors = [(1, 0, 0), (0, 0, 1)]
+        for i, fit in enumerate([onFit, offFit]):
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(111, aspect='equal')
+            
+            for sub in fit:
+                x,y = probeData.getEllipseXY(*sub[:5])
+                e = Ellipse(xy=[sub[0], sub[1]], width=sub[2], height=sub[3], angle=sub[4])
+                e.set_edgecolor('none')
+                e.set_alpha(0.2)
+                e.set_facecolor(colors[i])
+        
+                ax.spines['right'].set_visible(False)
+                ax.spines['top'].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+                ax.set_xlabel('Azimuth',fontsize='x-large')
+                ax.set_ylabel('Elevation',fontsize='x-large')
+                ax.add_artist(e)
+                ax.set_xlim(-30, 110)
+                ax.set_ylim(-45, 75)
+                fig.tight_layout()
+                
     
     def makeRFVolume(self, padding=10, sigma=1, annotationDataFile=None):
         if annotationDataFile is None:
