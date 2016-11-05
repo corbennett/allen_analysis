@@ -49,7 +49,7 @@ class popProbeData():
         return isLabeled
     
     
-    def getData(self, unitLabel=['on','off','on off'], tag=''):
+    def getData(self, unitLabel=['on','off','on off','supp','noRF'], tag='', replace=False):
         
         if unitLabel is not None and not all(self.checkUnitLabels()):
             raise ValueError('Not all units are labeled')
@@ -89,7 +89,7 @@ class popProbeData():
                         for pname in data[protocol]:
                             data[protocol][pname].append(np.nan)
                     else:
-                        if protocol+tag not in p.units[u]:
+                        if replace or protocol+tag not in p.units[u]:
                             if protocol=='sparseNoise':
                                 p.findRF(u,saveTag=tag,plot=False)
                             elif protocol=='gratings_stf':
