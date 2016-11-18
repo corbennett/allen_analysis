@@ -15,10 +15,9 @@ class manualMapper(VisStimControl):
     def __init__(self):
         VisStimControl.__init__(self)        
         self.boxSize = 50                  #degrees?
-        self.boxColors = (1, -1)
+        self.boxColors = (-1, 1)
         self.boxDuration = 10              #number of frames to show each box
-        self.trialBoxPosition = [0, 0]     # x and y
-        self.trialBoxColor = -1        
+        self.trialBoxPosition = [0, 0]     # x and y   
         self.boxPositionHistory = []
         self.boxColorHistory = []
         self.toggleColor = False
@@ -39,8 +38,8 @@ class manualMapper(VisStimControl):
         stim.height = self.boxSize
         stim.width = self.boxSize
         stim.pos = (self.trialBoxPosition[0], self.trialBoxPosition[1])
-        stim.fillColor = self.trialBoxColor
-        stim.lineColor = self.trialBoxColor
+        stim.fillColor = self.boxColors[0]
+        stim.lineColor = self.boxColors[0]
         lastMouseWheelButton = 0
         numFrames = 0        
         mousePos = np.array([0,0])

@@ -140,7 +140,7 @@ class MovingCheckerboard(VisStimControl):
                         else:
                             self.trialNumFrames.append(round(self.imageSize[1]/bckgndMovPerFrame))
                     else:
-                        self.trialNumFrames.append(self.frameRate)
+                        self.trialNumFrames.append(2*self.frameRate)
                 trialInterval = self.trialNumFrames[-1]+self.getInterTrialInterval()
             elif trial>-1 and trialFrame<self.trialNumFrames[-1]:
                 if bckgndMovPerFrame>0:

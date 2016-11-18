@@ -7,6 +7,7 @@ Created on Wed Mar 09 12:36:46 2016
 
 from psychopy import visual, event
 import numpy as np
+import copy
 from VisStimControl import VisStimControl
 import itertools, random
 import time
@@ -15,15 +16,15 @@ class makeSparseNoise(VisStimControl):
     
     def __init__(self):
         VisStimControl.__init__(self)        
-        self.boxSize = [5,10,20]                         #degrees
+        self.boxSize = [5,10,20,1000]               #degrees: sizes >= 1000 will become full field flashes only shown once per cycle
         self.boxColors = [1, -1]
         self.prestimtime = 60                       #number of gray refreshes show before boxes begin
-        self.interBoxInterval = 0                 #frequency to display boxes
-        self.boxDuration = 6                      #number of frames to show each box
+        self.interBoxInterval = 0                   #frequency to display boxes
+        self.boxDuration = 6                        #number of frames to show each box
         self.trialBoxPosition = [0, 0]              # x and y
         self.trialBoxColor = 1        
-        self.gridBoundaries = [-20, -30, 120, 90]    #Screen coordinates define presentation window (degrees): x1 y1 for lower left, x2 y2 for upper right corner
-        self.gridSpacing = 10                        #Spacing between grid nodes (degrees)
+        self.gridBoundaries = [-20, -30, 120, 90]   #Screen coordinates define presentation window (degrees): x1 y1 for lower left, x2 y2 for upper right corner
+        self.gridSpacing = 10                       #Spacing between grid nodes (degrees)
         
      
     def run(self):
@@ -59,6 +60,7 @@ class makeSparseNoise(VisStimControl):
             #reset params every full cycle
             if numTrials % trialsPerCycle == 0:
                 self.set_params()
+                trialsPerCycle = len(self._parameterCombos)
                 print 'starting cycle:', numTrials/trialsPerCycle + 1
                 
             #set stim for this trial
@@ -96,7 +98,18 @@ class makeSparseNoise(VisStimControl):
         self.completeRun()
         
     def set_params(self):
-        self._parameterCombos = list(itertools.product(self.pixelsPerDeg * self.gridX, self.pixelsPerDeg * self.gridY, self.boxColors, self.boxSize))
+        boxSizes = np.array(copy.copy(self.boxSize))
+        boxSizes = boxSizes[boxSizes<1000]
+        self._parameterCombos = list(itertools.product(self.pixelsPerDeg * self.gridX, self.pixelsPerDeg * self.gridY, self.boxColors, boxSizes))
+        
+        if max(self.boxSize) >= 1000:
+            for color in [1, -1]:            
+                fullField = list(self._parameterCombos[-1])
+                fullField[0:2] = [0,0]
+                fullField[2] = color
+                fullField[3] = 300
+                self._parameterCombos.append(fullField)
+        
         random.shuffle(self._parameterCombos)
  
         

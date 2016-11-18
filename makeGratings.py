@@ -17,7 +17,7 @@ class makeGratings(VisStimControl):
         self.experimentType = 'stf'
         self.gratingType = 'sqr' # or sin
         self.phase = [0]
-        self.posx = [0]                                     #x position of center of grating patch, in degrees
+        self.posx = [80]                                     #x position of center of grating patch, in degrees
         self.posy = [0]                                     #y position of center of grating patch, in degrees
         self.size = [self.fieldWidth/self.pixelsPerDeg]     #size of grating patch in degrees
         self.numCycles = 15                                #number of times to cycle through parameters
@@ -135,8 +135,8 @@ class makeGratings(VisStimControl):
         
         elif expType == 'ori':
             self.ori = range(0, 360, 45)        
-            self.tf = [1]                                   #cycles per second
-            self.sf = [0.04]                                #cycLes per degree
+            self.tf = [1, 4]                                   #cycles per second
+            self.sf = [0.02, 0.16]                                #cycLes per degree
             self.contrast = [1]
         else:
             print 'Did not recognize requested experiment type'
