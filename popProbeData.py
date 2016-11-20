@@ -18,142 +18,144 @@ from matplotlib.patches import Ellipse
 class popProbeData():
     
     def __init__(self):
-        self.dataFiles = []
-        self.probeDataObjs = []
+        self.experimentFiles = None
+        self.excelFile = None
         self.data = None
     
     
-    def getDataFiles(self):
-        filePaths = fileIO.getFiles(fileType='*.hdf5')
-        if filePaths is None:
+    def getExperimentFiles(self):
+        filePaths = fileIO.getFiles(caption='Choose experiments',fileType='*.hdf5')
+        if len(filePaths)<1:
             return
-        self.dataFiles = filePaths
-        self.probeDataObjs = []
-        for f in filePaths:
-            self.probeDataObjs.append(probeData.probeData())
-            self.probeDataObjs[-1].loadHDF5(f)
+        self.experimentFiles = filePaths
+        
+        
+    def analyzeExperiments(self):
+        for exp in self.experimentFiles:
+            p = self.getProbeDataObj(exp)
+            p.runAllAnalyses(splitRunning=True,plot=False)
+            p.saveHDF5(exp)
+        
+            
+    def getProbeDataObj(self,experimentFilePath):
+        p = probeData.probeData()
+        p.loadHDF5(experimentFilePath)
+        return p
     
         
-    def getUnitLabels(self):
-        filePath = fileIO.getFile(fileType='*.xlsx')
-        if filePath is None:
-            return
-        for p in self.probeDataObjs:
-            p.readExcelFile(fileName=filePath)
-        
-        
-    def checkUnitLabels(self):
-        isLabeled = []
-        for p in self.probeDataObjs:
-            isLabeled.append(all([label in list(u.keys()) for u in p.units.values() for label in ('label','CCFCoords')]))
-        return isLabeled
+    def getUnitLabels(self,probeDataObj):
+        if self.excelFile is None:
+            filePath = fileIO.getFile(caption='Choose excel file with unit labels',fileType='*.xlsx')
+            if filePath=='':
+                return
+            self.excelFile = filePath
+        probeDataObj.readExcelFile(fileName=self.excelFile)
     
     
-    def getData(self, unitLabel=['on','off','on off','supp','noRF'], tag='', replace=False):
-        
-        if unitLabel is not None and not all(self.checkUnitLabels()):
-            raise ValueError('Not all units are labeled')
+    def getData(self):
+        if self.experimentFiles is None:
+            self.getExperimentFiles()
             
         # dataFrame rows
-        rowNames = ('experimentDate','animalID','unitID','unitLabel')
+        rowNames = ('experimentDate','animalID','unitID','unitLabel','ccfX','ccfY','ccfZ')
         experimentDate = []
         animalID = []
         unitID = []
-        unitLbl = []
+        unitLabel = []
+        ccfX = []
+        ccfY = []
+        ccfZ = []
         
         # dataFrame columns
-        columnNames = ('paramType','paramName')
-        paramType = ['probe','probe']
-        paramName = ['ypos','CCFCoords']
+        columnNames = ('runState','paramType','paramName')
+        runState = []
+        paramType = []
+        paramName = []
         
-        # data: dictionary corresponding to columns with len(units) lists of values
-        data = {'probe':{'ypos':[],'CCFCoords':[]}}
-        protocolList = ('sparseNoise','gratings_stf','gratings_ori','checkerboard')
-        for protocol in protocolList:
-            data[protocol] = {}
-        for p in self.probeDataObjs:
+        # data is dictionary of paramter type (protocol) dictionaries that are converted to dataframe
+        # each parameter type dictionary has keys corresponding to parameters
+        # the value for each parameter is a len(units) list
+        protocols = ('sparseNoise','gratings','gratings_ori','checkerboard')
+        data = {runLabel: {protocol: {} for protocol in protocols} for runLabel in ('stat','run')}
+        for exp in self.experimentFiles:
+            p = self.getProbeDataObj(exp)
+            self.getUnitLabels(p)            
             expDate,anmID = p.getExperimentInfo()
-            units = p.units.keys() if unitLabel is None else p.getUnitsByLabel('label',unitLabel)
+            units = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
             units,ypos = p.getOrderedUnits(units)
-            for u,pos in zip(units,ypos):
+            for u in units:
                 experimentDate.append(expDate)
                 animalID.append(anmID)
                 unitID.append(u)
-                unitLbl.append(p.units[u]['label'])
-                data['probe']['ypos'].append(pos)
-                data['probe']['CCFCoords'].append(p.units[u]['CCFCoords'])
-                for protocol in protocolList:
-                    protocolName = 'gratings' if protocol=='gratings_stf' else protocol
-                    protocolInd = p.getProtocolIndex(protocolName)
-                    if protocolInd is None:
-                        for pname in data[protocol]:
-                            data[protocol][pname].append(np.nan)
-                    else:
-                        if replace or protocol+tag not in p.units[u]:
-                            if protocol=='sparseNoise':
-                                p.findRF(u,saveTag=tag,plot=False)
-                            elif protocol=='gratings_stf':
-                                p.analyzeGratings(u,saveTag=tag,plot=False)
-                            elif protocol=='gratings_ori':
-                                p.analyzeGratings(u,protocolType='ori',saveTag=tag,plot=False)
-                            elif protocol=='checkerboard':
-                                p.analyzeCheckerboard(u,saveTag=tag,plot=False)
-                        for param,val in p.units[u][protocol+tag].items():
-                            if param not in data[protocol]:
-                                paramType.append(protocol)
-                                paramName.append(param)
-                                data[protocol][param] = [np.nan for _ in range(len(unitID)-1)]
-                            self.d = data
-                            self.param = param
-                            self.paramName = paramName
-                            self.prot = protocol
-                            data[protocol][param].append(val)
-            
-        rows = pd.MultiIndex.from_arrays([experimentDate,animalID,unitID,unitLbl],names=rowNames)
-        cols = pd.MultiIndex.from_arrays([paramType,paramName],names=columnNames)
+                unitLabel.append(p.units[u]['label'])
+                for i,c in enumerate((ccfX,ccfY,ccfZ)):
+                    c.append(p.units[u]['CCFCoords'][i])
+                for runLabel in ('stat','run'):
+                    for protocol in protocols:
+                        tag = 'gratings_stf' if protocol=='gratings' else protocol
+                        tag += '_'+runLabel
+                        if tag not in p.units[u]:
+                            for prm in data[runLabel][protocol]:
+                                data[runLabel][protocol][prm].append(np.nan)
+                        else:
+                            for prm,val in p.units[u][tag].items():
+                                if 'sdf' not in prm:
+                                    if prm not in data[runLabel][protocol]:
+                                        runState.append(runLabel)
+                                        paramType.append(protocol)
+                                        paramName.append(prm)
+                                        data[runLabel][protocol][prm] = [np.nan for _ in range(len(unitID)-1)]
+                                    data[runLabel][protocol][prm].append(val)
+        
+        # build dataframe
+        rows = pd.MultiIndex.from_arrays([experimentDate,animalID,unitID,unitLabel,ccfX,ccfY,ccfZ],names=rowNames)
+        cols = pd.MultiIndex.from_arrays([paramType,paramName,runState],names=columnNames)
         self.data = pd.DataFrame(index=rows,columns=cols)
-        for ptype in data:
-            for pname in data[ptype]:
-                self.data[ptype,pname] = data[ptype][pname]
+        for runLabel in data:
+            for prmType in data[runLabel]:
+                for prmName in data[runLabel][prmType]:
+                    self.data[runLabel,prmType,prmName] = data[runLabel][prmType][prmName]
     
     
     def loadData(self, filePath=None):
         filePath = fileIO.getFile(fileType='*.hdf5')
-        if filePath is None:
+        if filePath=='':
             return
         self.data = pd.read_hdf(filePath,'table')
     
     
     def saveData(self, filePath=None):
         filePath = fileIO.saveFile(fileType='*.hdf5')
-        if filePath is None:
+        if filePath=='':
             return
         self.data.to_hdf(filePath,'table')
     
                 
     def analyzeRF(self):
         
-        isOn = self.data.index.get_level_values(3)=='on'
-        isOff = self.data.index.get_level_values(3)=='off'  
+        isOnOff = self.data.index.get_level_values('unitLabel')=='on off'
+        isOn = self.data.index.get_level_values('unitLabel')=='on'
+        isOff = self.data.index.get_level_values('unitLabel')=='off'  
+        noRF = np.logical_not(isOnOff | isOn | isOff)        
         
-        probePos = self.data.probe.ypos
+        ccfY = self.data.index.get_level_values('ccfY')
         
-        onFit = np.stack(self.data.sparseNoise.onFit)
-        offFit = np.stack(self.data.sparseNoise.offFit)
-        onFit[isOff,:] = np.nan
-        offFit[isOn,:] = np.nan
+        onFit = np.stack(self.data.run.sparseNoise.onFit)
+        offFit = np.stack(self.data.run.sparseNoise.offFit)
+        onFit[isOff | noRF,:] = np.nan
+        offFit[isOn | noRF,:] = np.nan
         
         onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
         onArea[onArea<100] = np.nan
         offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
         
-        respLatency = np.stack(self.data.sparseNoise.respLatency)*1000
-        respLatency[isOff,0] = np.nan
-        respLatency[isOn,1] = np.nan
+        respLatency = np.stack(self.data.run.sparseNoise.respLatency)*1000
+        respLatency[isOff | noRF,0] = np.nan
+        respLatency[isOn | noRF,1] = np.nan
         
         ind = self.data.index.get_level_values(1)=='258284'
-        sizeTuningOn = np.stack(self.data.sparseNoise.sizeTuningOn[ind])
-        sizeTuningOff = np.stack(self.data.sparseNoise.sizeTuningOff[ind])
+        sizeTuningOn = np.stack(self.data.run.sparseNoise.sizeTuningOn[ind])
+        sizeTuningOff = np.stack(self.data.run.sparseNoise.sizeTuningOff[ind])
         
         
         for i,clr in zip((0,1),('r','b')):
@@ -213,37 +215,39 @@ class popProbeData():
             ax.set_xlabel('Size (degrees)',fontsize='x-large')
             ax.set_ylabel('Best Size (# Units)',fontsize='x-large')
         
-        for i in [0]:
-            plt.figure(facecolor='w')
-            ax = plt.subplot(1,1,1)
-            plt.plot(onFit[:,0],onFit[:,1],'ro',label='On')
-            plt.plot(offFit[:,0],offFit[:,1],'bo',label='Off')
-            ax.spines['right'].set_visible(False)
-            ax.spines['top'].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-            ax.set_xlabel('Azimuth',fontsize='x-large')
-            ax.set_ylabel('Elevation',fontsize='x-large')
-            plt.legend(frameon=False)
-            plt.tight_layout()
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        plt.plot(onFit[:,0],onFit[:,1],'ro',label='On')
+        plt.plot(offFit[:,0],offFit[:,1],'bo',label='Off')
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+        ax.set_xlabel('Azimuth',fontsize='x-large')
+        ax.set_ylabel('Elevation',fontsize='x-large')
+        plt.legend(frameon=False)
+        plt.tight_layout()
         
-        xlim = np.array((-1300,-600))
+        xlim = np.array((-0.1,1.1))
         for exp in ('07282016','07292016','09162016','10192016','10202016'):
             ind = self.data.index.get_level_values(0)==exp
+            probePos = ccfY[ind]
+            probePos -= probePos.min()
+            probePos /= probePos.max()
             for rf,clr in zip((onFit,offFit),('r','b')):
                 for i,azimOrElev in zip((0,1),('Azimuth','Elevation')):
                     plt.figure(facecolor='w')
                     ax = plt.subplot(1,1,1)
                     hasRF = np.logical_not(np.isnan(rf[ind,i]))
-                    linFit = scipy.stats.linregress(probePos[ind][hasRF],rf[ind,i][hasRF])
+                    linFit = scipy.stats.linregress(probePos[hasRF],rf[ind,i][hasRF])
                     ax.plot(xlim,linFit[0]*xlim+linFit[1],color='0.6',linewidth=2)
-                    ax.plot(probePos[ind],rf[ind,i],'o',color=clr,markersize=10)
+                    ax.plot(probePos,rf[ind,i],'o',color=clr,markersize=10)
                     ax.spines['right'].set_visible(False)
                     ax.spines['top'].set_visible(False)
                     ax.tick_params(direction='out',top=False,right=False,labelsize='large')
                     ax.set_xlim(xlim)
                     ylim = (-20,120) if azimOrElev=='Azimuth' else (-40,80)
                     ax.set_ylim(ylim)
-                    ax.set_xlabel('Probe Position (microns)',fontsize='x-large')
+                    ax.set_xlabel('Norm. Probe Position',fontsize='x-large')
                     ax.set_ylabel(azimOrElev+' (degrees)',fontsize='x-large')
                     plt.tight_layout()
     
@@ -286,7 +290,7 @@ class popProbeData():
         LPmask = inLPbinary[yRange[0]:yRange[1], xRange[0]:xRange[1], zRange[0]:zRange[1]].astype(np.float)
         LPmask[LPmask==0] = np.nan
         
-        CCFCoords = self.data.probe.CCFCoords
+        CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)
         
         counts = np.zeros([np.diff(yRange), np.diff(xRange), np.diff(zRange)])
         elev = np.zeros_like(counts)
@@ -350,9 +354,9 @@ class popProbeData():
         sf = np.array([0.01,0.02,0.04,0.08,0.16,0.32])
         tf = np.array([0.5,1,2,4,8])
         
-        hasGratings = self.data.gratings_stf.respMat.notnull()
+        hasGratings = self.data.run.gratings.respMat.notnull()
         
-        stfFit = np.stack(self.data.gratings_stf.stfFitParams[hasGratings])
+        stfFit = np.stack(self.data.run.gratings.stfFitParams[hasGratings])
         
         fig = plt.figure(facecolor='w')
         
@@ -411,12 +415,12 @@ class popProbeData():
         
         ori = np.arange(0,360,45)
         
-        hasGratings = self.data.gratings_ori.respMat.notnull()
+        hasGratings = self.data.run.gratings_ori.respMat.notnull()
         
-        dsi = np.array(self.data.gratings_ori.dsi[hasGratings])
-        prefDir = np.array(self.data.gratings_ori.prefDir[hasGratings])
-        osi = np.array(self.data.gratings_ori.osi[hasGratings])
-        prefOri = np.array(self.data.gratings_ori.prefOri[hasGratings])
+        dsi = np.array(self.data.run.gratings_ori.dsi[hasGratings])
+        prefDir = np.array(self.data.run.gratings_ori.prefDir[hasGratings])
+        osi = np.array(self.data.run.gratings_ori.osi[hasGratings])
+        prefOri = np.array(self.data.run.gratings_ori.prefOri[hasGratings])
             
         for i in [0]:
             fig = plt.figure(facecolor='w')
