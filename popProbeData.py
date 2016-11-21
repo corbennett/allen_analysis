@@ -6,7 +6,7 @@ Created on Tue Oct 25 11:07:49 2016
 """
 
 import clust, fileIO, probeData
-import cv2, math, nrrd
+import cv2, math, nrrd, os, re
 import numpy as np
 import pandas as pd
 import scipy.stats
@@ -28,6 +28,16 @@ class popProbeData():
         if len(filePaths)<1:
             return
         self.experimentFiles = filePaths
+        
+        
+    def getExperimentInfo(self):
+        expDate =[]
+        anmID = []
+        for exp in self.experimentFiles:
+            match = re.search('\d{8,8}_\d{6,6}',os.path.basename(exp))
+            expDate.append(match.group()[:8])
+            anmID.append(match.group()[9:])
+        return expDate,anmID
         
         
     def analyzeExperiments(self):
@@ -53,8 +63,18 @@ class popProbeData():
     
     
     def getData(self):
+        # determine which experiments to append to dataframe
         if self.experimentFiles is None:
             self.getExperimentFiles()
+        if self.data is None:
+            exps = self.experimentFiles
+        else:
+            expDate,anmID = self.getExperimentInfo()
+            dataFrameExps = set(self.data.index.get_level_values('experimentDate'))
+            dataFrameAnms = set(self.data.index.get_level_values('animalID'))
+            exps = [self.experimentFiles[i] for i,(date,anm) in enumerate(zip(expDate,anmID)) if date not in dataFrameExps and anm not in dataFrameAnms]
+            if len(exps)<1:
+                return
             
         # dataFrame rows
         rowNames = ('experimentDate','animalID','unitID','unitLabel','ccfX','ccfY','ccfZ')
@@ -77,7 +97,7 @@ class popProbeData():
         # the value for each parameter is a len(units) list
         protocols = ('sparseNoise','gratings','gratings_ori','checkerboard')
         data = {runLabel: {protocol: {} for protocol in protocols} for runLabel in ('stat','run')}
-        for exp in self.experimentFiles:
+        for exp in exps:
             p = self.getProbeDataObj(exp)
             self.getUnitLabels(p)            
             expDate,anmID = p.getExperimentInfo()
@@ -110,11 +130,13 @@ class popProbeData():
         # build dataframe
         rows = pd.MultiIndex.from_arrays([experimentDate,animalID,unitID,unitLabel,ccfX,ccfY,ccfZ],names=rowNames)
         cols = pd.MultiIndex.from_arrays([paramType,paramName,runState],names=columnNames)
-        self.data = pd.DataFrame(index=rows,columns=cols)
+        dframe = pd.DataFrame(index=rows,columns=cols)
         for runLabel in data:
             for prmType in data[runLabel]:
                 for prmName in data[runLabel][prmType]:
-                    self.data[runLabel,prmType,prmName] = data[runLabel][prmType][prmName]
+                    dframe[runLabel,prmType,prmName] = data[runLabel][prmType][prmName]
+        
+        self.data = dframe if self.data is None else pd.concat((self.data,dframe))
     
     
     def loadData(self, filePath=None):

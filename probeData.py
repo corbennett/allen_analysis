@@ -2141,7 +2141,7 @@ class probeData():
         
         for param in ['trialNumFrames', 'boxDuration', 'stimTime', 'stimDur']:
             if param in v:
-                if isinstance(v[param], int):
+                if isinstance(v[param], int) or issubclass(type(v[param]),np.integer):
                     trialDuration = v[param]
                 else:
                     trialDuration = v[param][:len(trialStarts)].astype(np.int)
