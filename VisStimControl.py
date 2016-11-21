@@ -167,8 +167,8 @@ class VisStimControl():
             self.laserPreFrames = 0
             self.laserPostFrames = 0
         elif self.laser=='Blue':
-            if min(self.laserPower<0) or max(self.laserPower)>1:
-                raise ValueError('blue laser power must be 0 to 1 V')
+            if min(self.laserPower)<0 or max(self.laserPower)>1.5:
+                raise ValueError('blue laser power must be 0 to 1.5 V')
             self._laserPort = serial.Serial()
             self._laserPort.port = 'COM4'
             self._laserPort.baudrate = 115200
@@ -179,7 +179,7 @@ class VisStimControl():
             self._laserPort.write('em\r sdmes 0\r sames 1\r') # analog modulation mode
             self.setLaserOff()
         elif self.laser=='Orange':
-            if min(self.laserPower<0) or max(self.laserPower)>100:
+            if min(self.laserPower)<0 or max(self.laserPower)>100:
                 raise ValueError('orange laser power must be 0 to 100 mW')
             self._laserPort = serial.Serial()
             self._laserPort.port = 'COM5'

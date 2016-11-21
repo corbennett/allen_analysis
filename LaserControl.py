@@ -97,8 +97,9 @@ class LaserControlObj():
         self.powerControl = QtGui.QDoubleSpinBox()
         self.powerControl.setPrefix('Power:  ')
         self.powerControl.setSuffix(' mW')
+        self.powerControl.setDecimals(1)
         self.powerControl.setRange(0,100)
-        self.powerControl.setSingleStep(0.1)
+        self.powerControl.setSingleStep(0.5)
         self.powerControl.setValue(100)
         self.powerControl.valueChanged.connect(self.powerControlChanged)
         
@@ -116,8 +117,9 @@ class LaserControlObj():
         
         self.pulseDurControl = QtGui.QDoubleSpinBox()
         self.pulseDurControl.setPrefix('Pulse Duration:  ')
-        self.pulseDurControl.setSuffix(' ms')
-        self.pulseDurControl.setRange(0.1,30e3)
+        self.pulseDurControl.setSuffix(' s')
+        self.pulseDurControl.setDecimals(3)
+        self.pulseDurControl.setRange(0.001,60)
         self.pulseDurControl.setSingleStep(0.1)
         self.pulseDurControl.setValue(1)
         self.pulseDurControl.valueChanged.connect(self.pulseDurChanged)
@@ -125,10 +127,11 @@ class LaserControlObj():
         
         self.pulseIntervalControl = QtGui.QDoubleSpinBox()
         self.pulseIntervalControl.setPrefix('Pulse Interval:  ')
-        self.pulseIntervalControl.setSuffix(' ms')
-        self.pulseIntervalControl.setRange(0.1,30e3)
+        self.pulseIntervalControl.setSuffix(' s')
+        self.pulseDurControl.setDecimals(3)
+        self.pulseIntervalControl.setRange(0.001,60)
         self.pulseIntervalControl.setSingleStep(0.1)
-        self.pulseIntervalControl.setValue(1000)
+        self.pulseIntervalControl.setValue(1)
         self.pulseIntervalControl.valueChanged.connect(self.pulseIntChanged)
         self.pulseIntervalControl.setEnabled(False)
         
@@ -155,8 +158,9 @@ class LaserControlObj():
             self.pulseDurControl.setEnabled(False)
             if self.shutterControl=='analog':
                 self.powerControl.setSuffix(' mW')
+                self.powerControl.setDecimals(1)
                 self.powerControl.setRange(0,100)
-                self.powerControl.setSingleStep(0.1)
+                self.powerControl.setSingleStep(0.5)
                 self.powerControl.setValue(100)
                 self.serialPort.write('cp\r') # constant power mode
                 self.serialPort.write('p 0\r')
@@ -166,8 +170,9 @@ class LaserControlObj():
             self.pulseDurControl.setEnabled(True)
             if self.shutterControl=='analog':
                 self.powerControl.setSuffix(' V')
+                self.powerControl.setDecimals(2)
                 self.powerControl.setRange(0,1.5)
-                self.powerControl.setSingleStep(0.01)
+                self.powerControl.setSingleStep(0.05)
                 self.powerControl.setValue(1)
                 self.serialPort.write('em\r sdmes 0\r sames 1\r') # analog modulation mode
     
@@ -192,13 +197,13 @@ class LaserControlObj():
                 if self.shutterControl=='digital':
                     for i in range(self.pulseNumControl.value()):
                         if i>0:
-                            time.sleep(self.pulseIntervalControl.value()/1e3)
+                            time.sleep(self.pulseIntervalControl.value())
                         self.nidaqDigOut.WriteBit(self.nidaqDigOutCh,0)
-                        time.sleep(self.pulseDurControl.value()/1e3)
+                        time.sleep(self.pulseDurControl.value())
                         self.nidaqDigOut.WriteBit(self.nidaqDigOutCh,1)
                 else:
-                    pulseSamples = round(self.nidaqAnalogOut.sampRate*self.pulseDurControl.value()/1e3)
-                    intervalSamples = round(self.nidaqAnalogOut.sampRate*self.pulseIntervalControl.value()/1e3)
+                    pulseSamples = round(self.nidaqAnalogOut.sampRate*self.pulseDurControl.value())
+                    intervalSamples = round(self.nidaqAnalogOut.sampRate*self.pulseIntervalControl.value())
                     pulseTrain = np.zeros((self.pulseNumControl.value(),pulseSamples+intervalSamples))
                     pulseTrain[:,:pulseSamples] = self.powerControl.value()
                     self.nidaqAnalogOut.Write(pulseTrain.ravel()[:-intervalSamples+1])

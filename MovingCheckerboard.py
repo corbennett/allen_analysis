@@ -56,8 +56,8 @@ class MovingCheckerboard(VisStimControl):
         checkerboardStim = ImageStimNumpyuByte(self._win,image=checkerboardImage,size=self.imageSize,pos=self.imagePosition)
         
         # get trialTypes
-        trialTypes = list(itertools.product(self.bckgndSpeed,[dir for dir in self.bckgndDir if dir in (0,180)],self.patchSize,self.patchSpeed,[dir for dir in self.patchDir if dir in (0,180)],self.patchElevation))
-        trialTypes.extend(itertools.product(self.bckgndSpeed,[dir for dir in self.bckgndDir if dir in (90,270)],self.patchSize,self.patchSpeed,[dir for dir in self.patchDir if dir in (90,270)],self.patchAzimuth))
+        trialTypes = list(itertools.product(self.bckgndSpeed,[dir for dir in self.bckgndDir if dir in (0,180)],self.patchSize,self.patchSpeed,[dir for dir in self.patchDir if dir in (0,180)],self.patchElevation,self.laserPower))
+        trialTypes.extend(itertools.product(self.bckgndSpeed,[dir for dir in self.bckgndDir if dir in (90,270)],self.patchSize,self.patchSpeed,[dir for dir in self.patchDir if dir in (90,270)],self.patchAzimuth,self.laserPower))
         for params in copy.copy(trialTypes):
             # don't need all bckgnd directions for bckgndSpeed=0
             # or all patch sizes, directions, and positions for patchSpeed=0
@@ -82,6 +82,7 @@ class MovingCheckerboard(VisStimControl):
         self.trialPatchSpeed = []
         self.trialPatchDir = []
         self.trialPatchPos = []
+        self.trialLaserPower = []
         while True:
             if trialFrame==trialInterval-1:
                 if trial==len(trialTypes)-1:
@@ -102,6 +103,7 @@ class MovingCheckerboard(VisStimControl):
                 self.trialPatchSpeed.append(trialTypes[trial][3])
                 self.trialPatchDir.append(trialTypes[trial][4])
                 self.trialPatchPos.append(trialTypes[trial][5])
+                self.trialLaserPower.append(trialTypes[trial][6])
                 if self.trialBckgndDir[-1]==0:
                     bckgndOffset = leftOffset
                 elif self.trialBckgndDir[-1]==180:
@@ -141,78 +143,83 @@ class MovingCheckerboard(VisStimControl):
                             self.trialNumFrames.append(round(self.imageSize[1]/bckgndMovPerFrame))
                     else:
                         self.trialNumFrames.append(2*self.frameRate)
-                trialInterval = self.trialNumFrames[-1]+self.getInterTrialInterval()
-            elif trial>-1 and trialFrame<self.trialNumFrames[-1]:
-                if bckgndMovPerFrame>0:
-                    if bckgndOffset==0:
-                        bckgndOffset = self._squareSizePix
-                    bckgndOffset += bckgndMovPerFrame
-                    if bckgndOffset>self._squareSizePix:
-                        newSqOffset = bckgndOffset-self._squareSizePix
-                        bckgndOffset %= self._squareSizePix
-                    else:
-                        newSqOffset = 0
-                    if self.trialBckgndDir[-1]==0:
-                        if self.moveLikeOpticFlow:
-                            self.shiftBckgnd(bckgnd[:,self.imageSize[0]/2+1:],bckgndMovPerFrame,newSqOffset)
-                            self.shiftBckgnd(bckgnd[:,self.imageSize[0]/2::-1],bckgndMovPerFrame,newSqOffset)
+                trialInterval = self.laserPreFrames+self.trialNumFrames[-1]+self.laserPostFrames+self.getInterTrialInterval()
+            elif trial>-1:
+                if trialFrame==0:
+                    self.setLaserOn(self.trialLaserPower[-1])
+                if self.laserPreFrames<=trialFrame<self.laserPreFrames+self.trialNumFrames[-1]:
+                    if bckgndMovPerFrame>0:
+                        if bckgndOffset==0:
+                            bckgndOffset = self._squareSizePix
+                        bckgndOffset += bckgndMovPerFrame
+                        if bckgndOffset>self._squareSizePix:
+                            newSqOffset = bckgndOffset-self._squareSizePix
+                            bckgndOffset %= self._squareSizePix
                         else:
-                            self.shiftBckgnd(bckgnd,bckgndMovPerFrame,newSqOffset)
-                    elif self.trialBckgndDir[-1]==180:
-                        if self.moveLikeOpticFlow:
-                            self.shiftBckgnd(bckgnd[:,-1:self.imageSize[0]/2:-1],bckgndMovPerFrame,newSqOffset)
-                            self.shiftBckgnd(bckgnd[:,:self.imageSize[0]/2+1],bckgndMovPerFrame,newSqOffset)
+                            newSqOffset = 0
+                        if self.trialBckgndDir[-1]==0:
+                            if self.moveLikeOpticFlow:
+                                self.shiftBckgnd(bckgnd[:,self.imageSize[0]/2+1:],bckgndMovPerFrame,newSqOffset)
+                                self.shiftBckgnd(bckgnd[:,self.imageSize[0]/2::-1],bckgndMovPerFrame,newSqOffset)
+                            else:
+                                self.shiftBckgnd(bckgnd,bckgndMovPerFrame,newSqOffset)
+                        elif self.trialBckgndDir[-1]==180:
+                            if self.moveLikeOpticFlow:
+                                self.shiftBckgnd(bckgnd[:,-1:self.imageSize[0]/2:-1],bckgndMovPerFrame,newSqOffset)
+                                self.shiftBckgnd(bckgnd[:,:self.imageSize[0]/2+1],bckgndMovPerFrame,newSqOffset)
+                            else:
+                                self.shiftBckgnd(bckgnd[:,::-1],bckgndMovPerFrame,newSqOffset)
+                        elif self.trialBckgndDir[-1]==90:
+                            self.shiftBckgnd(bckgnd[:,::-1].T,bckgndMovPerFrame,newSqOffset)
                         else:
-                            self.shiftBckgnd(bckgnd[:,::-1],bckgndMovPerFrame,newSqOffset)
-                    elif self.trialBckgndDir[-1]==90:
-                        self.shiftBckgnd(bckgnd[:,::-1].T,bckgndMovPerFrame,newSqOffset)
-                    else:
-                        self.shiftBckgnd(bckgnd.T,bckgndMovPerFrame,newSqOffset)
-                checkerboardImage = np.copy(bckgnd[:self.imageSize[1],:self.imageSize[0]])
-                if patchMovPerFrame>0:
-                    if self.trialPatchDir[-1]==0:
-                        patchPos[0] += patchMovPerFrame
-                    elif self.trialPatchDir[-1]==180:
-                        patchPos[0] -= patchMovPerFrame
-                    elif self.trialPatchDir[-1]==90:
-                        patchPos[1] -= patchMovPerFrame
-                    else:
-                        patchPos[1] += patchMovPerFrame
-                    if patchPos[0]<=self.imageSize[0] and patchPos[1]<=self.imageSize[1]:
-                        patchImagePos = copy.copy(patchPos)
-                        patchImage = patch
-                        if patchPos[0]<self.imageSize[0]/2:
-                            patchImage = patch[:,self.imageSize[0]/2-patchPos[0]:]
-                            patchImagePos[0] = self.imageSize[0]/2
-                        if patchPos[1]<0:
-                            patchImage = patch[-patchPos[1]:,:]
-                            patchImagePos[1] = 0
-                        if patchPos[0]+patch.shape[1]>self.imageSize[0]:
-                            patchImage = patch[:,:self.imageSize[0]-patchPos[0]]                  
-                        if patchPos[1]+patch.shape[0]>self.imageSize[1]:
-                            patchImage = patch[:self.imageSize[1]-patchPos[1],:]
-                        checkerboardImage[patchImagePos[1]:patchImagePos[1]+patchImage.shape[0],patchImagePos[0]:patchImagePos[0]+patchImage.shape[1]] = patchImage
-                if trialFrame==self.trialNumFrames[-1]-1:
-                    if self.trialBckgndDir[-1]==0:
-                        leftOffset = bckgndOffset
-                        rightOffset = self._squareSizePix-bckgndOffset
-                        if self.moveLikeOpticFlow:
-                            rightOffset += centerOffset
-                            if rightOffset>self._squareSizePix:
-                                rightOffset -= self._squareSizePix
-                    elif self.trialBckgndDir[-1]==180:
-                        rightOffset = bckgndOffset
-                        leftOffset = self._squareSizePix-bckgndOffset
-                        if self.moveLikeOpticFlow:
-                            leftOffset -= centerOffset
-                            if leftOffset<0:
-                                leftOffset += self._squareSizePix
-                    elif self.trialBckgndDir[-1]==90:
-                        bottomOffset = bckgndOffset
-                        topOffset = self._squareSizePix-bckgndOffset
-                    else:
-                        topOffset = bckgndOffset
-                        bottomOffset = self._squareSizePix-bckgndOffset
+                            self.shiftBckgnd(bckgnd.T,bckgndMovPerFrame,newSqOffset)
+                    checkerboardImage = np.copy(bckgnd[:self.imageSize[1],:self.imageSize[0]])
+                    if patchMovPerFrame>0:
+                        if self.trialPatchDir[-1]==0:
+                            patchPos[0] += patchMovPerFrame
+                        elif self.trialPatchDir[-1]==180:
+                            patchPos[0] -= patchMovPerFrame
+                        elif self.trialPatchDir[-1]==90:
+                            patchPos[1] -= patchMovPerFrame
+                        else:
+                            patchPos[1] += patchMovPerFrame
+                        if patchPos[0]<=self.imageSize[0] and patchPos[1]<=self.imageSize[1]:
+                            patchImagePos = copy.copy(patchPos)
+                            patchImage = patch
+                            if patchPos[0]<self.imageSize[0]/2:
+                                patchImage = patch[:,self.imageSize[0]/2-patchPos[0]:]
+                                patchImagePos[0] = self.imageSize[0]/2
+                            if patchPos[1]<0:
+                                patchImage = patch[-patchPos[1]:,:]
+                                patchImagePos[1] = 0
+                            if patchPos[0]+patch.shape[1]>self.imageSize[0]:
+                                patchImage = patch[:,:self.imageSize[0]-patchPos[0]]                  
+                            if patchPos[1]+patch.shape[0]>self.imageSize[1]:
+                                patchImage = patch[:self.imageSize[1]-patchPos[1],:]
+                            checkerboardImage[patchImagePos[1]:patchImagePos[1]+patchImage.shape[0],patchImagePos[0]:patchImagePos[0]+patchImage.shape[1]] = patchImage
+                    if trialFrame==self.trialNumFrames[-1]-1:
+                        if self.trialBckgndDir[-1]==0:
+                            leftOffset = bckgndOffset
+                            rightOffset = self._squareSizePix-bckgndOffset
+                            if self.moveLikeOpticFlow:
+                                rightOffset += centerOffset
+                                if rightOffset>self._squareSizePix:
+                                    rightOffset -= self._squareSizePix
+                        elif self.trialBckgndDir[-1]==180:
+                            rightOffset = bckgndOffset
+                            leftOffset = self._squareSizePix-bckgndOffset
+                            if self.moveLikeOpticFlow:
+                                leftOffset -= centerOffset
+                                if leftOffset<0:
+                                    leftOffset += self._squareSizePix
+                        elif self.trialBckgndDir[-1]==90:
+                            bottomOffset = bckgndOffset
+                            topOffset = self._squareSizePix-bckgndOffset
+                        else:
+                            topOffset = bckgndOffset
+                            bottomOffset = self._squareSizePix-bckgndOffset
+                if trialFrame==self.laserPreFrames+self.trialNumFrames[-1]+self.laserPostFrames:
+                    self.setLaserOff()
             checkerboardStim.setReplaceImage(checkerboardImage)
             checkerboardStim.draw()
             self.visStimFlip()
