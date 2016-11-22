@@ -10,33 +10,33 @@ import numpy as np
 from PyQt4 import QtGui
 
 
-def getFile(rootDir='',fileType=''):
+def getFile(caption='Choose File',rootDir='',fileType=''):
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return str(QtGui.QFileDialog.getOpenFileName(None,'Choose File',rootDir,fileType))
+    return str(QtGui.QFileDialog.getOpenFileName(None,caption,rootDir,fileType))
 
 
-def getFiles(rootDir='',fileType=''):
+def getFiles(caption='Choose File',rootDir='',fileType=''):
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    filePaths = QtGui.QFileDialog.getOpenFileNames(None,'Choose File',rootDir,fileType)
+    filePaths = QtGui.QFileDialog.getOpenFileNames(None,caption,rootDir,fileType)
     return [str(f) for f in filePaths]
 
     
-def getDir(rootDir=''):
+def getDir(caption='Choose Directory',rootDir=''):
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return str(QtGui.QFileDialog.getExistingDirectory(None,'Choose Directory',rootDir))
+    return str(QtGui.QFileDialog.getExistingDirectory(None,caption,rootDir))
     
 
-def saveFile(rootDir='',fileType=''):
+def saveFile(caption='Save As',rootDir='',fileType=''):
     app = QtGui.QApplication.instance()
     if app is None:
         app = QtGui.QApplication([])
-    return str(QtGui.QFileDialog.getSaveFileName(None,'Save As',rootDir,fileType))
+    return str(QtGui.QFileDialog.getSaveFileName(None,caption,rootDir,fileType))
 
 
 def objToHDF5(obj, filePath=None, fileOut=None, saveDict=None, grp=None):
@@ -60,12 +60,15 @@ def objToHDF5(obj, filePath=None, fileOut=None, saveDict=None, grp=None):
             objToHDF5(obj, fileOut=fileOut, saveDict=saveDict[key], grp=grp.create_group(key))
         else:
             try:
-                grp[key] = saveDict[key]
+                grp.create_dataset(key,data=saveDict[key],compression='gzip',compression_opts=1)
             except:
                 try:
-                    grp.create_dataset(key,data=np.array(saveDict[key],dtype=object),dtype=h5py.special_dtype(vlen=str))
+                    grp[key] = saveDict[key]
                 except:
-                    print('Could not save: ', key)
+                    try:
+                        grp.create_dataset(key,data=np.array(saveDict[key],dtype=object),dtype=h5py.special_dtype(vlen=str))
+                    except:
+                        print('Could not save: ', key)
                 
                 
 def hdf5ToObj(obj, filePath=None, grp=None, loadDict=None):
