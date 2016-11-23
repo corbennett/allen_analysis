@@ -29,6 +29,7 @@ class VisStimControl():
         self.rewardDur = 0.02 # duration in seconds of analog output pulse controlling reward size
         self.laser = None # 'Blue', 'Orange', or None
         self.laserPower = [0] # until calibrated: 0-1 V for blue laser or 0-100 mW for orange laser
+        self.laserRandom = False
         self.laserPreFrames = 30
         self.laserPostFrames = 30
         if self.rig=='dome':
@@ -196,6 +197,12 @@ class VisStimControl():
         if self.laser is not None:
             self.setLaserOff()
             self._laserPort.close()
+            
+    def setTrialLaserPower(self,trialTypes):
+        if len(self.laserPower)>1 and not self.laserRandom:
+            for i,pwr in enumerate(self.laserPower):
+                for params in trialTypes[i::len(self.laserPower)]:
+                    params[-1] = pwr
             
     def setLaserOn(self,power):
         if power>0:

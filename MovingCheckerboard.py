@@ -56,8 +56,9 @@ class MovingCheckerboard(VisStimControl):
         checkerboardStim = ImageStimNumpyuByte(self._win,image=checkerboardImage,size=self.imageSize,pos=self.imagePosition)
         
         # get trialTypes
-        trialTypes = list(itertools.product(self.bckgndSpeed,[dir for dir in self.bckgndDir if dir in (0,180)],self.patchSize,self.patchSpeed,[dir for dir in self.patchDir if dir in (0,180)],self.patchElevation,self.laserPower))
-        trialTypes.extend(itertools.product(self.bckgndSpeed,[dir for dir in self.bckgndDir if dir in (90,270)],self.patchSize,self.patchSpeed,[dir for dir in self.patchDir if dir in (90,270)],self.patchAzimuth,self.laserPower))
+        laserPwr = self.laserPower if self.laserRandom else [self.laserPower[0]]
+        trialTypes = list(itertools.product(self.bckgndSpeed,[dir for dir in self.bckgndDir if dir in (0,180)],self.patchSize,self.patchSpeed,[dir for dir in self.patchDir if dir in (0,180)],self.patchElevation,laserPwr))
+        trialTypes.extend(itertools.product(self.bckgndSpeed,[dir for dir in self.bckgndDir if dir in (90,270)],self.patchSize,self.patchSpeed,[dir for dir in self.patchDir if dir in (90,270)],self.patchAzimuth,laserPwr))
         for params in copy.copy(trialTypes):
             # don't need all bckgnd directions for bckgndSpeed=0
             # or all patch sizes, directions, and positions for patchSpeed=0
@@ -65,8 +66,13 @@ class MovingCheckerboard(VisStimControl):
             if ((params[0]==0 and params[1]!=self.bckgndDir[0])
                or (params[3]==0 and (params[2]!=self.patchSize[0] or params[3]!=self.patchSpeed[0] or params[4]!=self.patchDir[0] or (params[5]!=self.patchElevation[0] if params[4] in (0,180) else params[5]!=self.patchAzimuth[0])))
                or (params[0]>0 and params[3]>0 and params[0]==params[3] and params[1]==params[4])):
-                   if params in trialTypes: trialTypes.remove(params)
-        random.shuffle(trialTypes) 
+                   if params in trialTypes:
+                       trialTypes.remove(params)
+        if len(self.laserPower)>1 and not self.laserRandom:
+            trialTypes *= len(self.laserPower)
+            trialTypes = [list(params) for params in trialTypes]
+        random.shuffle(trialTypes)
+        self.setTrialLaserPower(trialTypes)
         
         # run
         frame = 0
@@ -93,6 +99,7 @@ class MovingCheckerboard(VisStimControl):
                     else:
                         trial = 0
                         random.shuffle(trialTypes)
+                        self.setTrialLaserPower(trialTypes)
                 else:
                     trial += 1
                 trialFrame = -1

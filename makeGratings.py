@@ -109,7 +109,8 @@ class makeGratings(VisStimControl):
         
     def set_params(self):
         self.stimulusParams = ['ori', 'tf', 'sf', 'contrast', 'phase', 'size', 'laserPower'] #the first six of these should be the grating parameters
-        self._parameterCombos = list(itertools.product(self.ori, self.tf, [sf/self.pixelsPerDeg for sf in self.sf], self.contrast, self.phase, [size * self.pixelsPerDeg for size in self.size], self.laserPower))
+        laserPwr = self.laserPower if self.laserRandom else [self.laserPower[0]]
+        self._parameterCombos = list(itertools.product(self.ori, self.tf, [sf/self.pixelsPerDeg for sf in self.sf], self.contrast, self.phase, [size * self.pixelsPerDeg for size in self.size], laserPwr))
         if self.interleavedGrayScreen:
             grayCombo = list(self._parameterCombos[-1])
             contrastIndex = [index for index,p in enumerate(self.stimulusParams) if p=='contrast'][0]
@@ -117,6 +118,11 @@ class makeGratings(VisStimControl):
             self._parameterCombos.append(tuple(grayCombo))
         if self.shuffle:
             random.shuffle(self._parameterCombos)
+        if len(self.laserPower)>1 and not self.laserRandom:
+            self._parameterCombos *= len(self.laserPower)
+            self._parameterCombos = [list(params) for params in self._parameterCombos]
+        self.setTrialLaserPower(self._parameterCombos)
+        print self._parameterCombos
         
     def set_grating(self, nsweeps):
         paramVector = self._parameterCombos[nsweeps]
