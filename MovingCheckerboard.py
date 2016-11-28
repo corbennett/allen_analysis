@@ -69,10 +69,13 @@ class MovingCheckerboard(VisStimControl):
                    if params in trialTypes:
                        trialTypes.remove(params)
         if len(self.laserPower)>1 and not self.laserRandom:
-            trialTypes *= len(self.laserPower)
-            trialTypes = [list(params) for params in trialTypes]
-        random.shuffle(trialTypes)
-        self.setTrialLaserPower(trialTypes)
+            trialTypes = [trialTypes]
+            for pwr in self.laserPower[1:]:
+                trials = [list(params) for params in trialTypes[0]]
+                for params in trials:
+                    params[-1] = pwr
+                trialTypes.append(trials)
+        shuffledTrials = self.setTrialLaserPower(trialTypes)
         
         # run
         frame = 0
@@ -91,26 +94,25 @@ class MovingCheckerboard(VisStimControl):
         self.trialLaserPower = []
         while True:
             if trialFrame==trialInterval-1:
-                if trial==len(trialTypes)-1:
+                if trial==len(shuffledTrials)-1:
                     loop += 1
                     print('loops completed = '+str(loop))
                     if loop==self.numLoops:
                         break
                     else:
                         trial = 0
-                        random.shuffle(trialTypes)
                         self.setTrialLaserPower(trialTypes)
                 else:
                     trial += 1
                 trialFrame = -1
                 self.trialStartFrame.append(frame+1)
-                self.trialBckgndSpeed.append(trialTypes[trial][0])
-                self.trialBckgndDir.append(trialTypes[trial][1])
-                self.trialPatchSize.append(trialTypes[trial][2])
-                self.trialPatchSpeed.append(trialTypes[trial][3])
-                self.trialPatchDir.append(trialTypes[trial][4])
-                self.trialPatchPos.append(trialTypes[trial][5])
-                self.trialLaserPower.append(trialTypes[trial][6])
+                self.trialBckgndSpeed.append(shuffledTrials[trial][0])
+                self.trialBckgndDir.append(shuffledTrials[trial][1])
+                self.trialPatchSize.append(shuffledTrials[trial][2])
+                self.trialPatchSpeed.append(shuffledTrials[trial][3])
+                self.trialPatchDir.append(shuffledTrials[trial][4])
+                self.trialPatchPos.append(shuffledTrials[trial][5])
+                self.trialLaserPower.append(shuffledTrials[trial][6])
                 if self.trialBckgndDir[-1]==0:
                     bckgndOffset = leftOffset
                 elif self.trialBckgndDir[-1]==180:

@@ -200,9 +200,16 @@ class VisStimControl():
             
     def setTrialLaserPower(self,trialTypes):
         if len(self.laserPower)>1 and not self.laserRandom:
-            for i,pwr in enumerate(self.laserPower):
-                for params in trialTypes[i::len(self.laserPower)]:
-                    params[-1] = pwr
+            for i,_ in enumerate(trialTypes):
+                random.shuffle(trialTypes[i])
+            shuffledTrials = []
+            for trial,_ in enumerate(trialTypes[0]):
+                for pwr,_ in enumerate(self.laserPower):
+                    shuffledTrials.append(trialTypes[pwr][trial])
+            return shuffledTrials
+        else:
+            random.shuffle(trialTypes)
+            return trialTypes
             
     def setLaserOn(self,power):
         if power>0:
