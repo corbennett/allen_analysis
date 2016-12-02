@@ -406,13 +406,14 @@ class probeData():
                 
         colorHistory = self.visstimData[protocol]['boxColorHistory'][trials, 0]
         boxSizeHistory = self.visstimData[protocol]['boxSizeHistory'][trials]/pixPerDeg
-        boxSize = self.visstimData[protocol]['boxSize']
+        boxSize = np.unique(boxSizeHistory)
+
         sizeTuningOn = np.full((len(units),boxSize.size),np.nan)
         sizeTuningOff = np.copy(sizeTuningOn)
-        sizeTuningSize = boxSize
-        sizeTuningLabel = boxSize
+        sizeTuningSize = boxSize.copy()
+        sizeTuningLabel = boxSize.copy()
         if any(boxSize>100):
-            sizeTuningSize[boxSize>100] = boxSize[-2]*2.5
+            sizeTuningSize[boxSize>100] = 50
             sizeTuningLabel = list(sizeTuningLabel)
             sizeTuningLabel[-1] = 'full'
         boxSize = boxSize[boxSize<100]
@@ -437,7 +438,9 @@ class probeData():
             gs = gridspec.GridSpec(3*len(units), 6*len(boxSize))
         
         for uindex, unit in enumerate(units):
-            spikes = self.units[unit]['times'][str(protocol)]
+            spikes = self.units[unit]['times'][protocol]
+            if spikes.size<1:
+                continue
             gridOnSpikes = np.full((len(boxSize),ypos.size,xpos.size),np.nan)
             gridOffSpikes = np.copy(gridOnSpikes)
             sdfOn = np.zeros((len(boxSize),ypos.size,xpos.size,int(round(sdfSamples/self.sampleRate/sdfSampInt))))
@@ -608,6 +611,7 @@ class probeData():
                                                          'trials': trials}
             
             if plot:
+                # sdfs and rf map
                 maxVal = max(np.nanmax(gridOnSpikes), np.nanmax(gridOffSpikes))
                 minVal = min(np.nanmin(gridOnSpikes), np.nanmin(gridOffSpikes))
                 sdfMax = max(np.nanmax(sdfOn),np.nanmax(sdfOff))
@@ -691,7 +695,8 @@ class probeData():
                     ax.set_ylabel('Spikes/s',fontsize='small')
                     
         if plot and len(units)>1:
-            
+            # population plots
+            # size tuning
             if len(boxSize)>1:
                 plt.figure(facecolor='w')
                 gspec = gridspec.GridSpec(2,2)
@@ -711,10 +716,10 @@ class probeData():
                     ax.set_yticks([0,0.5,1])
                     ax.set_xticklabels([])
                     if ind==0:
-                        ax.set_ylabel('Norm Spikes/s',fontsize='small')
+                        ax.set_ylabel('Norm Spikes/s',fontsize='medium')
                     else:
                         ax.set_yticklabels([])
-                    ax.set_title(onOrOff,fontsize='medium')
+                    ax.set_title(onOrOff,fontsize='large')
                     
                     ax = plt.subplot(gspec[1,ind])
                     sizeRespNorm[sizeRespNorm<1] = 0
@@ -726,34 +731,32 @@ class probeData():
                     ax.set_xlim([0,boxSize[-1]+boxSize[0]])
                     ax.set_xticks(sizeTuningSize)
                     ax.set_xticklabels(sizeTuningLabel)
-                    ax.set_xlabel('Size',fontsize='small')
+                    ax.set_xlabel('Size',fontsize='medium')
                     if ind==0:
-                        ax.set_ylabel('Best Size Count',fontsize='small')
+                        ax.set_ylabel('Best Size Count',fontsize='medium')
             
-            plt.figure(facecolor='w')
-            gspec = gridspec.GridSpec(3,2)
-            for i,(ydata,ylabel) in enumerate(zip((respLatency,respNormArea,respHalfWidth),('Latency','Resp Area','Resp Half-width'))):
+            # onVsOff, respLatency, respNormArea, respHalfWidth, and rfArea
+            rfArea = np.full((len(units),2),np.nan)
+            rfArea[:,0] = np.pi*np.prod(onFit[:,2:4],axis=1)
+            rfArea[:,1] = np.pi*np.prod(offFit[:,2:4],axis=1)
+            for i,(data,bins,label) in enumerate(zip((respLatency,respNormArea,rfArea),
+                                                (np.arange(0,0.275,0.025),np.arange(0,1.1,0.1),np.arange(0,4400,400)),
+                                                ('Resp Latency','Resp Norm Area','RF Area'))):
+                plt.figure(facecolor='w')
                 for j,title in enumerate(('On','Off')):                
-                    ax = plt.subplot(gspec[i,j])
-                    ax.plot(onVsOff,ydata[:,j],'ko',markerfacecolor='none')
+                    ax = plt.subplot(1,2,j+1)
+                    ax.hist(data[:,j][~np.isnan(data[:,j])],bins)
+                    ax.set_xlim(bins[[0,-1]])
                     ax.spines['right'].set_visible(False)
                     ax.spines['top'].set_visible(False)
                     ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
-                    ax.set_xlim([-1,1])
-                    ax.set_ylim([0,1.1*np.nanmax(ydata)])
-                    ax.set_xticks([-1,0,1])
-                    if i==0:
-                        ax.set_title(title,fontsize='small')
-                    if i==2:
-                        ax.set_xlabel('On vs Off Index',fontsize='small')
-                    else:
-                        ax.set_xticklabels([])
+                    ax.set_xlabel(label,fontsize='medium')
+                    ax.set_title(title,fontsize='large')
                     if j==0:
-                        ax.set_ylabel(ylabel,fontsize='small')
-                    else:
-                        ax.set_yticklabels([])
+                        ax.set_ylabel('# Units',fontsize='medium')
             
             if fit:
+                # RF centers
                 plt.figure(facecolor='w')
                 ax = plt.subplot(1,1,1)
                 ax.plot(gridExtent[[0,2,2,0,0]],gridExtent[[1,1,3,3,1]],color='0.6')
@@ -761,12 +764,12 @@ class probeData():
                 ax.plot(offFit[:,0],offFit[:,1],'o',markeredgecolor='b',markerfacecolor='none')
                 ax.spines['right'].set_visible(False)
                 ax.spines['top'].set_visible(False)
-                ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+                ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
                 ax.set_xlim(gridExtent[[0,2]]+[-maxOffGrid,maxOffGrid])
                 ax.set_ylim(gridExtent[[1,3]]+[-maxOffGrid,maxOffGrid])
-                ax.set_xlabel('Azimuth',fontsize='small')
-                ax.set_ylabel('Elevation',fontsize='small')
-                ax.set_title('RF center (red = on, blue = off)',fontsize='small')
+                ax.set_xlabel('Azimuth',fontsize='medium')
+                ax.set_ylabel('Elevation',fontsize='medium')
+                ax.set_title('RF center (red = on, blue = off)',fontsize='large')
                 
                 # comparison of RF and probe position
                 plt.figure(facecolor='w')
@@ -782,14 +785,14 @@ class probeData():
                             linFit = scipy.stats.linregress(unitsYPos[hasRF],rfCenters[hasRF,i])
                             ax.plot(xlim,linFit[0]*xlim+linFit[1],color='0.6')
                             ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(linFit[2]**2,2))+', p = '+str(round(linFit[3],2)),
-                                    transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
+                                    transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',color='0.6')
                         ax.plot(unitsYPos,rfCenters[:,i],'ko',markerfacecolor='none')
                         ax.spines['right'].set_visible(False)
                         ax.spines['top'].set_visible(False)
-                        ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+                        ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
                         ax.set_xlim(xlim)
                         if i==0:
-                            ax.set_title(onOrOff,fontsize='medium')
+                            ax.set_title(onOrOff,fontsize='large')
                             ax.set_ylim(gridExtent[[0,2]]+[-maxOffGrid,maxOffGrid])
                             ax.set_xticklabels([])
                         else:
@@ -799,44 +802,7 @@ class probeData():
                             ax.set_ylabel(azimOrElev,fontsize='medium')
                         else:
                             ax.set_yticklabels([])
-                            
-                # comparision of RF position and area
-                plt.figure(facecolor='w')
-                gspec = gridspec.GridSpec(2,2)
-                rfArea = np.full((len(units),2),np.nan)
-                rfArea[:,0] = np.pi*np.prod(onFit[:,2:4],axis=1)
-                rfArea[:,1] = np.pi*np.prod(offFit[:,2:4],axis=1)
-                for i,(rfCenters,onOrOff) in enumerate(zip((onFit,offFit),('On','Off'))):
-                    for j,azimOrElev in enumerate(('Azimuth','Elevation')):
-                        ax = plt.subplot(gspec[i,j])
-                        hasRF = np.logical_not(np.isnan(rfCenters[:,j]))
-                        xlim = gridExtent[[0,2]] if j==0 else gridExtent[[1,3]]
-                        xlim += [-maxOffGrid,maxOffGrid]
-                        if np.count_nonzero(hasRF)>1:
-                            # linFit = (slope, intercept, r-value, p-value, stderror)
-                            linFit = scipy.stats.linregress(rfCenters[hasRF,j],rfArea[hasRF,i])
-                            ax.plot(xlim,linFit[0]*xlim+linFit[1],color='0.6')
-                            ax.text(0.5,0.95,'$\mathregular{r^2}$ = '+str(round(linFit[2]**2,2))+', p = '+str(round(linFit[3],2)),
-                                    transform=ax.transAxes,horizontalalignment='center',verticalalignment='bottom',fontsize='xx-small',color='0.6')
-                        ax.plot(rfCenters[:,j],rfArea[:,i],'ko',markerfacecolor='none')
-                        ax.spines['right'].set_visible(False)
-                        ax.spines['top'].set_visible(False)
-                        ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
-                        ax.set_xlim(xlim)
-                        ax.set_ylim([0,np.nanmax(rfArea)*1.1])
-                        if i==0:
-                            ax.set_xticklabels([])
-                        else:
-                            ax.set_xlabel(azimOrElev,fontsize='medium')
-                        if j==0:
-                            ax.set_ylabel(onOrOff+' RF Area',fontsize='medium')
-                        else:
-                            ax.set_yticklabels([])
                 
-                plt.figure()
-                plt.hist(rfArea[:,0], np.arange(300, 2000, 100), 'r')
-                plt.figure()
-                plt.hist(rfArea[:,1], np.arange(300, 2000, 100), 'b')
     
     def analyzeFlash(self, units=None, trials=None, protocol=None, responseLatency=0.25, plot=True, sdfSigma=0.005, useCache=False, saveTag=''):
         units, unitsYPos = self.getOrderedUnits(units) 
@@ -1721,16 +1687,20 @@ class probeData():
         posSaccades = self.behaviorData[protocol]['eyeTracking']['posSaccades']
         allSaccades = np.sort(np.concatenate((negSaccades,posSaccades)))
         
-        # get average saccade
+        # get average saccade and saccade amplitudes
         preFrames = int(preTime*60)
         postFrames = int(postTime*60)
         saccadeTime = np.arange(-preTime,postTime,1/60.0)
-        avgSaccade = np.zeros((2,preFrames+postFrames))
+        avgSaccade = np.full((2,preFrames+postFrames),np.nan)
         for j,saccades in enumerate((negSaccades,posSaccades)):
-            x = np.zeros((saccades.size,preFrames+postFrames))
-            for i,s in enumerate(saccades):
-                x[i] = pupilX[s-preFrames:s+postFrames]
-            avgSaccade[j] = np.nanmean(x,axis=0)
+            if saccades.size>0:
+                x = np.full((saccades.size,preFrames+postFrames),np.nan)
+                for i,s in enumerate(saccades):
+                    if s-preFrames>=0 and s+postFrames<pupilX.size:
+                        x[i] = pupilX[s-preFrames:s+postFrames]
+                avgSaccade[j] = np.nanmean(x,axis=0)
+        negAmp = np.array([np.nanmin(pupilX[s:s+6])-np.nanmedian(pupilX[s-6:s-2]) for s in negSaccades])
+        posAmp = np.array([np.nanmax(pupilX[s:s+6])-np.nanmedian(pupilX[s-6:s-2]) for s in posSaccades])
                 
         # get sdf and latency
         preSamples = int(preTime*self.sampleRate)
@@ -1739,19 +1709,25 @@ class probeData():
         latencyInd = np.zeros((len(units),3),dtype=int)
         latency = np.full(3,np.nan)
         peakRate = latency.copy()
-        spontRateMean = peakRate.copy()
-        spontRateStd = peakRate.copy()
+        spontRateMean = np.full((len(units),3),np.nan)
+        spontRateStd = spontRateMean.copy()
+        preSaccadeSpikeCount = [[[] for i in units] for j in range(3)]
+        postSaccadeSpikeCount = [[[] for i in units] for j in range(3)]
         for i,u in enumerate(units):
             spikes = self.units[str(u)]['times'][protocol]
             for j,saccades in enumerate((negSaccades,posSaccades,allSaccades)):
                 if saccades.size>0:
                     saccadeSamples = self.behaviorData[protocol]['eyeTracking']['samples'][saccades]
                     sdf[i,j],sdfTime = self.getSDF(spikes,saccadeSamples-preSamples,preSamples+postSamples,sigma=sdfSigma,sampInt=sdfSampInt)
-                    spontRateMean[j],spontRateStd[j] = self.getSDFNoise(spikes,saccadeSamples-preSamples,preSamples-int(analysisWindow*self.sampleRate),sigma=sdfSigma,sampInt=sdfSampInt)
+                    spontRateMean[i,j],spontRateStd[i,j] = self.getSDFNoise(spikes,saccadeSamples-preSamples,preSamples-int(analysisWindow*self.sampleRate),sigma=sdfSigma,sampInt=sdfSampInt)
                     inAnalysisWindow = np.logical_and(sdfTime>preTime-analysisWindow,sdfTime<preTime+analysisWindow)
                     peakRate[j] = sdf[i,j,inAnalysisWindow].max()
+                    # pre- and post-saccade spike counts
+                    for s in saccadeSamples:
+                        preSaccadeSpikeCount[j][i].append(np.count_nonzero(np.logical_and(spikes>s-int(0.1*self.sampleRate),spikes<s-int(0.05*self.sampleRate))))
+                        postSaccadeSpikeCount[j][i].append(np.count_nonzero(np.logical_and(spikes>s+int(0.075*self.sampleRate),spikes<s+int(0.125*self.sampleRate))))
                     # find last thresh cross before peak for latency
-                    latencyThresh = spontRateMean[j]+5*spontRateStd[j]
+                    latencyThresh = spontRateMean[i,j]+5*spontRateStd[i,j]
                     if peakRate[j]>latencyThresh:
                         maxInd = np.argmax(sdf[i,j,inAnalysisWindow])+np.where(inAnalysisWindow)[0][0]
                         latencyInd[i,j] = np.where(sdf[i,j,:maxInd]<latencyThresh)[0][-1]+1
@@ -1763,14 +1739,37 @@ class probeData():
                                                        'sdf': sdf[i],
                                                        'sdfTime': sdfTime,
                                                        'peakRate': peakRate,
-                                                       'spontRateMean': spontRateMean,
-                                                       'spontRateStd': spontRateStd,
+                                                       'spontRateMean': spontRateMean[i],
+                                                       'spontRateStd': spontRateStd[i],
                                                        'latency': latency}
+                                                       
+        return sdf[:,-1], spontRateMean[:,-1], spontRateStd[:,-1], preSaccadeSpikeCount[-1], postSaccadeSpikeCount[-1], negAmp, posAmp
         
         if plot:
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
-            ax.hist(pupilX[~np.isnan(pupilX)],bins=np.arange(np.nanmin(pupilX)-1,np.nanmax(pupilX)+1))
+            pupilX -= np.nanmedian(pupilX)
+            ax.hist(pupilX[~np.isnan(pupilX)],bins=np.arange(np.nanmin(pupilX)-1,np.nanmax(pupilX)+1),color='k')
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False)
+            ax.set_xlabel('Horizontal Pupil Position (degrees)')
+            ax.set_ylabel('# Frames')
+            
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            bins = np.arange(30)
+            negCount,_ = np.histogram(-negAmp[~np.isnan(negAmp)],bins)
+            plt.bar(bins[:-1],-negCount,color='b')
+            posCount,_ = np.histogram(posAmp[~np.isnan(posAmp)],bins)
+            plt.bar(bins[:-1],posCount,color='r')
+            ax.tick_params(direction='out',top=False,right=False)
+            maxCount = max(negCount.max(),posCount.max())
+            ax.set_ylim((-maxCount,maxCount))
+            ax.set_yticks((-maxCount,maxCount))
+            ax.set_yticklabels((maxCount,maxCount))
+            ax.set_xlabel('Saccade Amplitude (degrees)')
+            ax.set_ylabel('Count')
             
             if allSaccades.size<1:
                 print('no saccades')
@@ -1778,7 +1777,8 @@ class probeData():
             saccadeDirectionColor = ('b','r')
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
-            ymax = 1.2*np.nanmax(sdf)
+            sdfMax = np.nanmax(sdf)
+            ymax = 1.2*sdfMax
             yoffset = 0
             ax.plot([0,0],[0,ymax*(len(units)+2.5)],'k:')
             for i,u in zip(reversed(range(len(units))),reversed(units)):
@@ -1798,7 +1798,19 @@ class probeData():
             ax.tick_params(direction='out',top=False,left=False,labelleft=False,labelright=True,labelsize='x-small')
             ax.set_xlim((-preTime,postTime))
             ax.set_ylim((0,ymax*(len(units)+2.5)))
-            ax.set_yticks((0,round(sdf.max())))
+            ax.set_yticks((0,round(sdfMax)))
+            
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            meanSDF = np.nanmean(sdf[:,2],axis=0)
+            ax.plot(sdfTime-preTime,meanSDF,'k')
+            for side in ('left','bottom','right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,left=False,labelleft=False,labelright=True)
+            ax.set_xlim((-preTime,postTime))
+            ax.set_ylim((0,1.1*meanSDF.max()))
+            ax.set_yticks((0,round(meanSDF.max())))
+            
             
     def plotISIHist(self,units=None,protocol=None,binWidth=0.001,maxInterval=0.02):
         units,unitsYPos = self.getOrderedUnits(units)
@@ -1963,7 +1975,7 @@ class probeData():
         
     def getSDFNoise(self,spikes,startSamples,windowSamples,sigma=0.02,sampInt=0.001,nReps=None):
         if nReps is None:
-            nReps = int(windowSamples/self.sampleRate/sampInt)
+            nReps = int(windowSamples/self.sampleRate/sampInt/2)
         bufferTime = sigma*5
         bufferSamples = int(bufferTime*self.sampleRate)
         sdf,t = self.getSDF(spikes,startSamples-bufferSamples,windowSamples+2*bufferSamples,sigma=sigma,sampInt=sampInt,avg=False)

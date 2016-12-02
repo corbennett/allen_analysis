@@ -43,6 +43,7 @@ class popProbeData():
     def analyzeExperiments(self):
         for exp in self.experimentFiles:
             p = self.getProbeDataObj(exp)
+            self.getUnitLabels(p)
             p.runAllAnalyses(splitRunning=True,plot=False)
             p.saveHDF5(exp)
         
@@ -99,7 +100,6 @@ class popProbeData():
         data = {runLabel: {protocol: {} for protocol in protocols} for runLabel in ('stat','run')}
         for exp in exps:
             p = self.getProbeDataObj(exp)
-            self.getUnitLabels(p)            
             expDate,anmID = p.getExperimentInfo()
             units = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
             units,ypos = p.getOrderedUnits(units)
@@ -162,6 +162,14 @@ class popProbeData():
         
         ccfY = self.data.index.get_level_values('ccfY')
         
+        onVsOff = self.data.run.sparseNoise.onVsOff
+        onVsOff[noRF] = np.nan
+        
+        respLatency = np.stack(self.data.run.sparseNoise.respLatency)*1000
+        respLatency[isOff | noRF,0] = np.nan
+        respLatency[isOn | noRF,1] = np.nan
+        latencyCombined = np.nanmean(respLatency,axis=1)
+        
         onFit = np.stack(self.data.run.sparseNoise.onFit)
         offFit = np.stack(self.data.run.sparseNoise.offFit)
         onFit[isOff | noRF,:] = np.nan
@@ -170,16 +178,48 @@ class popProbeData():
         onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
         onArea[onArea<100] = np.nan
         offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
+        rfAreaCombined = np.nanmean(np.stack((onArea,offArea)),axis=0)
         
-        respLatency = np.stack(self.data.run.sparseNoise.respLatency)*1000
-        respLatency[isOff | noRF,0] = np.nan
-        respLatency[isOn | noRF,1] = np.nan
-        
-        ind = self.data.index.get_level_values(1)=='258284'
         sizeTuningOn = np.stack(self.data.run.sparseNoise.sizeTuningOn[ind])
         sizeTuningOff = np.stack(self.data.run.sparseNoise.sizeTuningOff[ind])
         
+        # plot on vs off resp index
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        counts,bins,bars = ax.hist(onVsOff[~np.isnan(onVsOff)],bins=np.arange(-1,1,0.1),color='k')
+        ax.plot([0,0],[0,1.1*max(counts)],'--',color='0.5',linewidth=3)
+        ax.text(-0.5,max(counts),'Off',fontsize='x-large',horizontalalignment='center')
+        ax.text(0.5,max(counts),'On',fontsize='x-large',horizontalalignment='center')
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+        ax.set_xlabel('Off vs On Index',fontsize='x-large')
+        ax.set_ylabel('Number of Cells',fontsize='x-large')
+        plt.tight_layout()
         
+        # plot response latency, on/off averaged
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        ax.hist(latencyCombined[~np.isnan(latencyCombined)],bins=np.arange(0,160,10),color='k')
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+        ax.set_xlabel('Response Latency (ms)',fontsize='x-large')
+        ax.set_ylabel('Number of Cells',fontsize='x-large')
+        plt.tight_layout()
+        
+        # plot receptive field area, on/off averaged
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        ax.hist(rfAreaCombined[~np.isnan(rfAreaCombined)],bins=np.arange(0,4000,200),color='k')
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+        ax.set_xlabel('Receptive Field Area ($\mathregular{degrees^2}$)',fontsize='x-large')
+        ax.set_ylabel('Number of Cells',fontsize='x-large')
+        plt.tight_layout()
+        
+        # plot on and off resp latency
         for i,clr in zip((0,1),('r','b')):
             plt.figure(facecolor='w')
             ax = plt.subplot(1,1,1)
@@ -190,7 +230,8 @@ class popProbeData():
             ax.set_xlabel('Response Latency (ms)',fontsize='x-large')
             ax.set_ylabel('Number of Cells',fontsize='x-large')
             plt.tight_layout()
-            
+        
+        # plot on and off rf area
         for rfA,clr in zip((onArea,offArea),('r','b')):
             plt.figure(facecolor='w')
             ax = plt.subplot(1,1,1)
@@ -201,7 +242,8 @@ class popProbeData():
             ax.set_xlabel('Receptive Field Area ($\mathregular{degrees^2}$)',fontsize='x-large')
             ax.set_ylabel('Number of Cells',fontsize='x-large')
             plt.tight_layout()
-            
+        
+        # size tuning plots
         sizeTuningSize = [5,10,20,50]
         sizeTuningLabel = [5,10,20,'full']
         for sizeResp,clr in zip((sizeTuningOn,sizeTuningOff),('r','b')):
@@ -237,6 +279,7 @@ class popProbeData():
             ax.set_xlabel('Size (degrees)',fontsize='x-large')
             ax.set_ylabel('Best Size (# Units)',fontsize='x-large')
         
+        # plot all rf centers
         plt.figure(facecolor='w')
         ax = plt.subplot(1,1,1)
         plt.plot(onFit[:,0],onFit[:,1],'ro',label='On')
@@ -249,6 +292,7 @@ class popProbeData():
         plt.legend(frameon=False)
         plt.tight_layout()
         
+        # plot rf center vs probe position
         xlim = np.array((-0.1,1.1))
         for exp in ('07282016','07292016','09162016','10192016','10202016'):
             ind = self.data.index.get_level_values(0)==exp
@@ -272,7 +316,8 @@ class popProbeData():
                     ax.set_xlabel('Norm. Probe Position',fontsize='x-large')
                     ax.set_ylabel(azimOrElev+' (degrees)',fontsize='x-large')
                     plt.tight_layout()
-    
+        
+        # rf bubble plots
         colors = [(1, 0, 0), (0, 0, 1)]
         for i, fit in enumerate([onFit, offFit]):
             fig = plt.figure(facecolor='w')
@@ -328,8 +373,8 @@ class popProbeData():
                     ccf -= np.array([xRange[0], yRange[0], zRange[0]])
                     
                     counts[ccf[1], ccf[0], ccf[2]]+=1
-                    elev[ccf[1], ccf[0], ccf[2]] += self.data.sparseNoise[fitType][uindex][1]
-                    azi[ccf[1], ccf[0], ccf[2]] += self.data.sparseNoise[fitType][uindex][0]
+                    elev[ccf[1], ccf[0], ccf[2]] += self.data.run.sparseNoise[fitType][uindex][1]
+                    azi[ccf[1], ccf[0], ccf[2]] += self.data.run.sparseNoise[fitType][uindex][0]
                 
         elev /= counts
         azi /= counts
@@ -371,6 +416,54 @@ class popProbeData():
         return elev_s, azi_s
     
     
+    def makeVolume(self, units, vals, padding=10, sigma=1, regions=[218], annotationDataFile=None):
+        ind = self.data.index.get_level_values('unitID').isin(units)       
+        data = self.data[ind]        
+        CCFCoords = np.stack((data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)
+        
+        if annotationDataFile is None:
+            annotationDataFile = fileIO.getFile() 
+        
+        annotationData,_ = nrrd.read(annotationDataFile)
+        annotationData = annotationData.transpose((1,2,0))
+        
+        inRegionBinary = np.zeros_like(annotationData)         
+        for r in regions:
+            thisRegion = annotationData == r
+            inRegionBinary[thisRegion] = 1
+        
+        inRegion = np.where(inRegionBinary)
+        
+        yRange = [np.min(inRegion[0])-padding, np.max(inRegion[0])+padding]
+        xRange = [np.min(inRegion[1])-padding, np.max(inRegion[1])/2+padding]
+        zRange = [np.min(inRegion[2])-padding, np.max(inRegion[2])+padding]
+        
+        mask = inRegionBinary[yRange[0]:yRange[1], xRange[0]:xRange[1], zRange[0]:zRange[1]].astype(np.float)
+        mask[mask==0] = np.nan
+                
+        counts = np.zeros([np.diff(yRange), np.diff(xRange), np.diff(zRange)])
+        vol = np.zeros_like(counts)
+    
+        for uindex, coords in enumerate(CCFCoords):
+            if any(np.isnan(coords)) or np.isnan(vals[uindex]):
+                continue
+            else:
+                ccf = coords/25
+                ccf = ccf.astype(int)
+                ccf -= np.array([xRange[0], yRange[0], zRange[0]])
+                
+                counts[ccf[1], ccf[0], ccf[2]]+=1
+                vol[ccf[1], ccf[0], ccf[2]] += vals[uindex]
+        
+                
+        vol /= counts
+        
+        vol_s = probeData.gaussianConvolve3D(vol,sigma)
+        vol_s *= mask
+        
+        return vol_s
+    
+    
     def analyzeSTF(self):
         
         sf = np.array([0.01,0.02,0.04,0.08,0.16,0.32])
@@ -380,8 +473,8 @@ class popProbeData():
         
         stfFit = np.stack(self.data.run.gratings.stfFitParams[hasGratings])
         
+        # plot center SF and TF and speed tuning index
         fig = plt.figure(facecolor='w')
-        
         ax = fig.add_subplot(2,2,1)
         ax.plot(np.log2(stfFit[:,0]),np.log2(stfFit[:,1]),'ko',markerfacecolor='none')
         ax.spines['right'].set_visible(False)
@@ -406,7 +499,7 @@ class popProbeData():
         ax.set_xticks(np.arange(tf.size)+1)
         ax.set_xticklabels(tf)
         ax.set_xlabel('Center TF',fontsize='large')
-        ax.set_ylabel('Number of Units')
+        ax.set_ylabel('Number of Units',fontsize='large')
         
         ax = fig.add_subplot(2,2,3)
         sfBins = np.concatenate(([0],sf*1.5))
@@ -418,7 +511,7 @@ class popProbeData():
         ax.set_xticks(np.arange(sf.size)+1)
         ax.set_xticklabels(sf)
         ax.set_xlabel('Center SF',fontsize='large')
-        ax.set_ylabel('Number of Units')
+        ax.set_ylabel('Number of Units',fontsize='large')
         
         ax = fig.add_subplot(2,2,4)
         bins = np.arange(-0.3,1.4,0.1)
@@ -428,8 +521,23 @@ class popProbeData():
         ax.tick_params(direction='out',top=False,right=False,labelsize='medium')
         ax.set_xticks([0,0.5,1])
         ax.set_xlabel('Speed Tuning Index',fontsize='large')
-        ax.set_ylabel('Number of Units')
+        ax.set_ylabel('Number of Units',fontsize='large')
+        plt.tight_layout()
         
+        # plot preferred speed
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        binInd = np.arange(8)
+        bins = 10*2**binInd
+        count,_ = np.histogram((stfFit[:,1]/stfFit[:,0])[stfFit[:,4]>0.75],bins)
+        ax.bar(binInd[:-1]-0.5,count,width=1,color='k')
+        ax.set_xticks(binInd[:-1])
+        ax.set_xticklabels(bins[:-1])
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='x-large')
+        ax.set_xlabel('Preferred Speed (degrees/s)',fontsize='xx-large')
+        ax.set_ylabel('Number of Units',fontsize='xx-large')
         plt.tight_layout()
     
     
@@ -443,33 +551,60 @@ class popProbeData():
         prefDir = np.array(self.data.run.gratings_ori.prefDir[hasGratings])
         osi = np.array(self.data.run.gratings_ori.osi[hasGratings])
         prefOri = np.array(self.data.run.gratings_ori.prefOri[hasGratings])
-            
-        for i in [0]:
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
-            ax.plot([0,0],[1,1],color='0.6')
-            ax.plot(osi,dsi,'ko',markerfacecolor='none')
-            ax.spines['right'].set_visible(False)
-            ax.spines['top'].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize='medium')
-            amax = 1.1*max(np.nanmax(dsi),np.nanmax(osi))
-            ax.set_xlim([0,amax])
-            ax.set_ylim([0,amax])
-            ax.set_xlabel('OSI',fontsize='large')
-            ax.set_ylabel('DSI',fontsize='large')
-            ax.set_aspect('equal')
+        
+        # plot dsi and osi
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        ax.plot([0,0],[1,1],color='0.6')
+        ax.plot(osi,dsi,'ko',markerfacecolor='none')
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='medium')
+        amax = 1.1*max(np.nanmax(dsi),np.nanmax(osi))
+        ax.set_xlim([0,amax])
+        ax.set_ylim([0,amax])
+        ax.set_xlabel('OSI',fontsize='large')
+        ax.set_ylabel('DSI',fontsize='large')
+        ax.set_aspect('equal')
+        plt.tight_layout()
+        
+        # plot preferred direction
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        ax.hist(prefDir[dsi>0.125],np.arange(0,360,30),color='k')
+        ax.set_xlim([-15,345])
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='x-large')
+        ax.set_xlabel('Preferred Direction',fontsize='xx-large')
+        ax.set_ylabel('Number of Units',fontsize='xx-large')
+        plt.tight_layout()
     
     
     def analyzeCheckerboard(self):
         
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90]) 
         
-        # get data from units with checkerboard protocol
-        hasCheckerboard = self.data.checkerboard.respMat.notnull()
-        respMat = np.stack(self.data.checkerboard.respMat[hasCheckerboard])
+        # get data from units with spikes during checkerboard protocol
+        hasCheckerboard = self.data.run.checkerboard.respMat.notnull()
+        respMat = np.stack(self.data.run.checkerboard.respMat[hasCheckerboard])
         hasSpikes = respMat.any(axis=2).any(axis=1)
         respMat = respMat[hasSpikes]
         uindex = np.where(hasCheckerboard)[0][hasSpikes]
+        
+        # get z score and determine significant responses
+        spontRateMean = self.data.run.checkerboard.spontRateMean[uindex]
+        spontRateStd = self.data.run.checkerboard.spontRateStd[uindex]
+        respZ = (respMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
+        hasResp = (respZ>10).any(axis=2).any(axis=1)
+        respMat = respMat[hasResp]
+        uindex = uindex[hasResp]
+        
+        # fill in NaNs where no running trials
+        statRespMat = np.stack(self.data.stat.checkerboard.respMat[uindex])
+        y,x,z = np.where(np.isnan(respMat))
+        for i,j,k in zip(y,x,z):
+            respMat[i,j,k] = statRespMat[i,j,k]
         
         # find distance between RF and patch
         onVsOff = np.array(self.data.sparseNoise.onVsOff[uindex])
@@ -486,13 +621,63 @@ class popProbeData():
         ax.set_xlabel('Patch RF Distance')
         ax.set_ylabel('Max Patch Response')
         
-        # get z score and determine significant responses
-        spontRateMean = self.data.checkerboard.spontRateMean[uindex]
-        spontRateStd = self.data.checkerboard.spontRateStd[uindex]
-        respZ = (respMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
-        hasResp = (respZ>5).any(axis=2).any(axis=1)
+        # compare patch and bckgnd responses and contribution to variance
+        maxPatchResp = respMat[:,patchSpeed!=0,bckgndSpeed==0].max(axis=1)
+        maxBckgndResp = respMat[:,patchSpeed==0,bckgndSpeed!=0].max(axis=1)
+        patchBckgndIndex = (maxPatchResp-maxBckgndResp)/(maxPatchResp+maxBckgndResp)
         
-        respMat = respMat[hasResp]
+        patchVar = respMat.mean(axis=2).std(axis=1)
+        bckgndVar = respMat.mean(axis=1).std(axis=1)
+        varIndex = (patchVar-bckgndVar)/(patchVar+bckgndVar)
+        
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        ax.plot([-1,1],[0,0],color='0.6')
+        ax.plot([0,0],[-1,1],color='0.6')
+        ax.plot(patchBckgndIndex,varIndex,'ko')
+        ax.set_xlim((-0.75,0.75))
+        ax.set_ylim((-0.75,0.75))
+        ax.set_xlabel('Patch vs Background Response')
+        ax.set_ylabel('Patch vs Background Speed Variance')
+        
+        # correlate responses with response-type templates
+        patchTemplate = np.zeros((patchSpeed.size,bckgndSpeed.size))
+        patchTemplate[patchSpeed!=0,bckgndSpeed==0] = 1
+        bckgndRightTemplate = np.zeros((patchSpeed.size,bckgndSpeed.size))
+        bckgndRightTemplate[:,bckgndSpeed>0] = 1
+        bckgndLeftTemplate = bckgndRightTemplate[:,::-1]
+        frameTemplate = np.zeros((patchSpeed.size,bckgndSpeed.size))
+        frameTemplate[:,[0,-1]] = 1
+        frameTemplate[[0,-1],:] = 1
+        
+        templates = (patchTemplate,frameTemplate,bckgndRightTemplate,bckgndLeftTemplate)
+        cc = np.zeros((respMat.shape[0],len(templates)))
+        for i,resp in enumerate(respMat):
+            for j,template in enumerate(templates):
+                cc[i,j] = np.corrcoef(resp.ravel(),template.ravel())[0,1]
+        cc[:,2] = cc[:,2:].max(axis=1)
+        cc = cc[:,:-1]
+        
+        for i in (0,1,2):
+            plt.figure()
+            plt.hist(cc[:,i],np.arange(-1,1,0.1))
+        
+        patchSortInd = np.argsort(cc[:,0])[::-1]
+        plt.imshow(cc[patchSortInd],clim=(-1,1),cmap='bwr',interpolation='none')
+        
+        bestMatch = np.argmax(cc,axis=1)
+        aboveThresh = cc.max(axis=1)>0.4
+        typeCount = [np.count_nonzero(bestMatch[aboveThresh]==i) for i in range(3)]
+        print(typeCount)
+        
+        for n in range(10):
+            c = 2
+            if n<typeCount[c]:
+                ind = np.logical_and(bestMatch==c,aboveThresh)
+                fig = plt.figure()
+                ax = plt.subplot(1,1,1)
+                ax.imshow(respMat[ind][n],origin='lower',cmap='gray',interpolation='none')
+                ax.set_title(str(round(cc[ind,c][n],2)))
         
         # normalize responses various ways
         maxResp = respMat.max(axis=2).max(axis=1)
@@ -516,25 +701,6 @@ class popProbeData():
             
             ax = fig.add_subplot(gs[2,j])
             plt.hist(r.ravel())
-            
-        # compare patch and bckgnd responses and contribution to variance
-        maxPatchResp = respMat[:,patchSpeed!=0,bckgndSpeed==0].max(axis=1)
-        maxBckgndResp = respMat[:,patchSpeed==0,bckgndSpeed!=0].max(axis=1)
-        patchBckgndIndex = (maxPatchResp-maxBckgndResp)/(maxPatchResp+maxBckgndResp)
-        
-        patchVar = respMat.mean(axis=2).std(axis=1)
-        bckgndVar = respMat.mean(axis=1).std(axis=1)
-        varIndex = (patchVar-bckgndVar)/(patchVar+bckgndVar)
-        
-        fig = plt.figure(facecolor='w')
-        ax = fig.add_subplot(1,1,1)
-        ax.plot([-1,1],[0,0],color='0.6')
-        ax.plot([0,0],[-1,1],color='0.6')
-        ax.plot(patchBckgndIndex,varIndex,'ko')
-        ax.set_xlim((-0.75,0.75))
-        ax.set_ylim((-0.75,0.75))
-        ax.set_xlabel('Patch vs Background Response')
-        ax.set_ylabel('Patch vs Background Speed Variance')
         
         # plot pc weightings
         for r in (respMat, respMatNorm, respMatBaseSub, respMatBaseSubNorm):
@@ -577,6 +743,97 @@ class popProbeData():
             for ind,i in enumerate(np.unique(clustID)):
                 ax = fig.add_subplot(round(k**0.5),math.ceil(k**0.5),ind+1)
                 ax.imshow(respMat[clustID==i].mean(axis=0),cmap='bwr',interpolation='none',origin='lower')
+                
+    
+    def analyzeSaccades(self):
+        # get data from all experiments
+        sdf = []
+        spontRateMean = []
+        spontRateStd = []
+        preSaccadeSpikeCount = []
+        postSaccadeSpikeCount = []
+        negAmp = []
+        posAmp = []
+        for exp in self.experimentFiles:
+            p = self.getProbeDataObj(exp)
+            self.getUnitLabels(p)
+            units = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
+            s, spmean, spstd, pre,post,neg,pos = p.analyzeSaccades(units,'1',plot=False)
+            sdf.append(s)
+            spontRateMean.append(spmean)
+            spontRateStd.append(spstd)
+            preSaccadeSpikeCount.append(pre)
+            postSaccadeSpikeCount.append(post)
+            negAmp.append(neg)
+            posAmp.append(pos)
+            
+        #
+        sdfTime = np.arange(0,2,0.001)-1
+        inPreWindow = np.logical_and(sdfTime>-0.1,sdfTime<-0.05)
+        inPostWindow = np.logical_and(sdfTime>0.075,sdfTime<0.125)
+        s = np.concatenate(sdf)
+        preSaccadeRate = np.mean(s[:,inPreWindow],axis=1)
+        postSaccadeRate = np.mean(s[:,inPostWindow],axis=1)
+        
+        #
+        spontMean = np.concatenate(spontRateMean)
+        spontStd = np.concatenate(spontRateStd)
+        isResp = np.logical_or(s[:,sdfTime>0.25].max(axis=1)>spontMean+10*spontStd, 
+                               s[:,sdfTime>0.25].min(axis=1)<spontMean-10*spontStd)
+                               
+        #
+        pval = np.zeros(s.shape[0])
+        ntrials = pval.copy()
+        ind = 0
+        for pre,post in zip(preSaccadeSpikeCount,postSaccadeSpikeCount):
+            for preSpikes,postSpikes in zip(pre,post):
+                _,pval[ind] = scipy.stats.wilcoxon(preSpikes,postSpikes)
+                ntrials[ind] = len(preSpikes)
+                ind += 1
+        isResp = pval<0.05
+        isSuppressed = np.logical_and(postSaccadeRate<preSaccadeRate,isResp)
+        isExcited = np.logical_and(postSaccadeRate>preSaccadeRate,isResp)
+        print str(np.count_nonzero(isSuppressed))+' cells suppressed'
+        print str(np.count_nonzero(isExcited))+' cells excited'
+        print str(np.count_nonzero(~isResp))+' cells not responsive'
+        
+        # pre and post saccade firing rate
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        ax.plot(preSaccadeRate[~isResp],postSaccadeRate[~isResp],'o',mfc=str(166/255.0),mec=str(166/255.0),markersize=10)
+        ax.plot(preSaccadeRate[isSuppressed],postSaccadeRate[isSuppressed],'o',mfc='b',mec='b',markersize=10)
+        ax.plot(preSaccadeRate[isExcited],postSaccadeRate[isExcited],'o',mfc='r',mec='r',markersize=10)
+        ax.plot([0, 70], [0, 70], 'k--')
+        ax.set_xlim([0,55])
+        ax.set_ylim([0,55])
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='x-large')
+        ax.set_xlabel('Pre-saccade spikes/s',fontsize='xx-large')
+        ax.set_ylabel('Post-saccade spikes/s',fontsize='xx-large')
+        plt.tight_layout()
+        
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        ax.hist(postSaccadeRate-preSaccadeRate,np.arange(-25,25,1),color='k')
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='x-large')
+        ax.set_xlabel('Saccade-related Response (spikes/s)',fontsize='xx-large')
+        ax.set_ylabel('Number of Neurons',fontsize='xx-large')
+        plt.tight_layout()
+        
+        # saccade amplitude histogram
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        amp = np.concatenate(negAmp+posAmp)
+        ax.hist(amp[~np.isnan(amp)],np.arange(30),color='k')
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='x-large')
+        ax.set_xlabel('Saccade Amplitude (degrees)',fontsize='xx-large')
+        ax.set_ylabel('Count',fontsize='xx-large')
+        plt.tight_layout()
 
         
 if __name__=="__main__":
