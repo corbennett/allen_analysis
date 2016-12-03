@@ -76,9 +76,6 @@ class MovingCheckerboard(VisStimControl):
                 for params in trials:
                     params[-1] = pwr
                 trialTypes.append(trials)
-        shuffledTrials = np.array(self.setTrialLaserPower(trialTypes))
-        self.shuffledTrials = shuffledTrials
-        self.spaceLaserTrials(shuffledTrials)
         
         # run
         frame = 0
@@ -97,26 +94,26 @@ class MovingCheckerboard(VisStimControl):
         self.trialLaserPower = []
         while True:
             if trialFrame==trialInterval-1:
-                if trial==numTrialTypes-1:
-                    loop += 1
-                    print('loops completed = '+str(loop))
-                    if loop==self.numLoops:
+                if trial==numTrialTypes-1 or loop==0:
+                    if loop>self.numLoops:
                         break
-                    else:
-                        trial = 0
-                        shuffledTrials = np.array(self.setTrialLaserPower(trialTypes))
+                    loop += 1
+                    print('starting loop '+str(loop))
+                    trial = 0
+                    shuffledTrials = np.array(self.setTrialLaserPower(trialTypes))
+                    if len(self.laserPower)>1 and not self.laserRandom:
                         self.spaceLaserTrials(shuffledTrials)
                 else:
                     trial += 1
                 trialFrame = -1
                 self.trialStartFrame.append(frame+1)
-                self.trialBckgndSpeed.append(shuffledTrials[trial][0])
-                self.trialBckgndDir.append(shuffledTrials[trial][1])
-                self.trialPatchSize.append(shuffledTrials[trial][2])
-                self.trialPatchSpeed.append(shuffledTrials[trial][3])
-                self.trialPatchDir.append(shuffledTrials[trial][4])
-                self.trialPatchPos.append(shuffledTrials[trial][5])
-                self.trialLaserPower.append(shuffledTrials[trial][6])
+                self.trialBckgndSpeed.append(shuffledTrials[trial,0])
+                self.trialBckgndDir.append(shuffledTrials[trial,1])
+                self.trialPatchSize.append(shuffledTrials[trial,2])
+                self.trialPatchSpeed.append(shuffledTrials[trial,3])
+                self.trialPatchDir.append(shuffledTrials[trial,4])
+                self.trialPatchPos.append(shuffledTrials[trial,5])
+                self.trialLaserPower.append(shuffledTrials[trial,6])
                 if self.trialBckgndDir[-1]==0:
                     bckgndOffset = leftOffset
                 elif self.trialBckgndDir[-1]==180:
@@ -264,18 +261,14 @@ class MovingCheckerboard(VisStimControl):
         return round((random.random()*(self.interTrialInterval[1]-self.interTrialInterval[0])+self.interTrialInterval[0])*self.frameRate)
         
     def spaceLaserTrials(self,shuffledTrials):
-        if len(self.laserPower)>1 and not self.laserRandom:
-            longLaser = np.logical_or(shuffledTrials[:, 3]==10, np.logical_and(shuffledTrials[:, 3]==0, shuffledTrials[:, 0]==10))
-            longLaser = np.logical_and(longLaser, shuffledTrials[:, 6]>0)
-            longLaserTrials = np.where(longLaser)[0]
-            while np.min(np.diff(longLaserTrials)) == 2:
-                laserTrials = np.where(shuffledTrials[:, 6] > 0)[0]
-                shuffledTrials[laserTrials] = shuffledTrials[np.random.choice(laserTrials, laserTrials.size, replace=False)]
-                longLaser = np.logical_or(shuffledTrials[:, 3]==10, np.logical_and(shuffledTrials[:, 3]==0, shuffledTrials[:, 0]==10))
-                longLaser = np.logical_and(longLaser, shuffledTrials[:, 6]>0)
-                longLaserTrials = np.where(longLaser)[0]
+        while True:
+            laserOn = shuffledTrials[:, 6]>0
+            longLaserTrials = np.where(np.logical_and(laserOn, np.logical_or(shuffledTrials[:, 3]==10, np.logical_and(shuffledTrials[:, 3]==0, shuffledTrials[:, 0]==10))))[0]
+            if np.diff(longLaserTrials).min()>2:
+                break
+            laserTrials = np.where(laserOn)[0]
+            shuffledTrials[laserTrials] = shuffledTrials[np.random.choice(laserTrials, laserTrials.size, replace=False)]
         
-            
 
 if __name__=="__main__":
     pass
