@@ -68,6 +68,7 @@ class MovingCheckerboard(VisStimControl):
                or (params[0]>0 and params[3]>0 and params[0]==params[3] and params[1]==params[4])):
                    if params in trialTypes:
                        trialTypes.remove(params)
+        numTrialTypes = len(trialTypes)
         if len(self.laserPower)>1 and not self.laserRandom:
             trialTypes = [trialTypes]
             for pwr in self.laserPower[1:]:
@@ -75,7 +76,9 @@ class MovingCheckerboard(VisStimControl):
                 for params in trials:
                     params[-1] = pwr
                 trialTypes.append(trials)
-        shuffledTrials = self.setTrialLaserPower(trialTypes)
+        shuffledTrials = np.array(self.setTrialLaserPower(trialTypes))
+        self.shuffledTrials = shuffledTrials
+        self.spaceLaserTrials(shuffledTrials)
         
         # run
         frame = 0
@@ -94,14 +97,15 @@ class MovingCheckerboard(VisStimControl):
         self.trialLaserPower = []
         while True:
             if trialFrame==trialInterval-1:
-                if trial==len(shuffledTrials)-1:
+                if trial==numTrialTypes-1:
                     loop += 1
                     print('loops completed = '+str(loop))
                     if loop==self.numLoops:
                         break
                     else:
                         trial = 0
-                        self.setTrialLaserPower(trialTypes)
+                        shuffledTrials = np.array(self.setTrialLaserPower(trialTypes))
+                        self.spaceLaserTrials(shuffledTrials)
                 else:
                     trial += 1
                 trialFrame = -1
@@ -258,6 +262,19 @@ class MovingCheckerboard(VisStimControl):
             
     def getInterTrialInterval(self):
         return round((random.random()*(self.interTrialInterval[1]-self.interTrialInterval[0])+self.interTrialInterval[0])*self.frameRate)
+        
+    def spaceLaserTrials(self,shuffledTrials):
+        if len(self.laserPower)>1 and not self.laserRandom:
+            longLaser = np.logical_or(shuffledTrials[:, 3]==10, np.logical_and(shuffledTrials[:, 3]==0, shuffledTrials[:, 0]==10))
+            longLaser = np.logical_and(longLaser, shuffledTrials[:, 6]>0)
+            longLaserTrials = np.where(longLaser)[0]
+            while np.min(np.diff(longLaserTrials)) == 2:
+                laserTrials = np.where(shuffledTrials[:, 6] > 0)[0]
+                shuffledTrials[laserTrials] = shuffledTrials[np.random.choice(laserTrials, laserTrials.size, replace=False)]
+                longLaser = np.logical_or(shuffledTrials[:, 3]==10, np.logical_and(shuffledTrials[:, 3]==0, shuffledTrials[:, 0]==10))
+                longLaser = np.logical_and(longLaser, shuffledTrials[:, 6]>0)
+                longLaserTrials = np.where(longLaser)[0]
+        
             
 
 if __name__=="__main__":
