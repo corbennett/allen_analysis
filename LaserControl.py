@@ -152,7 +152,7 @@ class LaserControlObj():
         self.layout.addWidget(self.onOffButton,1,2,1,1)
         
     def powerControlChanged(self,val):
-        if self.shutterControl=='digital':
+        if self.shutterControlMode=='digital':
             self.serialPort.write('p '+str(val/1e3)+'\r')
     
     def modeMenuChanged(self,ind):
