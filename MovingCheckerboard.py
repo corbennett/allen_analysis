@@ -135,7 +135,7 @@ class MovingCheckerboard(VisStimControl):
                             patchPos = [self.imageSize[0]/2-patchSizePix,y]
                         else:
                             patchPos = [self.imageSize[0],y]
-                        self.trialNumFrames.append(round((self.imageSize[0]/2+patchSizePix)/patchMovPerFrame))
+                        self.trialNumFrames.append(int(round((self.imageSize[0]/2+patchSizePix)/patchMovPerFrame)))
                     else:
                         x = self._squareSizePix*round((self.imageSize[0]/2-self.imagePosition[0]+self.trialPatchPos[-1]*self.pixelsPerDeg)/self._squareSizePix)-int(patchSizePix/2)
                         if leftOffset<self._squareSizePix:
@@ -144,15 +144,15 @@ class MovingCheckerboard(VisStimControl):
                             patchPos = [x,self.imageSize[1]]
                         else:
                             patchPos = [x,-patchSizePix]
-                        self.trialNumFrames.append(round((self.imageSize[1]+patchSizePix)/patchMovPerFrame))  
+                        self.trialNumFrames.append(int(round((self.imageSize[1]+patchSizePix)/patchMovPerFrame)))  
                 else:
                     if bckgndMovPerFrame>0:
                         if self.trialBckgndDir[-1] in [0,180]:
-                            self.trialNumFrames.append(round(self.imageSize[0]/2/bckgndMovPerFrame))
+                            self.trialNumFrames.append(int(round(self.imageSize[0]/2/bckgndMovPerFrame)))
                         else:
-                            self.trialNumFrames.append(round(self.imageSize[1]/bckgndMovPerFrame))
+                            self.trialNumFrames.append(int(round(self.imageSize[1]/bckgndMovPerFrame)))
                     else:
-                        self.trialNumFrames.append(2*self.frameRate)
+                        self.trialNumFrames.append(int(round(2*self.frameRate)))
                 trialInterval = self.laserPreFrames+self.trialNumFrames[-1]+self.laserPostFrames+self.getInterTrialInterval()
             elif trial>-1:
                 if trialFrame==0:
