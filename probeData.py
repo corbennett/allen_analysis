@@ -1249,7 +1249,6 @@ class probeData():
             trials = np.array(trials)
             trials = trials[trials<=lastFullTrial]
 
-
         # find longest trial in entire presentation
         trialStartSamples = p['frameSamples'][trialStartFrame[np.arange(lastFullTrial+1)]]
         trialEndSamples = p['frameSamples'][trialEndFrame[np.arange(lastFullTrial+1)]]
@@ -1675,6 +1674,7 @@ class probeData():
             ax = fig.add_subplot(111)
             ax.plot(unitsYPos, prefSpeeds, 'ko', alpha=0.5)
 
+
     def analyzeSaccades(self,units=None,protocol=0,preTime=1,postTime=1,analysisWindow=0.15,sdfSigma=0.01,sdfSampInt=0.001,plot=True):
         units,_ = self.getOrderedUnits(units)        
         protocol = str(protocol)        
@@ -1682,6 +1682,7 @@ class probeData():
             print('no eye tracking data for protocol '+protocol)
             return
         
+        eyeTrackSamples = self.behaviorData[protocol]['eyeTracking']['samples']
         pupilX = self.behaviorData[protocol]['eyeTracking']['pupilX']
         negSaccades = self.behaviorData[protocol]['eyeTracking']['negSaccades']
         posSaccades = self.behaviorData[protocol]['eyeTracking']['posSaccades']
@@ -1717,7 +1718,7 @@ class probeData():
             spikes = self.units[str(u)]['times'][protocol]
             for j,saccades in enumerate((negSaccades,posSaccades,allSaccades)):
                 if saccades.size>0:
-                    saccadeSamples = self.behaviorData[protocol]['eyeTracking']['samples'][saccades]
+                    saccadeSamples = eyeTrackSamples[saccades]
                     sdf[i,j],sdfTime = self.getSDF(spikes,saccadeSamples-preSamples,preSamples+postSamples,sigma=sdfSigma,sampInt=sdfSampInt)
                     spontRateMean[i,j],spontRateStd[i,j] = self.getSDFNoise(spikes,saccadeSamples-preSamples,preSamples-int(analysisWindow*self.sampleRate),sigma=sdfSigma,sampInt=sdfSampInt)
                     inAnalysisWindow = np.logical_and(sdfTime>preTime-analysisWindow,sdfTime<preTime+analysisWindow)
@@ -1732,20 +1733,11 @@ class probeData():
                         maxInd = np.argmax(sdf[i,j,inAnalysisWindow])+np.where(inAnalysisWindow)[0][0]
                         latencyInd[i,j] = np.where(sdf[i,j,:maxInd]<latencyThresh)[0][-1]+1
                         latency[j] = latencyInd[i,j]*sdfSampInt-preTime
-                
-            self.units[str(u)]['saccadeModulation'] = {'saccadeDirection': ['neg','pos','all'],
-                                                       'avgSaccade': avgSaccade,
-                                                       'saccadeTime': saccadeTime,
-                                                       'sdf': sdf[i],
-                                                       'sdfTime': sdfTime,
-                                                       'peakRate': peakRate,
-                                                       'spontRateMean': spontRateMean[i],
-                                                       'spontRateStd': spontRateStd[i],
-                                                       'latency': latency}
                                                        
-        return sdf[:,-1], spontRateMean[:,-1], spontRateStd[:,-1], preSaccadeSpikeCount[-1], postSaccadeSpikeCount[-1], negAmp, posAmp
+        #return sdf[:,-1], spontRateMean[:,-1], spontRateStd[:,-1], preSaccadeSpikeCount[-1], postSaccadeSpikeCount[-1], negAmp, posAmp
         
         if plot:
+            # pupil position histogram
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
             pupilX -= np.nanmedian(pupilX)
@@ -1756,6 +1748,7 @@ class probeData():
             ax.set_xlabel('Horizontal Pupil Position (degrees)')
             ax.set_ylabel('# Frames')
             
+            # saccdade amplitude histogram
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
             bins = np.arange(30)
@@ -1771,11 +1764,9 @@ class probeData():
             ax.set_xlabel('Saccade Amplitude (degrees)')
             ax.set_ylabel('Count')
             
-            if allSaccades.size<1:
-                print('no saccades')
-                return
-            saccadeDirectionColor = ('b','r')
+            # sdfs and mean saccade
             fig = plt.figure(facecolor='w')
+            saccadeDirectionColor = ('b','r')
             ax = fig.add_subplot(1,1,1)
             sdfMax = np.nanmax(sdf)
             ymax = 1.2*sdfMax
@@ -1800,6 +1791,7 @@ class probeData():
             ax.set_ylim((0,ymax*(len(units)+2.5)))
             ax.set_yticks((0,round(sdfMax)))
             
+            # mean sdf
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
             meanSDF = np.nanmean(sdf[:,2],axis=0)
@@ -1812,6 +1804,78 @@ class probeData():
             ax.set_yticks((0,round(meanSDF.max())))
             
             
+    def analyzeOKR(self,protocol):
+        # to do: find last valid trial; horizontal grating movement only; get checkerboard direction
+        protocol = str(protocol)        
+        if not hasattr(self,'behaviorData') or 'eyeTracking' not in self.behaviorData[protocol]:
+            print('no eye tracking data for protocol '+protocol)
+            return
+        protocolLabel = self.getProtocolLabel(protocol)
+        p = self.visstimData[protocol]
+        if protocolLabel=='gratings':
+            trials = (p['stimulusHistory_contrast']>0)
+            trials[-1] = False
+            trialStartFrames = p['stimStartFrames'][trials]
+            trialStartSamples = p['frameSamples'][trialStartFrames]
+            trialEndSamples = p['frameSamples'][trialStartFrames+p['stimTime']]   
+            trialX = p['stimulusHistory_sf'][trials]
+            trialY = p['stimulusHistory_tf'][trials]
+            xparamName = 'sf'
+            yparamName = 'tf'
+        elif protocolLabel=='checkerboard':
+            trialStartFrames = p['trialStartFrame']
+            trialEndFrames = trialStartFrames+p['trialNumFrames'].astype(int)
+            trialStartSamples = p['frameSamples'][trialStartFrames[:-2]]
+            trialEndSamples = p['frameSamples'][trialEndFrames[:-2]]
+            trialX = p['trialBckgndSpeed'][:-2]
+            trialY = p['trialPatchSpeed'][:-2]
+            xparamName = 'background speed'
+            yparamName = 'patch speed'
+        else:
+            print('protocol must be gratings or checkerboard okr analysis')
+            return
+        
+        eyeTrackSamples = self.behaviorData[protocol]['eyeTracking']['samples']
+        pupilX = self.behaviorData[protocol]['eyeTracking']['pupilX'][0:eyeTrackSamples.size]
+        pupilVel = np.diff(pupilX)/np.diff(eyeTrackSamples/float(self.sampleRate))
+        negSaccades = self.behaviorData[protocol]['eyeTracking']['negSaccades']
+        posSaccades = self.behaviorData[protocol]['eyeTracking']['posSaccades']
+        allSaccades = np.sort(np.concatenate((negSaccades,posSaccades)))
+        allSaccades = allSaccades[allSaccades<eyeTrackSamples.size]
+        saccadeSamples = eyeTrackSamples[allSaccades]
+        for saccade in saccadeSamples:
+            pupilVel[int(saccade-3):int(saccade+6)] = np.nan
+        
+        xparam = np.unique(trialX)
+        yparam = np.unique(trialY)
+        meanPupilVel = np.zeros((yparam.size,xparam.size))
+        stimSpeed = meanPupilVel.copy()
+        for i,y in enumerate(yparam):
+            for j,x in enumerate(xparam):
+                trialInd = np.where(np.logical_and(trialY==y,trialX==x))[0]
+                v = np.zeros(trialInd.size)
+                for n,trial in enumerate(trialInd):
+                    v[n] = np.nanmean(pupilVel[np.argmin(eyeTrackSamples-trialStartSamples[trial]):np.argmin(eyeTrackSamples-trialEndSamples[trial])])
+                meanPupilVel[i,j] = np.nanmean(v)
+                stimSpeed[i,j] = y/x if protocolLabel=='gratings' else x
+                
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(2,1,1)
+        im = ax.imshow(meanPupilVel,cmap='gray',origin='lower',interpolation='none')
+        ax.tick_params(direction='out',top=False,left=False)
+        ax.set_xticks(range(xparam.size))
+        ax.set_yticks(range(yparam.size))
+        ax.set_xticklabels(xparam)
+        ax.set_yticklabels(yparam)
+        ax.set_xlabel(xparamName)
+        ax.set_ylabel(yparamName)
+        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+        
+        ax = fig.add_subplot(2,1,2)
+        im = ax.imshow(meanPupilVel/stimSpeed,cmap='gray',origin='lower',interpolation='none')
+        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+
+        
     def plotISIHist(self,units=None,protocol=None,binWidth=0.001,maxInterval=0.02):
         units,unitsYPos = self.getOrderedUnits(units)
         if protocol is None:
@@ -2555,7 +2619,9 @@ def getKwdInfo(dirPath=None):
                     kwdFiles.append(os.path.join(itemPath,f))
                     kwd = h5py.File(kwdFiles[-1],'r')
                     nSamples.append(kwd['recordings']['0']['data'].shape[0])
-    return zip(*[n[1:] for n in sorted(zip(startTime,kwdFiles,nSamples),key=lambda z: z[0])])
+    if len(kwdFiles)>1:
+        kwdFiles,nSamples = zip(*[n[1:] for n in sorted(zip(startTime,kwdFiles,nSamples),key=lambda z: z[0])])
+    return kwdFiles,nSamples
 
 
 def makeDat(kwdFiles=None):
@@ -2706,8 +2772,8 @@ def formatFigure(fig, ax, title=None, xLabel=None, yLabel=None, blackBackground=
     if blackBackground:
         ax.set_axis_bgcolor('k')
         ax.tick_params(labelcolor='w', color='w')
-        ax.set_xlabel(color='w')
-        ax.set_ylabel(color='w')
+        ax.xaxis.label.set_color('w')
+        ax.yaxis.label.set_color('w')
         for side in ('left','bottom'):
             ax.spines[side].set_color('w')
 

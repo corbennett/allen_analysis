@@ -5,6 +5,7 @@ Created on Tue Oct 25 11:07:49 2016
 @author: svc_ccg
 """
 
+from __future__ import division
 import clust, fileIO, probeData
 import cv2, math, nrrd, os, re
 import numpy as np
@@ -13,6 +14,7 @@ import scipy.stats
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib.patches import Ellipse
+from matplotlib import cm
 
 
 class popProbeData():
@@ -180,8 +182,8 @@ class popProbeData():
         offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
         rfAreaCombined = np.nanmean(np.stack((onArea,offArea)),axis=0)
         
-        sizeTuningOn = np.stack(self.data.run.sparseNoise.sizeTuningOn[ind])
-        sizeTuningOff = np.stack(self.data.run.sparseNoise.sizeTuningOff[ind])
+#        sizeTuningOn = np.stack(self.data.run.sparseNoise.sizeTuningOn[ind])
+#        sizeTuningOff = np.stack(self.data.run.sparseNoise.sizeTuningOff[ind])
         
         # plot on vs off resp index
         plt.figure(facecolor='w')
@@ -243,41 +245,41 @@ class popProbeData():
             ax.set_ylabel('Number of Cells',fontsize='x-large')
             plt.tight_layout()
         
-        # size tuning plots
-        sizeTuningSize = [5,10,20,50]
-        sizeTuningLabel = [5,10,20,'full']
-        for sizeResp,clr in zip((sizeTuningOn,sizeTuningOff),('r','b')):
-            plt.figure(facecolor='w')
-            ax = plt.subplot(1,1,1)
-            sizeRespNorm = sizeResp/np.nanmax(sizeResp,axis=1)[:,None]
-            sizeRespMean = np.nanmean(sizeRespNorm,axis=0)
-            sizeRespStd = np.nanstd(sizeRespNorm,axis=0)
-            plt.plot(sizeTuningSize,sizeRespMean,color=clr,linewidth=3)
-            plt.fill_between(sizeTuningSize,sizeRespMean+sizeRespStd,sizeRespMean-sizeRespStd,color=clr,alpha=0.3)
-            ax.spines['right'].set_visible(False)
-            ax.spines['top'].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-            ax.set_xlim([0,55])
-            ax.set_xticks(sizeTuningSize)
-            ax.set_xticklabels(sizeTuningLabel)
-            ax.set_yticks([0,0.5,1])
-            ax.set_xlabel('Size (degrees)',fontsize='x-large')
-            ax.set_ylabel('Norm. Response',fontsize='x-large')
-            plt.tight_layout()
-            
-            plt.figure(facecolor='w')
-            ax = plt.subplot(1,1,1)
-            sizeRespNorm[sizeRespNorm<1] = 0
-            bestSizeCount = np.nansum(sizeRespNorm,axis=0)
-            ax.bar(sizeTuningSize,bestSizeCount,color=clr)
-            ax.spines['right'].set_visible(False)
-            ax.spines['top'].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-            ax.set_xlim([0,55])
-            ax.set_xticks(sizeTuningSize)
-            ax.set_xticklabels(sizeTuningLabel)
-            ax.set_xlabel('Size (degrees)',fontsize='x-large')
-            ax.set_ylabel('Best Size (# Units)',fontsize='x-large')
+#        # size tuning plots
+#        sizeTuningSize = [5,10,20,50]
+#        sizeTuningLabel = [5,10,20,'full']
+#        for sizeResp,clr in zip((sizeTuningOn,sizeTuningOff),('r','b')):
+#            plt.figure(facecolor='w')
+#            ax = plt.subplot(1,1,1)
+#            sizeRespNorm = sizeResp/np.nanmax(sizeResp,axis=1)[:,None]
+#            sizeRespMean = np.nanmean(sizeRespNorm,axis=0)
+#            sizeRespStd = np.nanstd(sizeRespNorm,axis=0)
+#            plt.plot(sizeTuningSize,sizeRespMean,color=clr,linewidth=3)
+#            plt.fill_between(sizeTuningSize,sizeRespMean+sizeRespStd,sizeRespMean-sizeRespStd,color=clr,alpha=0.3)
+#            ax.spines['right'].set_visible(False)
+#            ax.spines['top'].set_visible(False)
+#            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+#            ax.set_xlim([0,55])
+#            ax.set_xticks(sizeTuningSize)
+#            ax.set_xticklabels(sizeTuningLabel)
+#            ax.set_yticks([0,0.5,1])
+#            ax.set_xlabel('Size (degrees)',fontsize='x-large')
+#            ax.set_ylabel('Norm. Response',fontsize='x-large')
+#            plt.tight_layout()
+#            
+#            plt.figure(facecolor='w')
+#            ax = plt.subplot(1,1,1)
+#            sizeRespNorm[sizeRespNorm<1] = 0
+#            bestSizeCount = np.nansum(sizeRespNorm,axis=0)
+#            ax.bar(sizeTuningSize,bestSizeCount,color=clr)
+#            ax.spines['right'].set_visible(False)
+#            ax.spines['top'].set_visible(False)
+#            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+#            ax.set_xlim([0,55])
+#            ax.set_xticks(sizeTuningSize)
+#            ax.set_xticklabels(sizeTuningLabel)
+#            ax.set_xlabel('Size (degrees)',fontsize='x-large')
+#            ax.set_ylabel('Best Size (# Units)',fontsize='x-large')
         
         # plot all rf centers
         plt.figure(facecolor='w')
@@ -323,22 +325,24 @@ class popProbeData():
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(111, aspect='equal')
             
-            for sub in fit:
-                x,y = probeData.getEllipseXY(*sub[:5])
+            x,y = probeData.getEllipseXY(*sub[:5])
+            if sub[3]<40:
                 e = Ellipse(xy=[sub[0], sub[1]], width=sub[2], height=sub[3], angle=sub[4])
                 e.set_edgecolor('none')
-                e.set_alpha(0.2)
-                e.set_facecolor(colors[i])
-        
-                ax.spines['right'].set_visible(False)
-                ax.spines['top'].set_visible(False)
-                ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-                ax.set_xlabel('Azimuth',fontsize='x-large')
-                ax.set_ylabel('Elevation',fontsize='x-large')
+                e.set_alpha(0.5)
+                color = cm.jet((sub[1] + 40)/110.0)
+                e.set_facecolor(color)
                 ax.add_artist(e)
-                ax.set_xlim(-30, 110)
-                ax.set_ylim(-45, 75)
-                fig.tight_layout()
+        
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+            ax.set_xlabel('Azimuth (degrees)',fontsize='x-large')
+            ax.set_ylabel('Elevation (degrees)',fontsize='x-large')
+            
+            ax.set_xlim(-30, 120)
+            ax.set_ylim(-45, 85)
+            fig.tight_layout()
                 
     
     def makeRFVolume(self, padding=10, sigma=1, annotationDataFile=None):
