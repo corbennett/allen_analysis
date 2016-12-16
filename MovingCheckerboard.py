@@ -68,7 +68,7 @@ class MovingCheckerboard(VisStimControl):
                or (params[0]>0 and params[3]>0 and params[0]==params[3] and params[1]==params[4])):
                    if params in trialTypes:
                        trialTypes.remove(params)
-        numTrialTypes = len(trialTypes)
+        trialsPerLoop = len(trialTypes)*len(self.laserPower)
         if len(self.laserPower)>1 and not self.laserRandom:
             trialTypes = [trialTypes]
             for pwr in self.laserPower[1:]:
@@ -94,8 +94,8 @@ class MovingCheckerboard(VisStimControl):
         self.trialLaserPower = []
         while True:
             if trialFrame==trialInterval-1:
-                if trial==numTrialTypes-1 or loop==0:
-                    if loop>self.numLoops:
+                if trial==trialsPerLoop-1 or loop==0:
+                    if loop==self.numLoops:
                         break
                     loop += 1
                     print('starting loop '+str(loop))
