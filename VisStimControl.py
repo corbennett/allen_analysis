@@ -32,6 +32,7 @@ class VisStimControl():
         self.laserRandom = False
         self.laserPreFrames = 30
         self.laserPostFrames = 30
+        self.blueLaserRampFrames = 15
         if self.rig=='dome':
             self._saveDir = 'C:\Users\SVC_CCG\Desktop\Data' # path where parameters and data saved
             self.monWidth = None # cm
@@ -200,12 +201,12 @@ class VisStimControl():
             
     def setTrialLaserPower(self,trialTypes):
         if len(self.laserPower)>1 and not self.laserRandom:
-            for i,_ in enumerate(trialTypes):
-                random.shuffle(trialTypes[i])
+            for trials in trialTypes:
+                random.shuffle(trials)
             shuffledTrials = []
-            for trial,_ in enumerate(trialTypes[0]):
-                for pwr,_ in enumerate(self.laserPower):
-                    shuffledTrials.append(trialTypes[pwr][trial])
+            for trialInd,_ in enumerate(trialTypes[0]):
+                for pwrInd,_ in enumerate(self.laserPower):
+                    shuffledTrials.append(trialTypes[pwrInd][trialInd])
             return shuffledTrials
         else:
             random.shuffle(trialTypes)
@@ -214,7 +215,11 @@ class VisStimControl():
     def setLaserOn(self,power):
         if power>0:
             if self.laser=='Blue':
-                self._blueLaserControl.Write(np.array([float(power)]))
+                if self.blueLaserRampFrames>0:
+                    rampSamples = round(self.blueLaserRampFrames/self.frameRate*self._blueLaserControl.sampRate)
+                    self._blueLaserControl.Write(np.linspace(0,power,rampSamples))
+                else:
+                    self._blueLaserControl.Write(np.array([float(power)]))
             elif self.laser=='Orange':
                 self._laserPort.write('p '+str(power/1e3)+'\r')
                 self._digOutputs.WriteBit(1,0)

@@ -27,7 +27,7 @@ class LaserControlGUI():
     def __init__(self,app):
         self.app = app
         
-        winWidth = 300
+        winWidth = 600
         winHeight = 300
         self.mainWin = QtGui.QMainWindow()
         self.mainWin.setWindowTitle('LaserControl')
@@ -84,12 +84,12 @@ class LaserControlObj():
         self.serialPort.parity = serial.PARITY_NONE
         self.serialPort.open()
         
-        self.powerControl = QtGui.QDoubleSpinBox()
         self.shutterControlMode = shutterControlMode
+        self.powerControl = QtGui.QDoubleSpinBox()
+        self.powerControl.setPrefix('Power:  ')
         if shutterControlMode=='digital':
             self.nidaqDigitalOut = nidaqDigitalOut
             self.nidaqDigitalOutCh = ch
-            self.powerControl.setPrefix('Power:  ')
             self.powerControl.setSuffix(' mW')
             self.powerControl.setDecimals(1)
             self.powerControl.setRange(0,100)
@@ -117,7 +117,6 @@ class LaserControlObj():
         self.pulseNumControl.setSingleStep(1)
         self.pulseNumControl.setValue(1)
         self.pulseNumControl.setEnabled(False)
-        self.pulseNumControl.valueChanged.connect(self.pulseNumChanged)
         
         self.pulseDurControl = QtGui.QDoubleSpinBox()
         self.pulseDurControl.setPrefix('Pulse Duration:  ')
@@ -136,8 +135,16 @@ class LaserControlObj():
         self.pulseIntervalControl.setRange(0.001,60)
         self.pulseIntervalControl.setSingleStep(0.1)
         self.pulseIntervalControl.setValue(1)
-        self.pulseIntervalControl.valueChanged.connect(self.pulseIntChanged)
         self.pulseIntervalControl.setEnabled(False)
+        
+        if shutterControlMode=='analog':
+            self.rampDurControl = QtGui.QDoubleSpinBox()
+            self.rampDurControl.setPrefix('Ramp:  ')
+            self.rampDurControl.setSuffix(' s')
+            self.rampDurControl.setDecimals(3)
+            self.rampDurControl.setRange(0,1)
+            self.rampDurControl.setSingleStep(0.05)
+            self.rampDurControl.setValue(0)
         
         self.onOffButton = QtGui.QPushButton('Start',checkable=True)
         self.onOffButton.clicked.connect(self.onOffButtonPress)
@@ -145,6 +152,8 @@ class LaserControlObj():
         self.layout = QtGui.QGridLayout()
         self.layout.addWidget(self.label,0,1,1,1)
         self.layout.addWidget(self.powerControl,1,0,1,1)
+        if shutterControlMode=='analog':
+            self.layout.addWidget(self.rampDurControl,2,0,1,1)
         self.layout.addWidget(self.modeMenu,1,1,1,1)
         self.layout.addWidget(self.pulseNumControl,2,1,1,1)
         self.layout.addWidget(self.pulseDurControl,3,1,1,1)
@@ -164,38 +173,51 @@ class LaserControlObj():
             self.pulseNumControl.setEnabled(True)
             self.pulseIntervalControl.setEnabled(True)
             self.pulseDurControl.setEnabled(True)
-    
-    def pulseNumChanged(self,val):
-        pass
-    
+            
     def pulseDurChanged(self,val):
-        pass
-    
-    def pulseIntChanged(self,val):
-        pass
+        if self.shutterControlMode=='analog':
+            if val<self.rampControl.value():
+                self.rampDurControl.setValue(val)
+            self.rampDurControl.setMaximum(val)
     
     def onOffButtonPress(self,val):
         if self.onOffButton.isChecked():
             self.onOffButton.setText('Stop')
+            if self.shutterControlMode=='analog':
+                power = self.powerControl.value()
+                rampDur = self.rampDurControl.value()
+                if rampDur>0:
+                    ramp = np.linspace(0,power,round(rampDur*self.nidaqAnalogOut.sampRate))
             if self.modeMenu.currentIndex()==0:
                 if self.shutterControlMode=='digital':
                     self.nidaqDigitalOut.WriteBit(self.nidaqDigitalOutCh,0)
                 else:
-                    self.nidaqAnalogOut.Write(np.array([self.powerControl.value()]))
+                    if rampDur>0:
+                        self.nidaqAnalogOut.Write(ramp)
+                    else:
+                        self.nidaqAnalogOut.Write(np.array([power]))
             else:
+                pulseDur = self.pulseDurControl.value()
+                pulseInt = self.pulseIntervalControl.value()
                 for i in range(self.pulseNumControl.value()):
                     if i>0:
-                        time.sleep(self.pulseIntervalControl.value())
+                        time.sleep(pulseInt)
                     self.app.processEvents()
                     if not self.onOffButton.isChecked():
                         return
                     if self.shutterControlMode=='digital':
                         self.nidaqDigitalOut.WriteBit(self.nidaqDigitalOutCh,0)
-                        time.sleep(self.pulseDurControl.value())
+                        time.sleep(pulseDur)
                         self.nidaqDigitalOut.WriteBit(self.nidaqDigitalOutCh,1)
                     else:
-                        self.nidaqAnalogOut.Write(np.array([self.powerControl.value()]))
-                        time.sleep(self.pulseDurControl.value())
+                        if rampDur>0:
+                            t = time.clock()
+                            self.nidaqAnalogOut.Write(ramp)
+                            while time.clock()-t<pulseDur:
+                                time.sleep(1/self.nidaqAnalogOut.sampRate)
+                        else:
+                            self.nidaqAnalogOut.Write(np.array([power]))
+                            time.sleep(pulseDur)
                         self.nidaqAnalogOut.Write(np.array([0.0]))
                 self.onOffButton.click()
         else:
