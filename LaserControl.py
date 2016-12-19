@@ -176,7 +176,7 @@ class LaserControlObj():
             
     def pulseDurChanged(self,val):
         if self.shutterControlMode=='analog':
-            if val<self.rampControl.value():
+            if val<self.rampDurControl.value():
                 self.rampDurControl.setValue(val)
             self.rampDurControl.setMaximum(val)
     
