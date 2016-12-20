@@ -32,6 +32,7 @@ class VisStimControl():
         self.laserRandom = False
         self.laserPreFrames = 30
         self.laserPostFrames = 30
+        self.blueLaserZeroOffset = 0.6
         self.blueLaserRampFrames = 15
         if self.rig=='dome':
             self._saveDir = 'C:\Users\SVC_CCG\Desktop\Data' # path where parameters and data saved
@@ -217,7 +218,7 @@ class VisStimControl():
             if self.laser=='Blue':
                 if self.blueLaserRampFrames>0:
                     rampSamples = round(self.blueLaserRampFrames/self.frameRate*self._blueLaserControl.sampRate)
-                    self._blueLaserControl.Write(np.linspace(0,power,rampSamples))
+                    self._blueLaserControl.Write(np.linspace(self.blueLaserZeroOffset,power,rampSamples))
                 else:
                     self._blueLaserControl.Write(np.array([float(power)]))
             elif self.laser=='Orange':

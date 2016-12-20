@@ -138,6 +138,14 @@ class LaserControlObj():
         self.pulseIntervalControl.setEnabled(False)
         
         if shutterControlMode=='analog':
+            self.zeroOffsetControl = QtGui.QDoubleSpinBox()
+            self.zeroOffsetControl.setPrefix('Zero Offset:  ')
+            self.zeroOffsetControl.setSuffix(' V')
+            self.zeroOffsetControl.setDecimals(2)
+            self.zeroOffsetControl.setRange(0,1)
+            self.zeroOffsetControl.setSingleStep(0.05)
+            self.zeroOffsetControl.setValue(0)
+            
             self.rampDurControl = QtGui.QDoubleSpinBox()
             self.rampDurControl.setPrefix('Ramp:  ')
             self.rampDurControl.setSuffix(' s')
@@ -153,7 +161,8 @@ class LaserControlObj():
         self.layout.addWidget(self.label,0,1,1,1)
         self.layout.addWidget(self.powerControl,1,0,1,1)
         if shutterControlMode=='analog':
-            self.layout.addWidget(self.rampDurControl,2,0,1,1)
+            self.layout.addWidget(self.zeroOffsetControl,2,0,1,1)
+            self.layout.addWidget(self.rampDurControl,3,0,1,1)
         self.layout.addWidget(self.modeMenu,1,1,1,1)
         self.layout.addWidget(self.pulseNumControl,2,1,1,1)
         self.layout.addWidget(self.pulseDurControl,3,1,1,1)
@@ -163,6 +172,10 @@ class LaserControlObj():
     def powerControlChanged(self,val):
         if self.shutterControlMode=='digital':
             self.serialPort.write('p '+str(val/1e3)+'\r')
+        else:
+            if val<self.zeroOffsetControl.value():
+                self.zeroOffsetControl.setValue(val)
+            self.zeroOffsetControl.setMaximum(val)
     
     def modeMenuChanged(self,ind):
         if ind==0:
@@ -187,7 +200,7 @@ class LaserControlObj():
                 power = self.powerControl.value()
                 rampDur = self.rampDurControl.value()
                 if rampDur>0:
-                    ramp = np.linspace(0,power,round(rampDur*self.nidaqAnalogOut.sampRate))
+                    ramp = np.linspace(self.zeroOffsetControl.value(),power,round(rampDur*self.nidaqAnalogOut.sampRate))
             if self.modeMenu.currentIndex()==0:
                 if self.shutterControlMode=='digital':
                     self.nidaqDigitalOut.WriteBit(self.nidaqDigitalOutCh,0)
