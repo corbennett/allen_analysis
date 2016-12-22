@@ -79,7 +79,7 @@ class MovingCheckerboard(VisStimControl):
         
         # run
         frame = 0
-        loop = 0
+        loop = -1
         trial = -1
         trialFrame = 0
         trialInterval = self.getInterTrialInterval()
@@ -94,19 +94,19 @@ class MovingCheckerboard(VisStimControl):
         self.trialLaserPower = []
         while True:
             if trialFrame==trialInterval-1:
-                if trial==trialsPerLoop-1 or loop==0:
-                    if loop==self.numLoops:
+                if loop==-1 or trial==trialsPerLoop-1:
+                    if loop==self.numLoops-1:
                         break
                     loop += 1
-                    print('starting loop '+str(loop))
-                    trial = 0
+                    print('starting loop '+str(loop+1))
                     shuffledTrials = np.array(self.setTrialLaserPower(trialTypes))
                     if len(self.laserPower)>1 and not self.laserRandom:
                         self.spaceLaserTrials(shuffledTrials)
+                    trial = 0
                 else:
                     trial += 1
                 trialFrame = -1
-                self.trialStartFrame.append(frame+1)
+                self.trialStartFrame.append(frame+1+self.laserPreFrames)
                 self.trialBckgndSpeed.append(shuffledTrials[trial,0])
                 self.trialBckgndDir.append(shuffledTrials[trial,1])
                 self.trialPatchSize.append(shuffledTrials[trial,2])
@@ -207,7 +207,7 @@ class MovingCheckerboard(VisStimControl):
                             if patchPos[1]+patch.shape[0]>self.imageSize[1]:
                                 patchImage = patch[:self.imageSize[1]-patchPos[1],:]
                             checkerboardImage[patchImagePos[1]:patchImagePos[1]+patchImage.shape[0],patchImagePos[0]:patchImagePos[0]+patchImage.shape[1]] = patchImage
-                    if trialFrame==self.trialNumFrames[-1]-1:
+                    if trialFrame==self.laserPreFrames+self.trialNumFrames[-1]-1:
                         if self.trialBckgndDir[-1]==0:
                             leftOffset = bckgndOffset
                             rightOffset = self._squareSizePix-bckgndOffset

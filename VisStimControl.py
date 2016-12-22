@@ -30,7 +30,7 @@ class VisStimControl():
         self.laser = None # 'Blue', 'Orange', or None
         self.laserPower = [0] # until calibrated: 0-1 V for blue laser or 0-100 mW for orange laser
         self.laserRandom = False
-        self.laserPreFrames = 30
+        self.laserPreFrames = 30 # initLaser() sets laser pre and post frames to 0 if laser is None
         self.laserPostFrames = 30
         self.blueLaserZeroOffset = 0.6
         self.blueLaserRampFrames = 15
