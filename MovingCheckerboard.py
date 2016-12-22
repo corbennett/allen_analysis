@@ -106,7 +106,6 @@ class MovingCheckerboard(VisStimControl):
                 else:
                     trial += 1
                 trialFrame = -1
-                self.trialStartFrame.append(frame+1+self.laserPreFrames)
                 self.trialBckgndSpeed.append(shuffledTrials[trial,0])
                 self.trialBckgndDir.append(shuffledTrials[trial,1])
                 self.trialPatchSize.append(shuffledTrials[trial,2])
@@ -158,6 +157,8 @@ class MovingCheckerboard(VisStimControl):
                 if trialFrame==0:
                     self.setLaserOn(self.trialLaserPower[-1])
                 if self.laserPreFrames<=trialFrame<self.laserPreFrames+self.trialNumFrames[-1]:
+                    if trialFrame==self.laserPreFrames:
+                        self.trialStartFrame.append(frame)
                     if bckgndMovPerFrame>0:
                         if bckgndOffset==0:
                             bckgndOffset = self._squareSizePix
