@@ -30,6 +30,7 @@ class probeData():
         self.channelMapFile = r'C:\Users\SVC_CCG\Documents\PythonScripts\imec_channel_map.prb'
         self.wheelChannel = 134
         self.diodeChannel = 135
+        self.visStimOnChannel = 136
         self.sampleRate = 30000     
 
 
@@ -160,10 +161,14 @@ class probeData():
     
     
     def alignFramesToDiode(self, frameSampleAdjustment = None, plot = False, protocol=0):
+        protocol = str(protocol)
         if frameSampleAdjustment is None:
-            frameSampleAdjustment = np.round((4.5/60.0) * self.sampleRate) 
-        self.visstimData[str(protocol)]['frameSamples'] = (self.TTL[str(protocol)]['VisstimOn']['falling'] + frameSampleAdjustment).astype(int)
-        self._frameSampleAdjustment = frameSampleAdjustment
+            self._frameSampleAdjustment = np.round((4.5/60.0) * self.sampleRate)
+        
+        thresh = 10000
+        visStimOn = self._d[protocol]['data'][:,self.visStimOnChannel]
+        self.visstimData[protocol]['frameSamples'] = np.where(np.logical_and(visStimOn[:-1]<thresh,visStimOn[1:]>thresh))[0]+1+self._frameSampleAdjustment
+#        self.visstimData[protocol]['frameSamples'] = (self.TTL[protocol]['VisstimOn']['falling'] + self._frameSampleAdjustment).astype(int)
         
         if plot:
             plt.figure()
@@ -1805,19 +1810,18 @@ class probeData():
             
             
     def analyzeOKR(self,protocol):
-        # to do: find last valid trial; horizontal grating movement only; get checkerboard direction
         protocol = str(protocol)        
         if not hasattr(self,'behaviorData') or 'eyeTracking' not in self.behaviorData[protocol]:
             print('no eye tracking data for protocol '+protocol)
             return
         protocolLabel = self.getProtocolLabel(protocol)
-        p = self.visstimData[protocol]
+        p = self.visstimData[protocol]        
         if protocolLabel=='gratings':
-            trials = (p['stimulusHistory_contrast']>0)
-            trials[-1] = False
-            trialStartFrames = p['stimStartFrames'][trials]
-            trialStartSamples = p['frameSamples'][trialStartFrames]
-            trialEndSamples = p['frameSamples'][trialStartFrames+p['stimTime']]   
+            trialStartFrames = p['stimStartFrames']
+            trialEndFrames = trialStartFrames+p['stimTime']
+            trials = np.logical_and(trialEndFrames<p['frameSamples'].size,np.logical_and(p['stimulusHistory_contrast']>0,p['stimulusHistory_ori']==0))
+            trialStartSamples = p['frameSamples'][trialStartFrames[trials]]
+            trialEndSamples = p['frameSamples'][trialEndFrames[trials]]   
             trialX = p['stimulusHistory_sf'][trials]
             trialY = p['stimulusHistory_tf'][trials]
             xparamName = 'sf'
@@ -1825,10 +1829,13 @@ class probeData():
         elif protocolLabel=='checkerboard':
             trialStartFrames = p['trialStartFrame']
             trialEndFrames = trialStartFrames+p['trialNumFrames'].astype(int)
-            trialStartSamples = p['frameSamples'][trialStartFrames[:-2]]
-            trialEndSamples = p['frameSamples'][trialEndFrames[:-2]]
-            trialX = p['trialBckgndSpeed'][:-2]
-            trialY = p['trialPatchSpeed'][:-2]
+            trials = trialEndFrames<p['frameSamples'].size
+            trialStartSamples = p['frameSamples'][trialStartFrames[trials]]
+            trialEndSamples = p['frameSamples'][trialEndFrames[trials]]
+            trialX = p['trialBckgndSpeed'][trials].copy()
+            trialX[p['trialBckgndDir'][trials]==180] *= -1
+            trialY = p['trialPatchSpeed'][trials].copy()
+            trialY[p['trialPatchDir'][trials]==180] *= -1
             xparamName = 'background speed'
             yparamName = 'patch speed'
         else:
@@ -1837,43 +1844,77 @@ class probeData():
         
         eyeTrackSamples = self.behaviorData[protocol]['eyeTracking']['samples']
         pupilX = self.behaviorData[protocol]['eyeTracking']['pupilX'][0:eyeTrackSamples.size]
-        pupilVel = np.diff(pupilX)/np.diff(eyeTrackSamples/float(self.sampleRate))
+        pupilVel = -np.diff(pupilX)/np.diff(eyeTrackSamples)*self.sampleRate
         negSaccades = self.behaviorData[protocol]['eyeTracking']['negSaccades']
         posSaccades = self.behaviorData[protocol]['eyeTracking']['posSaccades']
         allSaccades = np.sort(np.concatenate((negSaccades,posSaccades)))
         allSaccades = allSaccades[allSaccades<eyeTrackSamples.size]
-        saccadeSamples = eyeTrackSamples[allSaccades]
-        for saccade in saccadeSamples:
+        for saccade in allSaccades:
             pupilVel[int(saccade-3):int(saccade+6)] = np.nan
+            
+        smoothPts = 31
+        n = smoothPts//2
+        pupilVelSmoothed = np.convolve(pupilVel,np.ones(smoothPts)/smoothPts,mode='same')
+        pupilVelSmoothed[:n] = pupilVel[:n].mean()
+        pupilVelSmoothed[-n:] = pupilVel[-n:].mean()
         
         xparam = np.unique(trialX)
         yparam = np.unique(trialY)
         meanPupilVel = np.zeros((yparam.size,xparam.size))
-        stimSpeed = meanPupilVel.copy()
         for i,y in enumerate(yparam):
             for j,x in enumerate(xparam):
                 trialInd = np.where(np.logical_and(trialY==y,trialX==x))[0]
                 v = np.zeros(trialInd.size)
                 for n,trial in enumerate(trialInd):
-                    v[n] = np.nanmean(pupilVel[np.argmin(eyeTrackSamples-trialStartSamples[trial]):np.argmin(eyeTrackSamples-trialEndSamples[trial])])
+                    v[n] = np.nanmean(pupilVelSmoothed[np.argmin(abs(eyeTrackSamples-trialStartSamples[trial])):np.argmin(abs(eyeTrackSamples-trialEndSamples[trial]))])
                 meanPupilVel[i,j] = np.nanmean(v)
-                stimSpeed[i,j] = y/x if protocolLabel=='gratings' else x
                 
         fig = plt.figure(facecolor='w')
-        ax = fig.add_subplot(2,1,1)
-        im = ax.imshow(meanPupilVel,cmap='gray',origin='lower',interpolation='none')
-        ax.tick_params(direction='out',top=False,left=False)
-        ax.set_xticks(range(xparam.size))
-        ax.set_yticks(range(yparam.size))
-        ax.set_xticklabels(xparam)
-        ax.set_yticklabels(yparam)
+        ax = fig.add_subplot(3,2,1)
+        im = ax.imshow(meanPupilVel,clim=[0,meanPupilVel.max()],cmap='gray',origin='lower',interpolation='none')
+        ax.tick_params(direction='out',top=False,right=False)
+        ax.set_xticks([0,xparam.size-1])
+        ax.set_yticks([0,yparam.size-1])
+        ax.set_xticklabels(xparam[[0,-1]])
+        ax.set_yticklabels(yparam[[0,-1]])
         ax.set_xlabel(xparamName)
         ax.set_ylabel(yparamName)
+        ax.set_title('pupil speed (deg/s)')
         cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+        cb.set_ticks([0,math.floor(meanPupilVel.max()*10)/10])
         
-        ax = fig.add_subplot(2,1,2)
-        im = ax.imshow(meanPupilVel/stimSpeed,cmap='gray',origin='lower',interpolation='none')
-        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+        if protocolLabel=='gratings':
+            stimSpeed = [yparam[:,None]/xparam]
+            stimSpeedLabel = ['grating']
+        else:
+            stimSpeed = [np.tile(xparam,(xparam.size,1)),np.tile(yparam[:,None],(1,yparam.size))]
+            stimSpeedLabel = ['background','patch']
+        for i,(speed,label) in enumerate(zip(stimSpeed,stimSpeedLabel)):
+            okrGain = meanPupilVel/speed
+            ax = fig.add_subplot(3,2,i+3)
+            im = ax.imshow(okrGain,clim=[0,1.1*okrGain.max()],cmap='gray',origin='lower',interpolation='none')
+            ax.tick_params(direction='out',top=False,right=False)
+            ax.set_xticks([0,xparam.size-1])
+            ax.set_yticks([0,yparam.size-1])
+            ax.set_xticklabels(xparam[[0,-1]])
+            ax.set_yticklabels(yparam[[0,-1]])
+            ax.set_xlabel(xparamName)
+            ax.set_ylabel(yparamName)
+            ax.set_title('pupil speed / '+label+' speed')
+            cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+            cb.set_ticks([0,math.floor(okrGain.max()*10)/10])
+            
+            ax = fig.add_subplot(3,2,i+4)
+            ax.semilogx(speed.ravel(),okrGain.ravel(),'ko')
+            for side in ('top','right'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(which='both',direction='out',top=False,right=False)
+            ax.set_xlim([0.9,1000])
+            ax.set_ylim([0,1.1])
+            ax.set_yticks([0,0.5,1])
+            ax.set_xlabel(label+' speed')
+            ax.set_ylabel('OKR gain')
+        plt.tight_layout()
 
         
     def plotISIHist(self,units=None,protocol=None,binWidth=0.001,maxInterval=0.02):
@@ -2247,7 +2288,7 @@ class probeData():
             return protocol[0]
         
     def getProtocolLabel(self,protocolIndex):
-        match = re.search('_\d{2,2}-\d{2,2}-\d{2,2}_.*',ntpath.dirname(self.kwdFileList[protocolIndex]))
+        match = re.search('_\d{2,2}-\d{2,2}-\d{2,2}_.*',ntpath.dirname(self.kwdFileList[int(protocolIndex)]))
         return match.group()[10:]
         
     def getOrderedUnits(self,units=None):
