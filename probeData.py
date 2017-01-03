@@ -149,7 +149,8 @@ class probeData():
         for protocolIndex,_ in enumerate(self.kwdFileList):
             protocolName = self.getProtocolLabel(protocolIndex)
             for f in filePaths:
-                if 'MouseEyeTracker_'+protocolName in f and '_analysis' in f:
+                match = re.search('MouseEyeTracker_'+protocolName+'_\d{8,8}_\d{6,6}_analysis',f)
+                if match is not None:
                     protocol = str(protocolIndex)
                     dataFile = h5py.File(f)
                     camExposureSamples = self.TTL[protocol]['CamExposing']['rising']
