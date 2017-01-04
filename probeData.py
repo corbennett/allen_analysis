@@ -7,7 +7,7 @@ Created on Fri Jun 17 12:19:20 2016
 
 from __future__ import division
 import fileIO
-import copy, datetime, h5py, json, math, ntpath, os, re, shelve, shutil
+import datetime, h5py, json, math, ntpath, os, re, shelve, shutil
 import numpy as np
 import scipy.ndimage.filters
 import scipy.optimize
@@ -162,13 +162,12 @@ class probeData():
     
     
     def alignFramesToDiode(self, frameSampleAdjustment = None, plot = False, protocol=0):
-        protocol = str(protocol)
         if frameSampleAdjustment is None:
             self._frameSampleAdjustment = np.round((4.5/60.0) * self.sampleRate)
         
         thresh = 10000
         visStimOn = self._d[protocol]['data'][:,self.visStimOnChannel]
-        self.visstimData[protocol]['frameSamples'] = np.where(np.logical_and(visStimOn[:-1]<thresh,visStimOn[1:]>thresh))[0]+1+self._frameSampleAdjustment
+        self.visstimData[str(protocol)]['frameSamples'] = np.where(np.logical_and(visStimOn[:-1]<thresh,visStimOn[1:]>thresh))[0]+1+self._frameSampleAdjustment
 #        self.visstimData[protocol]['frameSamples'] = (self.TTL[protocol]['VisstimOn']['falling'] + self._frameSampleAdjustment).astype(int)
         
         if plot:
