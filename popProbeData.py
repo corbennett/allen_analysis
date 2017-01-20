@@ -7,7 +7,7 @@ Created on Tue Oct 25 11:07:49 2016
 
 from __future__ import division
 import clust, fileIO, probeData
-import cv2, math, nrrd, os, re
+import cv2, datetime, math, nrrd, os, re
 import numpy as np
 import pandas as pd
 import scipy.stats
@@ -30,6 +30,9 @@ class popProbeData():
         if len(filePaths)<1:
             return
         self.experimentFiles = filePaths
+        # sort by date
+        expDates,_ = self.getExperimentInfo()
+        self.experimentFiles = [z[0] for z in sorted(zip(filePaths,[datetime.datetime.strptime(date,'%m%d%Y') for date in expDates]),key=lambda i: i[1])]
         
         
     def getExperimentInfo(self):
@@ -42,10 +45,13 @@ class popProbeData():
         return expDate,anmID
         
         
-    def analyzeExperiments(self):
-        for exp in self.experimentFiles:
+    def analyzeExperiments(self,exps=None):
+        if exps is None:
+            exps = self.experimentFiles
+        for ind,exp in enumerate(exps):
             p = self.getProbeDataObj(exp)
             self.getUnitLabels(p)
+            print('Analyzing experiment '+str(ind+1)+' of '+str(len(exps)))
             p.runAllAnalyses(splitRunning=True,plot=False)
             p.saveHDF5(exp)
         
@@ -78,6 +84,7 @@ class popProbeData():
             exps = [self.experimentFiles[i] for i,(date,anm) in enumerate(zip(expDate,anmID)) if date not in dataFrameExps and anm not in dataFrameAnms]
             if len(exps)<1:
                 return
+        self.analyzeExperiments(exps)
             
         # dataFrame rows
         rowNames = ('experimentDate','animalID','unitID','unitLabel','ccfX','ccfY','ccfZ')
