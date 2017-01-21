@@ -591,9 +591,6 @@ class probeData():
                                                          'offResp': offResp,
                                                          'spontRateMean': spontRateMean,
                                                          'spontRateStd': spontRateStd,
-                                                         'sdfOn' : sdfOn,
-                                                         'sdfOff' : sdfOff,
-                                                         'sdfTime' : sdfTime,
                                                          'onFit': onFit[uindex],
                                                          'offFit': offFit[uindex],
                                                          'sizeTuningOn': sizeTuningOn[uindex],
@@ -1063,8 +1060,6 @@ class probeData():
                                           'spontRateMean': spontRateMean,
                                           'spontRateStd': spontRateStd,
                                           'respMat': respMat,
-                                          'sdf': sdf,
-                                          'sdfTime':sdfTime,
                                           'trials': trials}
             if protocolType=='stf':
                 self.units[str(unit)][tag]['stfFitParams'] = stfFitParams[uindex]
@@ -1243,7 +1238,9 @@ class probeData():
         # now pull out specified trial subset
         trialStartSamples = p['frameSamples'][trialStartFrame[trials]]
         trialEndSamples = p['frameSamples'][trialEndFrame[trials]]
-        minInterTrialTime = p['interTrialInterval'][0]+p['laserPreFrames']+p['laserPostFrames']
+        minInterTrialTime = p['interTrialInterval'][0]
+        if 'laserPreFrames' in p:
+            minInterTrialTime += p['laserPreFrames']+p['laserPostFrames']
         minInterTrialSamples = int(minInterTrialTime*self.sampleRate)
         latency = 0.25
         latencySamples = int(latency*self.sampleRate)
@@ -1329,8 +1326,6 @@ class probeData():
                                                             'peakResp': peakResp,
                                                             'bestPatchRespInd': bestPatchRespInd,
                                                             'respMat': respMat,
-                                                            'sdf': sdf,
-                                                            'sdfTime': sdfTime,
                                                             'trials': trials}
             
             if plot:
@@ -1595,7 +1590,7 @@ class probeData():
             if 'running' in self.behaviorData[str(protocol)]:
                 wheelData = -self.behaviorData[str(protocol)]['running']
                 for trial in range(trialStarts.size):
-                    trialSpeed = np.mean(wheelData[round(trialStarts[trial]/wheelDownsampleFactor):round(trialEnds[trial]/wheelDownsampleFactor)])
+                    trialSpeed = np.mean(wheelData[int(round(trialStarts[trial]/wheelDownsampleFactor)):int(round(trialEnds[trial]/wheelDownsampleFactor))])
                     speeds.append(trialSpeed)
                     if trialSpeed >= runThresh:
                         runningTrials.append(trial)
@@ -2172,48 +2167,54 @@ class probeData():
                 print(pro+ ' not found')
             else:
                 trialStarts, trialEnds = self.getTrialStartsEnds(protocol)
+                laserTag = '_laserOff'
                 if 'gratings'==pro:
                     if splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)   
-                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials, saveTag='_stat', plot=plot)
-                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials, saveTag='_run', plot=plot)
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials, saveTag=laserTag+'_run', plot=plot)
                     else:
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', plot=plot)
     
                 elif 'gratings_ori'==pro:
                     if splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)  
-                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials, saveTag='_stat', plot=plot)
-                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials, saveTag='_run', plot=plot)
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials, saveTag=laserTag+'_run', plot=plot)
                     else:
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', plot=plot)
     
                 elif 'sparseNoise' in pro:
                     if splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                 
-                        self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat', plot=plot)
-                        self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run', plot=plot)
+                        self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
+                        self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag=laserTag+'_run', plot=plot)
                     else:                    
                         self.findRF(units, protocol=protocol, useCache=useCache, plot=plot)
                 elif 'flash' in pro:
                     if splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                 
-                        self.analyzeFlash(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat', plot=plot)
-                        self.analyzeFlash(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run', plot=plot)
+                        self.analyzeFlash(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
+                        self.analyzeFlash(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag=laserTag+'_run', plot=plot)
                     else:                    
                         self.analyzeFlash(units, protocol=protocol, useCache=useCache, plot=plot)
                 elif 'spots' in pro:
                     if splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                    
-                        self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag='_stat', plot=plot)
-                        self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag='_run', plot=plot)
+                        self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
+                        self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag=laserTag+'_run', plot=plot)
                     else:
                         self.analyzeSpots(units, protocol=protocol, useCache=useCache, plot=plot)
                 elif 'checkerboard' in pro:
                     if splitRunning:
-                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)            
-                        self.analyzeCheckerboard(units, protocol=protocol, trials=statTrials, saveTag='_stat', plot=plot)
-                        self.analyzeCheckerboard(units, protocol=protocol, trials=runTrials, saveTag='_run', plot=plot)
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                        hasLaser = 'trialLaserPower' in self.visstimData[str(protocol)]
+                        laserPower = self.visstimData[str(protocol)]['laserPower'] if hasLaser else [0]
+                        for power in laserPower:
+                            isLaserPower = self.visstimData[str(protocol)]['trialLaserPower']==power if hasLaser else np.ones(len(trialStarts),dtype=bool)
+                            laserTag = '_laserOn' if power>0 else '_laserOff'
+                            self.analyzeCheckerboard(units, protocol=protocol, trials=np.array(statTrials)[isLaserPower[statTrials]], saveTag=laserTag+'_stat', plot=plot)
+                            self.analyzeCheckerboard(units, protocol=protocol, trials=np.array(runTrials)[isLaserPower[runTrials]], saveTag=laserTag+'_run', plot=plot)
                     else:
                         self.analyzeCheckerboard(units, protocol=protocol, plot=plot)
                 
@@ -2385,18 +2386,20 @@ class probeData():
         table = pandas.read_excel(fileName, sheetname=expDate+'_'+animalID)
         for u in range(table.shape[0]):
             unit = table.Cell[u]
-            label = table.Label[u]
-            self.units[str(unit)]['label'] = label
+            if not np.isnan(unit):
+                label = table.Label[u]
+                self.units[str(int(unit))]['label'] = label
+        assert(all('label' in self.units[u] for u in self.units.keys()))
             
         try:
-            self.CCFTipPosition = np.array(table.Tip[0:3])
-            self.CCFLPEntryPosition = np.array(table.Entry[0:3])
+            self.CCFTipPosition = np.array(table.Tip[0:3]).astype(float)
+            self.CCFLPEntryPosition = np.array(table.Entry[0:3]).astype(float)
             self.findCCFCoords()
         except:
             for u in self.units:
                 self.units[str(u)]['CCFCoords'] = np.full(3,np.nan)
             print('Could not find CCF Tip or Entry positions')
-
+            
 
     def getUnitsByLabel(self, labelID, criterion, notFlag=False):
         units = []
@@ -2677,7 +2680,7 @@ def fitRF(x,y,data,initialParams,maxOffGrid):
     try:
         gridSize = max(x[-1]-x[0],y[-1]-y[0])
         lowerBounds = np.array([x[0]-maxOffGrid,y[0]-maxOffGrid,0,0,0,data.min(),data.min()])
-        upperBounds = np.array([x[-1]+maxOffGrid,y[-1]+maxOffGrid,0.5*gridSize,0.5*gridSize,2*math.pi,1.5*data.max(),np.median(data)])
+        upperBounds = np.array([x[-1]+maxOffGrid,y[-1]+maxOffGrid,0.5*gridSize,0.5*gridSize,2*math.pi,1.5*data.max(),data.mean()])
         fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
         if not all([lowerBounds[i]+1<fitParams[i]<upperBounds[i]-1 for i in (0,1)]):
             fitParams = None # if fit center on edge of boundaries

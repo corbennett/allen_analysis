@@ -49,9 +49,9 @@ class popProbeData():
         if exps is None:
             exps = self.experimentFiles
         for ind,exp in enumerate(exps):
+            print('Analyzing experiment '+str(ind+1)+' of '+str(len(exps)))
             p = self.getProbeDataObj(exp)
             self.getUnitLabels(p)
-            print('Analyzing experiment '+str(ind+1)+' of '+str(len(exps)))
             p.runAllAnalyses(splitRunning=True,plot=False)
             p.saveHDF5(exp)
         
@@ -71,7 +71,7 @@ class popProbeData():
         probeDataObj.readExcelFile(fileName=self.excelFile)
     
     
-    def getData(self):
+    def getData(self,runAnalysis=True):
         # determine which experiments to append to dataframe
         if self.experimentFiles is None:
             self.getExperimentFiles()
@@ -84,7 +84,9 @@ class popProbeData():
             exps = [self.experimentFiles[i] for i,(date,anm) in enumerate(zip(expDate,anmID)) if date not in dataFrameExps and anm not in dataFrameAnms]
             if len(exps)<1:
                 return
-        self.analyzeExperiments(exps)
+        
+        if runAnalysis:
+            self.analyzeExperiments(exps)
             
         # dataFrame rows
         rowNames = ('experimentDate','animalID','unitID','unitLabel','ccfX','ccfY','ccfZ')
@@ -97,7 +99,8 @@ class popProbeData():
         ccfZ = []
         
         # dataFrame columns
-        columnNames = ('runState','paramType','paramName')
+        columnNames = ('laserState','runState','paramType','paramName')
+        laserState = []
         runState = []
         paramType = []
         paramName = []
@@ -105,8 +108,10 @@ class popProbeData():
         # data is dictionary of paramter type (protocol) dictionaries that are converted to dataframe
         # each parameter type dictionary has keys corresponding to parameters
         # the value for each parameter is a len(units) list
+        laserLabels = ('laserOff','laserOn')
+        runLabels = ('stat','run')
         protocols = ('sparseNoise','gratings','gratings_ori','checkerboard')
-        data = {runLabel: {protocol: {} for protocol in protocols} for runLabel in ('stat','run')}
+        data = {laserLabel: {runLabel: {protocol: {} for protocol in protocols} for runLabel in runLabels} for laserLabel in laserLabels}
         for exp in exps:
             p = self.getProbeDataObj(exp)
             expDate,anmID = p.getExperimentInfo()
@@ -119,31 +124,33 @@ class popProbeData():
                 unitLabel.append(p.units[u]['label'])
                 for i,c in enumerate((ccfX,ccfY,ccfZ)):
                     c.append(p.units[u]['CCFCoords'][i])
-                for runLabel in ('stat','run'):
-                    for protocol in protocols:
-                        tag = 'gratings_stf' if protocol=='gratings' else protocol
-                        tag += '_'+runLabel
-                        if tag not in p.units[u]:
-                            for prm in data[runLabel][protocol]:
-                                data[runLabel][protocol][prm].append(np.nan)
-                        else:
-                            for prm,val in p.units[u][tag].items():
-                                if 'sdf' not in prm:
+                for laserLabel in laserLabels:
+                    for runLabel in runLabels:
+                        for protocol in protocols:
+                            tag = 'gratings_stf' if protocol=='gratings' else protocol
+                            tag += '_'+laserLabel+'_'+runLabel
+                            if tag not in p.units[u]:
+                                for prm in data[runLabel][protocol]:
+                                    data[laserLabel][runLabel][protocol][prm].append(np.nan)
+                            else:
+                                for prm,val in p.units[u][tag].items():
                                     if prm not in data[runLabel][protocol]:
+                                        laserState.append(laserLabel)
                                         runState.append(runLabel)
                                         paramType.append(protocol)
                                         paramName.append(prm)
-                                        data[runLabel][protocol][prm] = [np.nan for _ in range(len(unitID)-1)]
-                                    data[runLabel][protocol][prm].append(val)
+                                        data[laserLabel][runLabel][protocol][prm] = [np.nan for _ in range(len(unitID)-1)]
+                                    data[laserLabel][runLabel][protocol][prm].append(val)
         
         # build dataframe
         rows = pd.MultiIndex.from_arrays([experimentDate,animalID,unitID,unitLabel,ccfX,ccfY,ccfZ],names=rowNames)
-        cols = pd.MultiIndex.from_arrays([paramType,paramName,runState],names=columnNames)
+        cols = pd.MultiIndex.from_arrays([laserState,runState,paramType,paramName],names=columnNames)
         dframe = pd.DataFrame(index=rows,columns=cols)
-        for runLabel in data:
-            for prmType in data[runLabel]:
-                for prmName in data[runLabel][prmType]:
-                    dframe[runLabel,prmType,prmName] = data[runLabel][prmType][prmName]
+        for laserLabel in data:
+            for runLabel in data[laserLabel]:
+                for prmType in data[laserLabel][runLabel]:
+                    for prmName in data[laserLabel][runLabel][prmType]:
+                        dframe[laserLabel,runLabel,prmType,prmName] = data[laserLabel][runLabel][prmType][prmName]
         
         self.data = dframe if self.data is None else pd.concat((self.data,dframe))
     

@@ -39,25 +39,25 @@ def saveFile(caption='Save As',rootDir='',fileType=''):
     return str(QtGui.QFileDialog.getSaveFileName(None,caption,rootDir,fileType))
 
 
-def objToHDF5(obj, filePath=None, fileOut=None, saveDict=None, grp=None):
-    if filePath is None and fileOut is None:
-        filePath = saveFile(fileType='*.hdf5')
-        if filePath=='':
-            return
+def objToHDF5(obj,filePath=None,fileOut=None,grp=None,saveDict=None):
+    if fileOut is None:
+        if filePath is None:
+            filePath = saveFile(fileType='*.hdf5')
+            if filePath=='':
+                return
         fileOut = h5py.File(filePath, 'w')
-    elif filePath is not None and fileOut is None:            
-        fileOut = h5py.File(filePath,'w')
-
-    if saveDict is None:
-        saveDict = obj.__dict__
+        newFile = fileOut
+    else:
+        newFile = None
     if grp is None:    
         grp = fileOut['/']
-    
+    if saveDict is None:
+        saveDict = obj.__dict__
     for key in saveDict:
         if key[0]=='_':
             continue
         elif type(saveDict[key]) is dict:
-            objToHDF5(obj, fileOut=fileOut, saveDict=saveDict[key], grp=grp.create_group(key))
+            objToHDF5(obj,fileOut=fileOut,grp=grp.create_group(key),saveDict=saveDict[key])
         else:
             try:
                 grp.create_dataset(key,data=saveDict[key],compression='gzip',compression_opts=1)
@@ -68,16 +68,21 @@ def objToHDF5(obj, filePath=None, fileOut=None, saveDict=None, grp=None):
                     try:
                         grp.create_dataset(key,data=np.array(saveDict[key],dtype=object),dtype=h5py.special_dtype(vlen=str))
                     except:
-                        print('Could not save: ', key)
+                        print('Could not save: ', key)                  
+    if newFile is not None:
+        newFile.close()
                 
                 
-def hdf5ToObj(obj, filePath=None, grp=None, loadDict=None):
-    if filePath is None and grp is None:        
-        filePath = getFile(fileType='*.hdf5')
-        if filePath=='':
-            return
+def hdf5ToObj(obj,filePath=None,grp=None,loadDict=None):
     if grp is None:
+        if filePath is None:        
+            filePath = getFile(fileType='*.hdf5')
+            if filePath=='':
+                return
         grp = h5py.File(filePath)
+        newFile = grp
+    else:
+        newFile = None
     for key,val in grp.items():
         if isinstance(val,h5py._hl.dataset.Dataset):
             v = val.value
@@ -94,6 +99,8 @@ def hdf5ToObj(obj, filePath=None, grp=None, loadDict=None):
             else:
                 loadDict[key] = {}
                 hdf5ToObj(obj,grp=val,loadDict=loadDict[key])
+    if newFile is not None:
+        newFile.close()
                 
                 
 if __name__=="__main__":
