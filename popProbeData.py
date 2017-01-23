@@ -130,11 +130,11 @@ class popProbeData():
                             tag = 'gratings_stf' if protocol=='gratings' else protocol
                             tag += '_'+laserLabel+'_'+runLabel
                             if tag not in p.units[u]:
-                                for prm in data[runLabel][protocol]:
+                                for prm in data[laserLabel][runLabel][protocol]:
                                     data[laserLabel][runLabel][protocol][prm].append(np.nan)
                             else:
                                 for prm,val in p.units[u][tag].items():
-                                    if prm not in data[runLabel][protocol]:
+                                    if prm not in data[laserLabel][runLabel][protocol]:
                                         laserState.append(laserLabel)
                                         runState.append(runLabel)
                                         paramType.append(protocol)
@@ -170,34 +170,49 @@ class popProbeData():
     
                 
     def analyzeRF(self):
+        # use running data unless more stat trials
+        statTrials = self.data.laserOff.stat.sparseNoise.trials
+        runTrials = self.data.laserOff.run.sparseNoise.trials
         
+        onVsOff = self.data.laserOff.run.sparseNoise.onVsOff
+        respLatency = np.stack(self.data.laserOff.run.sparseNoise.respLatency)
+        
+        onFit = np.stack(self.data.laserOff.run.sparseNoise.onFit)
+        offFit = np.stack(self.data.laserOff.run.sparseNoise.offFit)
+        for u in range(self.data.shape[0]):
+            if np.isnan(runTrials[u]) or statTrials[u]>runTrials[u]:
+                onVsOff[u] = self.data.laserOff.stat.sparseNoise.onVsOff[u]
+                respLatency[u] = self.data.laserOff.stat.sparseNoise.onVsOff[u]
+                onFit[u] = self.data.laserOff.stat.sparseNoise.onFit[u]
+                offFit[u] = self.data.laserOff.stat.sparseNoise.offFit[u]
+        
+        # use only on, off, and on-off cells
         isOnOff = self.data.index.get_level_values('unitLabel')=='on off'
         isOn = self.data.index.get_level_values('unitLabel')=='on'
         isOff = self.data.index.get_level_values('unitLabel')=='off'  
-        noRF = np.logical_not(isOnOff | isOn | isOff)        
+        noRF = np.logical_not(isOnOff | isOn | isOff)  
         
-        ccfY = self.data.index.get_level_values('ccfY')
-        
-        onVsOff = self.data.run.sparseNoise.onVsOff
         onVsOff[noRF] = np.nan
         
-        respLatency = np.stack(self.data.run.sparseNoise.respLatency)*1000
+        respLatency *= 1000
         respLatency[isOff | noRF,0] = np.nan
         respLatency[isOn | noRF,1] = np.nan
         latencyCombined = np.nanmean(respLatency,axis=1)
         
-        onFit = np.stack(self.data.run.sparseNoise.onFit)
-        offFit = np.stack(self.data.run.sparseNoise.offFit)
         onFit[isOff | noRF,:] = np.nan
         offFit[isOn | noRF,:] = np.nan
         
+        minRFCutoff = 100
         onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
-        onArea[onArea<100] = np.nan
+        onArea[onArea<minRFCutoff] = np.nan
         offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
+        offArea[offArea<minRFCutoff] = np.nan
         rfAreaCombined = np.nanmean(np.stack((onArea,offArea)),axis=0)
         
 #        sizeTuningOn = np.stack(self.data.run.sparseNoise.sizeTuningOn[ind])
 #        sizeTuningOff = np.stack(self.data.run.sparseNoise.sizeTuningOff[ind])
+        
+        ccfY = self.data.index.get_level_values('ccfY')
         
         # plot on vs off resp index
         plt.figure(facecolor='w')
