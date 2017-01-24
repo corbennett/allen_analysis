@@ -109,7 +109,7 @@ class popProbeData():
         # each parameter type dictionary has keys corresponding to parameters
         # the value for each parameter is a len(units) list
         laserLabels = ('laserOff','laserOn')
-        runLabels = ('stat','run')
+        runLabels = ('allTrials','stat','run')
         protocols = ('sparseNoise','gratings','gratings_ori','checkerboard')
         data = {laserLabel: {runLabel: {protocol: {} for protocol in protocols} for runLabel in runLabels} for laserLabel in laserLabels}
         for exp in exps:
@@ -170,38 +170,30 @@ class popProbeData():
     
                 
     def analyzeRF(self):
-        # use running data unless more stat trials
-        statTrials = self.data.laserOff.stat.sparseNoise.trials
-        runTrials = self.data.laserOff.run.sparseNoise.trials
         
-        onVsOff = self.data.laserOff.run.sparseNoise.onVsOff
-        respLatency = np.stack(self.data.laserOff.run.sparseNoise.respLatency)
+        data = self.data.laserOff.allTrials.sparseNoise        
         
-        onFit = np.stack(self.data.laserOff.run.sparseNoise.onFit)
-        offFit = np.stack(self.data.laserOff.run.sparseNoise.offFit)
-        for u in range(self.data.shape[0]):
-            if np.isnan(runTrials[u]) or statTrials[u]>runTrials[u]:
-                onVsOff[u] = self.data.laserOff.stat.sparseNoise.onVsOff[u]
-                respLatency[u] = self.data.laserOff.stat.sparseNoise.onVsOff[u]
-                onFit[u] = self.data.laserOff.stat.sparseNoise.onFit[u]
-                offFit[u] = self.data.laserOff.stat.sparseNoise.offFit[u]
-        
-        # use only on, off, and on-off cells
         isOnOff = self.data.index.get_level_values('unitLabel')=='on off'
         isOn = self.data.index.get_level_values('unitLabel')=='on'
         isOff = self.data.index.get_level_values('unitLabel')=='off'  
-        noRF = np.logical_not(isOnOff | isOn | isOff)  
+        noRF = np.logical_not(isOnOff | isOn | isOff) 
         
+        onVsOff = data.onVsOff
         onVsOff[noRF] = np.nan
         
-        respLatency *= 1000
+        respLatency = np.stack(data.respLatency)*1000
         respLatency[isOff | noRF,0] = np.nan
         respLatency[isOn | noRF,1] = np.nan
         latencyCombined = np.nanmean(respLatency,axis=1)
         
+        onFit = np.full((self.data.shape[0],7),np.nan)
+        offFit = onFit.copy()
+        for u in range(self.data.shape[0]):
+            sizeInd = data.boxSize[u]==10
+            onFit[u] = data.onFit[u][sizeInd]
+            offFit[u] = data.offFit[u][sizeInd]
         onFit[isOff | noRF,:] = np.nan
         offFit[isOn | noRF,:] = np.nan
-        
         minRFCutoff = 100
         onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
         onArea[onArea<minRFCutoff] = np.nan
@@ -213,6 +205,7 @@ class popProbeData():
 #        sizeTuningOff = np.stack(self.data.run.sparseNoise.sizeTuningOff[ind])
         
         ccfY = self.data.index.get_level_values('ccfY')
+        ccfZ = self.data.index.get_level_values('ccfZ')
         
         # plot on vs off resp index
         plt.figure(facecolor='w')
@@ -274,41 +267,97 @@ class popProbeData():
             ax.set_ylabel('Number of Cells',fontsize='x-large')
             plt.tight_layout()
         
-#        # size tuning plots
-#        sizeTuningSize = [5,10,20,50]
-#        sizeTuningLabel = [5,10,20,'full']
-#        for sizeResp,clr in zip((sizeTuningOn,sizeTuningOff),('r','b')):
-#            plt.figure(facecolor='w')
-#            ax = plt.subplot(1,1,1)
-#            sizeRespNorm = sizeResp/np.nanmax(sizeResp,axis=1)[:,None]
-#            sizeRespMean = np.nanmean(sizeRespNorm,axis=0)
-#            sizeRespStd = np.nanstd(sizeRespNorm,axis=0)
-#            plt.plot(sizeTuningSize,sizeRespMean,color=clr,linewidth=3)
-#            plt.fill_between(sizeTuningSize,sizeRespMean+sizeRespStd,sizeRespMean-sizeRespStd,color=clr,alpha=0.3)
-#            ax.spines['right'].set_visible(False)
-#            ax.spines['top'].set_visible(False)
-#            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-#            ax.set_xlim([0,55])
-#            ax.set_xticks(sizeTuningSize)
-#            ax.set_xticklabels(sizeTuningLabel)
-#            ax.set_yticks([0,0.5,1])
-#            ax.set_xlabel('Size (degrees)',fontsize='x-large')
-#            ax.set_ylabel('Norm. Response',fontsize='x-large')
-#            plt.tight_layout()
-#            
-#            plt.figure(facecolor='w')
-#            ax = plt.subplot(1,1,1)
-#            sizeRespNorm[sizeRespNorm<1] = 0
-#            bestSizeCount = np.nansum(sizeRespNorm,axis=0)
-#            ax.bar(sizeTuningSize,bestSizeCount,color=clr)
-#            ax.spines['right'].set_visible(False)
-#            ax.spines['top'].set_visible(False)
-#            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-#            ax.set_xlim([0,55])
-#            ax.set_xticks(sizeTuningSize)
-#            ax.set_xticklabels(sizeTuningLabel)
-#            ax.set_xlabel('Size (degrees)',fontsize='x-large')
-#            ax.set_ylabel('Best Size (# Units)',fontsize='x-large')
+        # size tuning plots: run vs stat comparison
+        sizeTuningSize = [5,10,20,50]
+        sizeTuningLabel = [5,10,20,'full']
+        goodUnits = []
+        self.data.index.get_level_values('unitLabel')
+        for sub,tuning in zip(['on', 'off'], ['sizeTuningOn', 'sizeTuningOff']):
+            good = []
+            for u in xrange(data.shape[0]):
+                st_r = self.data.laserOff.run.sparseNoise[tuning][u]
+                st_s = self.data.laserOff.stat.sparseNoise[tuning][u]
+                
+                if st_r.size > 3 and st_s.size > 3:
+                    if ~any(np.isnan(st_r)) and ~any(np.isnan(st_s)):
+                        label = self.data.index.get_level_values('unitLabel')[u]
+                        if sub in label:                
+                            good.append(u)
+            goodUnits.append(good)
+            
+        for stateData,state in zip([self.data.laserOff.stat.sparseNoise, self.data.laserOff.run.sparseNoise], ['stat', 'run']):
+            sizeTuningOn = np.stack(stateData.sizeTuningOn[goodUnits[0]])
+            sizeTuningOff = np.stack(stateData.sizeTuningOff[goodUnits[1]])
+            
+            fig = plt.figure(state, facecolor='w')
+            for axind,(sizeResp,clr) in enumerate(zip((sizeTuningOn,sizeTuningOff),('r','b'))):
+                
+                ax = fig.add_subplot(2,2,2*axind + 1)
+                sizeRespNorm = sizeResp/np.nanmax(sizeResp,axis=1)[:,None]
+                sizeRespMean = np.nanmean(sizeRespNorm,axis=0)
+                sizeRespStd = np.nanstd(sizeRespNorm,axis=0)
+                ax.plot(sizeTuningSize,sizeRespMean,color=clr,linewidth=3)
+                ax.fill_between(sizeTuningSize,sizeRespMean+sizeRespStd,sizeRespMean-sizeRespStd,color=clr,alpha=0.3)
+                ax.spines['right'].set_visible(False)
+                ax.spines['top'].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+                ax.set_xlim([0,55])
+                ax.set_xticks(sizeTuningSize)
+                ax.set_xticklabels(sizeTuningLabel)
+                ax.set_yticks([0,0.5,1])
+                ax.set_xlabel('Size (degrees)',fontsize='x-large')
+                ax.set_ylabel('Norm. Response',fontsize='x-large')
+                plt.tight_layout()
+                
+                ax = fig.add_subplot(2,2,2*axind + 2)
+                sizeRespNorm[sizeRespNorm<1] = 0
+                bestSizeCount = np.nansum(sizeRespNorm,axis=0)
+                ax.bar(sizeTuningSize,bestSizeCount,color=clr)
+                ax.spines['right'].set_visible(False)
+                ax.spines['top'].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+                ax.set_xlim([0,55])
+                ax.set_xticks(sizeTuningSize)
+                ax.set_xticklabels(sizeTuningLabel)
+                ax.set_xlabel('Size (degrees)',fontsize='x-large')
+                ax.set_ylabel('Best Size (# Units)',fontsize='x-large')
+        
+        # size tuning plots: all trials
+        allSizesInd = [u for u, _ in enumerate(data.sizeTuningOff) if data.sizeTuningOff[u].size > 3]        
+        sizeTuningOn = np.stack(data.sizeTuningOn[allSizesInd])[isOn[allSizesInd] | isOnOff[allSizesInd]]
+        sizeTuningOff = np.stack(data.sizeTuningOff[allSizesInd])[isOff[allSizesInd] | isOnOff[allSizesInd]]
+        
+        fig = plt.figure('All trials', facecolor='w')
+        for axind,(sizeResp,clr) in enumerate(zip((sizeTuningOn,sizeTuningOff),('r','b'))):
+            ax = fig.add_subplot(2,2,2*axind + 1)
+            sizeRespNorm = sizeResp/np.nanmax(sizeResp,axis=1)[:,None]
+            sizeRespMean = np.nanmean(sizeRespNorm,axis=0)
+            sizeRespStd = np.nanstd(sizeRespNorm,axis=0)
+            ax.plot(sizeTuningSize,sizeRespMean,color=clr,linewidth=3)
+            ax.fill_between(sizeTuningSize,sizeRespMean+sizeRespStd,sizeRespMean-sizeRespStd,color=clr,alpha=0.3)
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+            ax.set_xlim([0,55])
+            ax.set_xticks(sizeTuningSize)
+            ax.set_xticklabels(sizeTuningLabel)
+            ax.set_yticks([0,0.5,1])
+            ax.set_xlabel('Size (degrees)',fontsize='x-large')
+            ax.set_ylabel('Norm. Response',fontsize='x-large')
+            plt.tight_layout()
+            
+            ax = fig.add_subplot(2,2,2*axind+2)
+            sizeRespNorm[sizeRespNorm<1] = 0
+            bestSizeCount = np.nansum(sizeRespNorm,axis=0)
+            ax.bar(sizeTuningSize,bestSizeCount,color=clr)
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+            ax.set_xlim([0,55])
+            ax.set_xticks(sizeTuningSize)
+            ax.set_xticklabels(sizeTuningLabel)
+            ax.set_xlabel('Size (degrees)',fontsize='x-large')
+            ax.set_ylabel('Best Size (# Units)',fontsize='x-large')
         
         # plot all rf centers
         plt.figure(facecolor='w')
@@ -325,15 +374,17 @@ class popProbeData():
         
         # plot rf center vs probe position
         xlim = np.array((-0.1,1.1))
-        for exp in ('07282016','07292016','09162016','10192016','10202016'):
-            ind = self.data.index.get_level_values(0)==exp
+        expDate = self.data.index.get_level_values('experimentDate')
+        for exp in expDate.unique():
+            ind = expDate==exp
             probePos = ccfY[ind]
             probePos -= probePos.min()
             probePos /= probePos.max()
-            for rf,clr in zip((onFit,offFit),('r','b')):
-                for i,azimOrElev in zip((0,1),('Azimuth','Elevation')):
-                    plt.figure(facecolor='w')
-                    ax = plt.subplot(1,1,1)
+            plt.figure(facecolor='w')
+            gs = gridspec.GridSpec(2,2)
+            for i,azimOrElev in enumerate(('Azimuth','Elevation')):
+                for j,(rf,clr) in enumerate(zip((onFit,offFit),('r','b'))):
+                    ax = plt.subplot(gs[i,j])
                     hasRF = np.logical_not(np.isnan(rf[ind,i]))
                     linFit = scipy.stats.linregress(probePos[hasRF],rf[ind,i][hasRF])
                     ax.plot(xlim,linFit[0]*xlim+linFit[1],color='0.6',linewidth=2)
@@ -354,14 +405,15 @@ class popProbeData():
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(111, aspect='equal')
             
-            x,y = probeData.getEllipseXY(*sub[:5])
-            if sub[3]<40:
-                e = Ellipse(xy=[sub[0], sub[1]], width=sub[2], height=sub[3], angle=sub[4])
-                e.set_edgecolor('none')
-                e.set_alpha(0.5)
-                color = cm.jet((sub[1] + 40)/110.0)
-                e.set_facecolor(color)
-                ax.add_artist(e)
+            for sub in fit:
+                x,y = probeData.getEllipseXY(*sub[:5])
+                if sub[3]<40:
+                    e = Ellipse(xy=[sub[0], sub[1]], width=sub[2], height=sub[3], angle=sub[4])
+                    e.set_edgecolor('none')
+                    e.set_alpha(0.5)
+                    color = cm.jet((sub[1] + 40)/110.0)
+                    e.set_facecolor(color)
+                    ax.add_artist(e)
         
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
@@ -395,19 +447,23 @@ class popProbeData():
         counts = np.zeros([np.diff(yRange), np.diff(xRange), np.diff(zRange)])
         elev = np.zeros_like(counts)
         azi = np.zeros_like(counts)
-        for fitType in ['onFit', 'offFit']:
+        data = self.data.laserOff.allTrials.sparseNoise
+        for fitType, sub in zip(['onFit', 'offFit'], ['on', 'off']):
             for uindex, coords in enumerate(CCFCoords):
                 
                 if any(np.isnan(coords)):
                     continue
                 else:
-                    ccf = coords/25
-                    ccf = ccf.astype(int)
-                    ccf -= np.array([xRange[0], yRange[0], zRange[0]])
-                    
-                    counts[ccf[1], ccf[0], ccf[2]]+=1
-                    elev[ccf[1], ccf[0], ccf[2]] += self.data.run.sparseNoise[fitType][uindex][1]
-                    azi[ccf[1], ccf[0], ccf[2]] += self.data.run.sparseNoise[fitType][uindex][0]
+                    label = self.data.index.get_level_values('unitLabel')[uindex]
+                    if sub in label:
+                        ccf = coords/25
+                        ccf = ccf.astype(int)
+                        ccf -= np.array([xRange[0], yRange[0], zRange[0]])
+                        
+                        counts[ccf[1], ccf[0], ccf[2]]+=1
+                        x,y = data[fitType][uindex][data.boxSize[uindex]==10][0][:2]
+                        elev[ccf[1], ccf[0], ccf[2]] += y
+                        azi[ccf[1], ccf[0], ccf[2]] += x
                 
         elev /= counts
         azi /= counts
@@ -418,38 +474,28 @@ class popProbeData():
         
         elev_s *= LPmask
         azi_s *= LPmask
-                
+        maxVal = [np.nanmax(elev_s), np.nanmax(azi_s)]
+    
         
-        for z in xrange(elev_s.shape[2]):
-            lpSlice = inLPbinary[yRange[0]:yRange[1], xRange[0]:xRange[1], zRange[0] + z].astype(np.uint8)
-            _,contour,_ = cv2.findContours(np.copy(lpSlice, order='C').astype(np.uint8),cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
-            eslice = np.copy(elev_s[:, :, z], order='C')
-            aslice = np.copy(azi_s[:, :, z], order='C')
-            cv2.drawContours(eslice,contour,-1,(0,0,0),1)
-            cv2.drawContours(aslice,contour,-1,(0,0,0),1)
-            
-            elev_s[:, :, z] = eslice
-            azi_s[:, :, z] = aslice
-#            xs = []
-#            ys = []
-#            for c in contour[1]:
-#                xs.append(c[0][0] - xRange[0])
-#                ys.append(c[0][1] - yRange[0])
-##        
-#
-#        plt.figure()
-#        plt.imshow(elev_s[:, :, goodSlice-zRange[0]], interpolation='none')
-#        plt.plot(xs, ys, 'k')
-#        plt.colorbar() 
-#        
-#        plt.figure()
-#        plt.imshow(azi_s[:, :, goodSlice-zRange[0]], interpolation='none')
-#        plt.plot(xs, ys, 'k')
-#        plt.colorbar() 
-        return elev_s, azi_s
+        colorMaps = [np.full(elev_s.shape+(3,),np.nan) for _ in (0,1)]
+        for im, m in enumerate([elev_s, azi_s]):
+            for y in xrange(m.shape[0]):
+                for x in xrange(m.shape[1]):
+                    for z in xrange(m.shape[2]):
+                        thisVox = m[y,x,z]/maxVal[im]
+                        if not np.isnan(thisVox):
+                            RGB = cm.jet(thisVox)
+                            for i in (0,1,2):
+                                colorMaps[im][y, x, z, i] = RGB[i]
+                            
+        fullMap = [np.zeros(annotationData.shape+(3,),dtype=np.uint8) for _ in (0,1)]
+        for i in (0,1):
+            fullMap[i][yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMaps[i]*255
+
+        return colorMaps, elev_s, azi_s
     
     
-    def makeVolume(self, units, vals, padding=10, sigma=1, regions=[218], annotationDataFile=None):
+    def makeVolume(self, units, vals, padding=10, sigma=1, regions=[218], annotationDataFile=None, rgbVolume=True):
         ind = self.data.index.get_level_values('unitID').isin(units)       
         data = self.data[ind]        
         CCFCoords = np.stack((data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)
@@ -476,7 +522,6 @@ class popProbeData():
                 
         counts = np.zeros([np.diff(yRange), np.diff(xRange), np.diff(zRange)])
         vol = np.zeros_like(counts)
-    
         for uindex, coords in enumerate(CCFCoords):
             if any(np.isnan(coords)) or np.isnan(vals[uindex]):
                 continue
@@ -484,17 +529,34 @@ class popProbeData():
                 ccf = coords/25
                 ccf = ccf.astype(int)
                 ccf -= np.array([xRange[0], yRange[0], zRange[0]])
-                
-                counts[ccf[1], ccf[0], ccf[2]]+=1
-                vol[ccf[1], ccf[0], ccf[2]] += vals[uindex]
+                if vals[uindex] < 1800:
+                    counts[ccf[1], ccf[0], ccf[2]]+=1
+                    vol[ccf[1], ccf[0], ccf[2]] += vals[uindex]
         
                 
         vol /= counts
         
         vol_s = probeData.gaussianConvolve3D(vol,sigma)
         vol_s *= mask
-        
-        return vol_s
+        maxVal = np.nanmax(vol_s)
+        if rgbVolume:        
+            colorMap = np.full(vol_s.shape+(3,),np.nan)
+            for y in xrange(vol_s.shape[0]):
+                for x in xrange(vol_s.shape[1]):
+                    for z in xrange(vol_s.shape[2]):
+                        thisVox = vol_s[y,x,z]/maxVal
+                        if not np.isnan(thisVox):
+                            RGB = cm.jet(thisVox)
+                            for i in (0,1,2):
+                                colorMap[y, x, z, i] = RGB[i]
+                                
+            fullMap = np.zeros(annotationData.shape+(3,),dtype=np.uint8)
+            fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMap*255
+                
+        if rgbVolume:
+            return fullMap, vol_s
+        else:
+            return vol_s
     
     
     def analyzeSTF(self):
@@ -502,9 +564,11 @@ class popProbeData():
         sf = np.array([0.01,0.02,0.04,0.08,0.16,0.32])
         tf = np.array([0.5,1,2,4,8])
         
-        hasGratings = self.data.run.gratings.respMat.notnull()
+        data = self.data.laserOff.run.gratings
         
-        stfFit = np.stack(self.data.run.gratings.stfFitParams[hasGratings])
+        hasGratings = data.respMat.notnull()
+        
+        stfFit = np.stack(data.stfFitParams[hasGratings])
         
         # plot center SF and TF and speed tuning index
         fig = plt.figure(facecolor='w')
@@ -578,12 +642,14 @@ class popProbeData():
         
         ori = np.arange(0,360,45)
         
-        hasGratings = self.data.run.gratings_ori.respMat.notnull()
+        data = self.data.laserOff.run.gratings_ori
         
-        dsi = np.array(self.data.run.gratings_ori.dsi[hasGratings])
-        prefDir = np.array(self.data.run.gratings_ori.prefDir[hasGratings])
-        osi = np.array(self.data.run.gratings_ori.osi[hasGratings])
-        prefOri = np.array(self.data.run.gratings_ori.prefOri[hasGratings])
+        hasGratings = data.respMat.notnull()
+        
+        dsi = np.array(data.dsi[hasGratings])
+        prefDir = np.array(data.prefDir[hasGratings])
+        osi = np.array(data.osi[hasGratings])
+        prefOri = np.array(data.prefOri[hasGratings])
         
         # plot dsi and osi
         fig = plt.figure(facecolor='w')
@@ -616,25 +682,27 @@ class popProbeData():
     
     def analyzeCheckerboard(self):
         
+        data = self.data.laserOff.run.checkerboard
+        
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90]) 
         
         # get data from units with spikes during checkerboard protocol
-        hasCheckerboard = self.data.run.checkerboard.respMat.notnull()
-        respMat = np.stack(self.data.run.checkerboard.respMat[hasCheckerboard])
+        hasCheckerboard = data.respMat.notnull()
+        respMat = np.stack(data.respMat[hasCheckerboard])
         hasSpikes = respMat.any(axis=2).any(axis=1)
         respMat = respMat[hasSpikes]
         uindex = np.where(hasCheckerboard)[0][hasSpikes]
         
         # get z score and determine significant responses
-        spontRateMean = self.data.run.checkerboard.spontRateMean[uindex]
-        spontRateStd = self.data.run.checkerboard.spontRateStd[uindex]
+        spontRateMean = data.spontRateMean[uindex]
+        spontRateStd = data.spontRateStd[uindex]
         respZ = (respMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
         hasResp = (respZ>10).any(axis=2).any(axis=1)
         respMat = respMat[hasResp]
         uindex = uindex[hasResp]
         
         # fill in NaNs where no running trials
-        statRespMat = np.stack(self.data.stat.checkerboard.respMat[uindex])
+        statRespMat = np.stack(self.data.laserOff.stat.checkerboard.respMat[uindex])
         y,x,z = np.where(np.isnan(respMat))
         for i,j,k in zip(y,x,z):
             respMat[i,j,k] = statRespMat[i,j,k]
