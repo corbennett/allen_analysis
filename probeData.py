@@ -2173,6 +2173,7 @@ class probeData():
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)   
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials, saveTag=laserTag+'_run', plot=plot)
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', saveTag=laserTag+'_allTrials', plot=plot)
                     else:
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', plot=plot)
     
@@ -2181,6 +2182,7 @@ class probeData():
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)  
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials, saveTag=laserTag+'_run', plot=plot)
+                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', saveTag=laserTag+'_allTrials', plot=plot)
                     else:
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', plot=plot)
     
@@ -2189,6 +2191,7 @@ class probeData():
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                 
                         self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
                         self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag=laserTag+'_run', plot=plot)
+                        self.findRF(units, protocol=protocol, useCache=useCache, saveTag=laserTag+'_allTrials',plot=plot)
                     else:                    
                         self.findRF(units, protocol=protocol, useCache=useCache, plot=plot)
                 elif 'flash' in pro:
@@ -2215,6 +2218,7 @@ class probeData():
                             laserTag = '_laserOn' if power>0 else '_laserOff'
                             self.analyzeCheckerboard(units, protocol=protocol, trials=np.array(statTrials)[isLaserPower[statTrials]], saveTag=laserTag+'_stat', plot=plot)
                             self.analyzeCheckerboard(units, protocol=protocol, trials=np.array(runTrials)[isLaserPower[runTrials]], saveTag=laserTag+'_run', plot=plot)
+                            self.analyzeCheckerboard(units, protocol=protocol, saveTag=laserTag+'_allTrials', plot=plot)
                     else:
                         self.analyzeCheckerboard(units, protocol=protocol, plot=plot)
                 
