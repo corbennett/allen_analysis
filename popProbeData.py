@@ -195,10 +195,11 @@ class popProbeData():
         onFit[isOff | noRF,:] = np.nan
         offFit[isOn | noRF,:] = np.nan
         minRFCutoff = 100
+        maxRFCutoff = 5000
         onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
-        onArea[onArea<minRFCutoff] = np.nan
+        onArea[np.logical_or(onArea<minRFCutoff,onArea>maxRFCutoff)] = np.nan
         offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
-        offArea[offArea<minRFCutoff] = np.nan
+        offArea[np.logical_or(offArea<minRFCutoff,offArea>maxRFCutoff)] = np.nan
         rfAreaCombined = np.nanmean(np.stack((onArea,offArea)),axis=0)
         
 #        sizeTuningOn = np.stack(self.data.run.sparseNoise.sizeTuningOn[ind])
@@ -235,7 +236,7 @@ class popProbeData():
         # plot receptive field area, on/off averaged
         plt.figure(facecolor='w')
         ax = plt.subplot(1,1,1)
-        ax.hist(rfAreaCombined[~np.isnan(rfAreaCombined)],bins=np.arange(0,4000,200),color='k')
+        ax.hist(rfAreaCombined[~np.isnan(rfAreaCombined)],bins=np.arange(0,maxRFCutoff,200),color='k')
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False,labelsize='large')
@@ -259,7 +260,7 @@ class popProbeData():
         for rfA,clr in zip((onArea,offArea),('r','b')):
             plt.figure(facecolor='w')
             ax = plt.subplot(1,1,1)
-            ax.hist(rfA[~np.isnan(rfA)],bins=np.arange(0,4000,200),color=clr)
+            ax.hist(rfA[~np.isnan(rfA)],bins=np.arange(0,maxRFCutoff,200),color=clr)
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='large')
@@ -450,7 +451,6 @@ class popProbeData():
         data = self.data.laserOff.allTrials.sparseNoise
         for fitType, sub in zip(['onFit', 'offFit'], ['on', 'off']):
             for uindex, coords in enumerate(CCFCoords):
-                
                 if any(np.isnan(coords)):
                     continue
                 else:
@@ -468,7 +468,6 @@ class popProbeData():
         elev /= counts
         azi /= counts
         
-        
         elev_s = probeData.gaussianConvolve3D(elev,sigma)
         azi_s = probeData.gaussianConvolve3D(azi, sigma)
         
@@ -476,7 +475,6 @@ class popProbeData():
         azi_s *= LPmask
         maxVal = [np.nanmax(elev_s), np.nanmax(azi_s)]
     
-        
         colorMaps = [np.full(elev_s.shape+(3,),np.nan) for _ in (0,1)]
         for im, m in enumerate([elev_s, azi_s]):
             for y in xrange(m.shape[0]):
@@ -488,9 +486,9 @@ class popProbeData():
                             for i in (0,1,2):
                                 colorMaps[im][y, x, z, i] = RGB[i]
                             
-        fullMap = [np.zeros(annotationData.shape+(3,),dtype=np.uint8) for _ in (0,1)]
+        fullMap = [np.full(annotationData.shape+(3,),np.nan) for _ in (0,1)]
         for i in (0,1):
-            fullMap[i][yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMaps[i]*255
+            fullMap[i][yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMaps[i]
 
         return colorMaps, elev_s, azi_s
     
@@ -533,7 +531,6 @@ class popProbeData():
                     counts[ccf[1], ccf[0], ccf[2]]+=1
                     vol[ccf[1], ccf[0], ccf[2]] += vals[uindex]
         
-                
         vol /= counts
         
         vol_s = probeData.gaussianConvolve3D(vol,sigma)
@@ -550,8 +547,8 @@ class popProbeData():
                             for i in (0,1,2):
                                 colorMap[y, x, z, i] = RGB[i]
                                 
-            fullMap = np.zeros(annotationData.shape+(3,),dtype=np.uint8)
-            fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMap*255
+            fullMap = np.full(annotationData.shape+(3,),np.nan)
+            fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMap
                 
         if rgbVolume:
             return fullMap, vol_s
