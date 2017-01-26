@@ -1208,7 +1208,7 @@ class probeData():
                     ax.set_ylabel('Pref '+oriOrDir+' Count')
 
                                     
-    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, usePeakResp=True, plot=True, saveTag='', useCache=False):
+    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, laser=False, latency=0.25, usePeakResp=True, plot=True, saveTag='', useCache=False):
         
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -1224,25 +1224,34 @@ class probeData():
         lastFullTrial = np.where(trialEndFrame<p['frameSamples'].size)[0][-1]
         if trials is None:
             trials = np.arange(lastFullTrial+1)
-        elif len(trials)==0:
+        elif len(trials)<1:
             return
         else:
             trials = np.array(trials)
             trials = trials[trials<=lastFullTrial]
+        
+        if 'trialLaserPower' in p:
+            if laser:
+                trials = trials[p['trialLaserPower'][trials]>0]
+            else:
+                trials = trials[p['trialLaserPower'][trials]==0]
+            if len(trials)<1:
+                m = 'laser' if laser else 'non-laser'
+                print('no '+m+' trials')
+                return
 
         # find longest trial in entire presentation
         trialStartSamples = p['frameSamples'][trialStartFrame[np.arange(lastFullTrial+1)]]
         trialEndSamples = p['frameSamples'][trialEndFrame[np.arange(lastFullTrial+1)]]
-        maxTrialDuration = max(trialEndSamples - trialStartSamples)
+        maxTrialDuration = max(trialEndSamples-trialStartSamples)
         
         # now pull out specified trial subset
         trialStartSamples = p['frameSamples'][trialStartFrame[trials]]
         trialEndSamples = p['frameSamples'][trialEndFrame[trials]]
         minInterTrialTime = p['interTrialInterval'][0]
         if 'laserPreFrames' in p:
-            minInterTrialTime += p['laserPreFrames']+p['laserPostFrames']
+            minInterTrialTime += (p['laserPreFrames']+p['laserPostFrames'])/p['frameRate']
         minInterTrialSamples = int(minInterTrialTime*self.sampleRate)
-        latency = 0.25
         latencySamples = int(latency*self.sampleRate)
         
         bckgndSpeed = np.concatenate((-p['bckgndSpeed'][:0:-1],p['bckgndSpeed']))
@@ -1263,6 +1272,7 @@ class probeData():
             meanResp = np.full((patchSpeed.size,bckgndSpeed.size,p['patchSize'].size,p['patchElevation'].size),np.nan)
             peakResp = np.copy(meanResp)
             sdf = np.full((meanResp.shape+(sdfTime.size,)),np.nan)
+            maxTrialTypeDur = np.zeros_like(meanResp)
             for pchSpeedInd,pchSpeed in enumerate(patchSpeed):
                 pchDir = 180 if pchSpeed<0 else 0
                 a = p['trialPatchDir'][trials]==pchDir
@@ -1280,11 +1290,12 @@ class probeData():
                             if any(trialInd):
                                 meanResp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = trialSpikeRate[trialInd].mean()
                                 s,t = self.getSDF(spikes,trialStartSamples[trialInd]-minInterTrialSamples,2*minInterTrialSamples+max(trialEndSamples[trialInd]-trialStartSamples[trialInd]),sigma=sdfSigma,sampInt=sdfSampInt)
+                                maxTrialTypeDur[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = t[-1]-2*minInterTrialTime
                                 peakResp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = s[np.logical_and(t>minInterTrialTime+latency,t<t[-1]-minInterTrialTime)].max()
                                 sdf[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,:s.size] = s
             
             # fill in resp for patch and bckgnd speeds not tested for every patch size and elevation
-            for r in (meanResp,peakResp,sdf):
+            for r in (meanResp,peakResp,sdf,maxTrialTypeDur):
                 for pchSizeInd,_ in enumerate(p['patchSize']):
                     for pchElevInd,_ in enumerate(p['patchElevation']):
                         r[patchSpeed==0,:,pchSizeInd,pchElevInd] = r[patchSpeed==0,:,0,0]
@@ -1292,12 +1303,6 @@ class probeData():
                     for bckSpeedInd,bckSpeed in enumerate(bckgndSpeed):
                         if pchSpeed==bckSpeed:
                             r[pchSpeedInd,bckSpeedInd] = r[patchSpeed==0,bckSpeedInd]
-            
-            
-            if usePeakResp:
-                respMat = peakResp.copy()
-            else:
-                respMat = meanResp.copy()
             
             # get spont rate and find best resp over all patch sizes and elevations
             spontTrials = np.logical_and(p['trialBckgndSpeed'][trials]==0,p['trialPatchSpeed'][trials]==0)
@@ -1310,7 +1315,8 @@ class probeData():
             else:
                 spontRateMean = np.nan
                 spontRateStd = np.nan
-                
+            
+            respMat = peakResp.copy() if usePeakResp else meanResp.copy()
             patchResp = respMat[patchSpeed!=0,bckgndSpeed==0,:,:]
             bestPatchRespInd = np.unravel_index(np.argmax(patchResp),patchResp.shape)
             respMat = respMat[:,:,bestPatchRespInd[1],bestPatchRespInd[2]]
@@ -1338,6 +1344,9 @@ class probeData():
                 for i,_ in enumerate(patchSpeed):
                     for j,_ in enumerate(bckgndSpeed):
                         ax.plot(x+sdfTime,y+sdf[i,j,bestPatchRespInd[1],bestPatchRespInd[2],:],color='k')
+                        # show response window start and end
+                        ax.plot([x+minInterTrialTime+latency]*2,[y+0,y+sdfYMax],color='r')
+                        ax.plot([x+minInterTrialTime+maxTrialTypeDur[i,j,bestPatchRespInd[1],bestPatchRespInd[2]]]*2,[y+0,y+sdfYMax],color='r')
                         x += sdfXMax*(1+spacing)
                     x = 0
                     y += sdfYMax*(1+spacing)
@@ -2211,14 +2220,13 @@ class probeData():
                 elif 'checkerboard' in pro:
                     if splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
-                        hasLaser = 'trialLaserPower' in self.visstimData[str(protocol)]
-                        laserPower = self.visstimData[str(protocol)]['laserPower'] if hasLaser else [0]
-                        for power in laserPower:
-                            isLaserPower = self.visstimData[str(protocol)]['trialLaserPower']==power if hasLaser else np.ones(len(trialStarts),dtype=bool)
-                            laserTag = '_laserOn' if power>0 else '_laserOff'
-                            self.analyzeCheckerboard(units, protocol=protocol, trials=np.array(statTrials)[isLaserPower[statTrials]], saveTag=laserTag+'_stat', plot=plot)
-                            self.analyzeCheckerboard(units, protocol=protocol, trials=np.array(runTrials)[isLaserPower[runTrials]], saveTag=laserTag+'_run', plot=plot)
-                            self.analyzeCheckerboard(units, protocol=protocol, saveTag=laserTag+'_allTrials', plot=plot)
+                        hasLaser = True if 'trialLaserPower' in self.visstimData[str(protocol)] else False
+                        analyzeLaserTrials = (False,True) if hasLaser and np.any(self.visstimData[str(protocol)]['laserPower']>0) else (False,)
+                        for laser in analyzeLaserTrials:
+                            laserTag = '_laserOn' if laser else '_laserOff'
+                            self.analyzeCheckerboard(units, protocol=protocol, trials=statTrials, laser=laser, saveTag=laserTag+'_stat', plot=plot)
+                            self.analyzeCheckerboard(units, protocol=protocol, trials=runTrials, laser=laser, saveTag=laserTag+'_run', plot=plot)
+                            self.analyzeCheckerboard(units, protocol=protocol, laser=laser, saveTag=laserTag+'_allTrials', plot=plot)
                     else:
                         self.analyzeCheckerboard(units, protocol=protocol, plot=plot)
                 
