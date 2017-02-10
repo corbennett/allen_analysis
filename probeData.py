@@ -27,12 +27,17 @@ class probeData():
     def __init__(self):
         self.recording = 0
         self.TTLChannelLabels = ['VisstimOn', 'CamExposing', 'CamSaving', 'OrangeLaserShutter']
-        self.channelMapFile = r'C:\Users\SVC_CCG\Documents\PythonScripts\imec_channel_map.prb'
+        self.channelMapFile = r'C:\Users\SVC_CCG\Documents\Python Scripts\imec_channel_map.prb'
+        self.sampleRate = 30000.0
+        self.digitalGain = 0.195
+        self.analogGain = 0.00015258789
         self.wheelChannel = 134
         self.diodeChannel = 135
         self.visStimOnChannel = 136
-        self.sampleRate = 30000
-
+        self.blueLaserChannel = 137
+        self.orangeLaserChannel = 138
+        self.camExposingChannel = 139
+        self.camSavingChannel = 140
 
     def loadKwd(self, filePath):
                 
@@ -52,7 +57,7 @@ class probeData():
         
         
     def loadExperiment(self, loadRunningData=False, loadUnits=True):
-        self.kwdFileList, nsamps = getKwdInfo()
+        self.kwdFileList, self.nsamps = getKwdInfo()
         filelist = self.kwdFileList
         filePaths = [os.path.dirname(f) for f in filelist]        
         
@@ -62,7 +67,7 @@ class probeData():
             ff = ff.split('_')[-1]  
             datDict = self.loadKwd(f)
             datDict['protocolName'] = ff
-            datDict['numSamples'] = nsamps[index]
+            datDict['numSamples'] = self.nsamps[index]
             self._d.append(datDict)
                     
         if loadUnits:
@@ -101,7 +106,7 @@ class probeData():
             if not eyeDataFound:
                 print('No eye tracking data found for ' + os.path.basename(proPath))
             
-        
+    
     def getTTLData(self, filePath=None, protocol=0):
         
         if filePath is None:
@@ -142,23 +147,38 @@ class probeData():
                 self.visstimData[str(protocol)][params] = dataFile[params][()]   
     
     
-    def getEyeTrackData(self, dirPath=None):
-        if dirPath is None:        
-            dirPath = fileIO.getDir()
-        filePaths = [os.path.join(dirPath,item) for item in os.listdir(dirPath) if os.path.isfile(os.path.join(dirPath,item))]
-        for protocolIndex,_ in enumerate(self.kwdFileList):
-            protocolName = self.getProtocolLabel(protocolIndex)
-            for f in filePaths:
-                match = re.search('MouseEyeTracker_'+protocolName+'_\d{8,8}_\d{6,6}_analysis',f)
-                if match is not None:
-                    protocol = str(protocolIndex)
-                    dataFile = h5py.File(f)
-                    camExposureSamples = self.TTL[protocol]['CamExposing']['rising']
-                    camSavingSamples = self.TTL[protocol]['CamSaving']['rising']
-                    self.behaviorData[protocol]['eyeTracking'] = {'samples': camExposureSamples[np.searchsorted(camExposureSamples,camSavingSamples)-1]}    
-                    for param in ('pupilArea','pupilX','pupilY','negSaccades','posSaccades'):      
-                        self.behaviorData[protocol]['eyeTracking'][param] = dataFile[param][:]
-                    break
+    def getEyeTrackData(self):
+        expDate,anmID = self.getExperimentInfo()
+        dirPath = os.path.join('\\\\aibsdata2\\nc-ophys\\corbettb\\Probe',expDate+'_'+anmID,'EyeTrackAnalysis')
+        if not os.path.isdir(dirPath):
+            print('could not find '+dirPath)
+            return
+                    
+        for fileName in os.listdir(dirPath):
+            protocolName = re.findall('MouseEyeTracker_'+'(.+)'+'_\d{8,8}_\d{6,6}_analysis',fileName)[0]
+            protocolIndex = self.getProtocolIndex(protocolName)
+            protocol = str(protocolIndex)
+            eyeDataFile = h5py.File(os.path.join(dirPath,fileName))
+            
+            if len(self.TTL[protocol])>0:
+                camExposingSamples = self.TTL[protocol]['CamExposing']['rising']
+                camSavingSamples = self.TTL[protocol]['CamSaving']['rising']
+                firstFrameSample = camExposingSamples[np.where(camExposingSamples<camSavingSamples[0])[0][-1]]
+                frameSamples = (eyeDataFile['frameTimes'][:]*self.sampleRate+firstFrameSample).astype(int)
+            else:
+                kwdFile = h5py.File(self.kwdFileList[protocolIndex])
+                thresh = 10000
+                camExposing = kwdFile['recordings']['0']['data'][:,self.camExposingChannel]
+                camExposingSamples = np.where(np.logical_and(camExposing[:-1]<thresh,camExposing[1:]>thresh))[0]+1
+                del(camExposing)
+                camSaving = kwdFile['recordings']['0']['data'][:,self.camSavingChannel]
+                camSavingSamples = np.where(np.logical_and(camSaving[:-1]<thresh,camSaving[1:]>thresh))[0]+1
+                del(camSaving)
+                frameSamples = camExposingSamples[np.searchsorted(camExposingSamples,camSavingSamples)-1]
+        
+            self.behaviorData[protocol]['eyeTracking'] = {'samples': frameSamples}    
+            for param in ('pupilArea','pupilX','pupilY','negSaccades','posSaccades'):      
+                self.behaviorData[protocol]['eyeTracking'][param] = eyeDataFile[param][:]
     
     
     def alignFramesToDiode(self, frameSampleAdjustment = None, plot = False, protocol=0):
@@ -352,20 +372,31 @@ class probeData():
         if protocol is None:
             protocol = self.getProtocolIndex('sparseNoise')
         protocol = str(protocol)
-            
+
+        trialStartFrame = self.visstimData[protocol]['stimStartFrames']
+        trialEndFrame = trialStartFrame + self.visstimData[protocol]['trialDuration']
+        lastFullTrial = np.where(trialEndFrame<self.visstimData[protocol]['frameSamples'].size)[0][-1]
         if trials is None:
-            trials = np.arange(self.visstimData[protocol]['stimStartFrames'].size-1)
+            trials = np.arange(lastFullTrial+1)
+        elif len(trials)<1:
+            return
         else:
             trials = np.array(trials)
-        
-        if len(trials) == 0:            
-            return
-        
-        minLatencySamples = minLatency*self.sampleRate
-        maxLatencySamples = maxLatency*self.sampleRate
+            trials = trials[trials<=lastFullTrial]
         
         stimStartFrames = self.visstimData[protocol]['stimStartFrames'][trials]
         stimStartSamples = self.visstimData[protocol]['frameSamples'][stimStartFrames]
+
+#        if trials is None:
+#            trials = np.arange(self.visstimData[protocol]['stimStartFrames'].size-1)
+#        else:
+#            trials = np.array(trials)
+#        
+#        if len(trials) == 0:            
+#            return
+#        
+        minLatencySamples = minLatency*self.sampleRate
+        maxLatencySamples = maxLatency*self.sampleRate
         
         posHistory = np.copy(self.visstimData[protocol]['boxPositionHistory'][trials])
         xpos = np.unique(posHistory[:,0])
@@ -579,7 +610,7 @@ class probeData():
                 halfMaxInd[i,0] = preHalfMax[-1]+1 if any(preHalfMax) else np.where(inAnalysisWindow)[0][0]
                 # find first half-max cross after peak
                 postHalfMax = np.where(bestSDF[maxInd:]<halfMax)[0]
-                halfMaxInd[i,1] = maxInd+postHalfMax[0]-1 if any(postHalfMax) else bestSDF.size
+                halfMaxInd[i,1] = maxInd+postHalfMax[0]-1 if any(postHalfMax) else bestSDF.size-1
                 respHalfWidth[uindex,i] = (halfMaxInd[i,1]-halfMaxInd[i,0])*sdfSampInt
             
             # cache results
@@ -990,7 +1021,7 @@ class probeData():
             respMat = np.full((len(tf),len(sf),len(ori)),np.nan)
             preTrialMat = np.copy(respMat)
             sdf = np.full((len(tf),len(sf),len(ori),round(sdfSamples/self.sampleRate/sdfSampInt)),np.nan)
-            f1Mat = np.full((len(tf),len(sf),len(ori)),np.nan)
+            f1f0Mat = np.full((len(tf),len(sf),len(ori)),np.nan)
             contrastTrials = trialContrast>0+tol
             for tfInd,thisTF in enumerate(tf):
                 tfTrials = np.isclose(trialTF,thisTF)
@@ -1010,7 +1041,7 @@ class probeData():
                             f,pwr = scipy.signal.welch(s,1/sdfTime[1],nperseg=s.size,detrend='constant',scaling='spectrum')
                             pwr **= 0.5
                             f1Ind = np.argmin(np.absolute(f-thisTF))
-                            f1Mat[tfInd,sfInd,oriInd] = pwr[f1Ind-1:f1Ind+2].max()/s.mean()
+                            f1f0Mat[tfInd,sfInd,oriInd] = pwr[f1Ind-1:f1Ind+2].max()/s.mean()
                             
             if usePeakResp:
                 respMat = np.nanmax(sdf[:,:,:,inAnalysisWindow],axis=3)
@@ -1060,6 +1091,7 @@ class probeData():
                                           'spontRateMean': spontRateMean,
                                           'spontRateStd': spontRateStd,
                                           'respMat': respMat,
+                                          'f1f0Mat': f1f0Mat,
                                           'trials': trials}
             if protocolType=='stf':
                 self.units[str(unit)][tag]['stfFitParams'] = stfFitParams[uindex]
@@ -1662,7 +1694,7 @@ class probeData():
             ax.plot(unitsYPos, prefSpeeds, 'ko', alpha=0.5)
 
 
-    def analyzeSaccades(self,units=None,protocol=0,preTime=1,postTime=1,analysisWindow=0.15,sdfSigma=0.01,sdfSampInt=0.001,plot=True):
+    def analyzeSaccades(self,units=None,protocol=0,preTime=1,postTime=1,analysisWindow=[0.05,0.15],sdfSigma=0.01,sdfSampInt=0.001,plot=True):
         units,_ = self.getOrderedUnits(units)        
         protocol = str(protocol)        
         if not hasattr(self,'behaviorData') or 'eyeTracking' not in self.behaviorData[protocol]:
@@ -1694,32 +1726,31 @@ class probeData():
         preSamples = int(preTime*self.sampleRate)
         postSamples = int(postTime*self.sampleRate)
         sdf = np.full((len(units),3,int(round((preSamples+postSamples)/self.sampleRate/sdfSampInt))),np.nan)
-        latencyInd = np.zeros((len(units),3),dtype=int)
-        latency = np.full(3,np.nan)
-        peakRate = latency.copy()
-        spontRateMean = np.full((len(units),3),np.nan)
-        spontRateStd = spontRateMean.copy()
-        preSaccadeSpikeCount = [[[] for i in units] for j in range(3)]
-        postSaccadeSpikeCount = [[[] for i in units] for j in range(3)]
+        winDur = analysisWindow[1]-analysisWindow[0]
+        baseWindow = [analysisWindow[0]-1.5*winDur,analysisWindow[0]-0.5*winDur]
+        preSaccadeSpikeCount = [[[] for j in range(3)] for i in units]
+        postSaccadeSpikeCount = [[[] for j in range(3)] for i in units]
+        hasResp = np.zeros((len(units),3),dtype=bool)
+        peakRate = np.full((len(units),3),np.nan)
+        peakTime = peakRate.copy()
         for i,u in enumerate(units):
             spikes = self.units[str(u)]['times'][protocol]
             for j,saccades in enumerate((negSaccades,posSaccades,allSaccades)):
                 if saccades.size>0:
                     saccadeSamples = eyeTrackSamples[saccades]
                     sdf[i,j],sdfTime = self.getSDF(spikes,saccadeSamples-preSamples,preSamples+postSamples,sigma=sdfSigma,sampInt=sdfSampInt)
-                    spontRateMean[i,j],spontRateStd[i,j] = self.getSDFNoise(spikes,saccadeSamples-preSamples,preSamples-int(analysisWindow*self.sampleRate),sigma=sdfSigma,sampInt=sdfSampInt)
-                    inAnalysisWindow = np.logical_and(sdfTime>preTime-analysisWindow,sdfTime<preTime+analysisWindow)
-                    peakRate[j] = sdf[i,j,inAnalysisWindow].max()
                     # pre- and post-saccade spike counts
                     for s in saccadeSamples:
-                        preSaccadeSpikeCount[j][i].append(np.count_nonzero(np.logical_and(spikes>s-int(0.1*self.sampleRate),spikes<s-int(0.05*self.sampleRate))))
-                        postSaccadeSpikeCount[j][i].append(np.count_nonzero(np.logical_and(spikes>s+int(0.075*self.sampleRate),spikes<s+int(0.125*self.sampleRate))))
-                    # find last thresh cross before peak for latency
-                    latencyThresh = spontRateMean[i,j]+5*spontRateStd[i,j]
-                    if peakRate[j]>latencyThresh:
-                        maxInd = np.argmax(sdf[i,j,inAnalysisWindow])+np.where(inAnalysisWindow)[0][0]
-                        latencyInd[i,j] = np.where(sdf[i,j,:maxInd]<latencyThresh)[0][-1]+1
-                        latency[j] = latencyInd[i,j]*sdfSampInt-preTime
+                        preSaccadeSpikeCount[i][j].append(np.count_nonzero(np.logical_and(spikes>s+int(baseWindow[0]*self.sampleRate),spikes<s+int(baseWindow[1]*self.sampleRate))))
+                        postSaccadeSpikeCount[i][j].append(np.count_nonzero(np.logical_and(spikes>s+int(analysisWindow[0]*self.sampleRate),spikes<s+int(analysisWindow[1]*self.sampleRate))))
+                    _,pval = scipy.stats.wilcoxon(preSaccadeSpikeCount[i][j],postSaccadeSpikeCount[i][j])
+                    if pval<0.05:
+                        hasResp[i,j] = True
+                    inAnalysisWindow = np.logical_and(sdfTime>preTime+analysisWindow[0],sdfTime<preTime+analysisWindow[1])
+                    peakInd = np.argmax(sdf[i,j,inAnalysisWindow]) if sum(postSaccadeSpikeCount[i][j])>sum(preSaccadeSpikeCount[i][j]) else np.argmin(sdf[i,j,inAnalysisWindow])
+                    peakInd += np.where(inAnalysisWindow)[0][0]
+                    peakRate[i,j] = sdf[i,j,peakInd]
+                    peakTime[i,j] = sdfTime[peakInd]
                                                        
         #return sdf[:,-1], spontRateMean[:,-1], spontRateStd[:,-1], preSaccadeSpikeCount[-1], postSaccadeSpikeCount[-1], negAmp, posAmp
         
@@ -1753,20 +1784,20 @@ class probeData():
             
             # sdfs and mean saccade
             fig = plt.figure(facecolor='w')
-            saccadeDirectionColor = ('b','r')
+            saccadeColor = ('b','r','k')
             ax = fig.add_subplot(1,1,1)
             sdfMax = np.nanmax(sdf)
             ymax = 1.2*sdfMax
             yoffset = 0
-            ax.plot([0,0],[0,ymax*(len(units)+2.5)],'k:')
+            ax.plot([0,0],[0,ymax*(len(units)+2.5)],color='0.5')
+            ax.plot([analysisWindow[0]]*2,[0,ymax*(len(units)+2.5)],'k:')
+            ax.plot([analysisWindow[1]]*2,[0,ymax*(len(units)+2.5)],'k:')
             for i,u in zip(reversed(range(len(units))),reversed(units)):
-                for j,clr in enumerate(saccadeDirectionColor):
+                for j,clr in enumerate(saccadeColor):
                     ax.plot(sdfTime-preTime,sdf[i,j]+yoffset,color=clr)
-                    if latencyInd[i,j]>0:
-                        ax.plot(sdfTime[latencyInd[i,j]]-preTime,sdf[i,j,latencyInd[i,j]]+yoffset,'o',color=clr,markersize=4)
                 ax.text(-preTime-0.02*(preTime+postTime),ymax/2+yoffset,str(u),fontsize='xx-small',horizontalalignment='right',verticalalignment='center')
                 yoffset += ymax
-            for j,clr in enumerate(saccadeDirectionColor):
+            for j,clr in enumerate(saccadeColor[:2]):
                 s = avgSaccade[j].copy()
                 s -= s.min()
                 s *= 1.5*ymax/s.max()
@@ -1790,15 +1821,59 @@ class probeData():
             ax.set_ylim((0,1.1*meanSDF.max()))
             ax.set_yticks((0,round(meanSDF.max())))
             
+            # spike rate scatter plot
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            maxRate = 1.1*max(np.mean(count)/winDur for unit in postSaccadeSpikeCount for count in unit)
+            ax.plot([0,maxRate],[0,maxRate],'k:')
+            for i,(pre,post) in enumerate(zip(preSaccadeSpikeCount,postSaccadeSpikeCount)):
+                for j,clr in enumerate(saccadeColor):
+                    faceColor = clr if hasResp[i,j] else 'none'
+                    ax.plot(np.mean(pre[j])/winDur,np.mean(post[j])/winDur,'o',mec=clr,mfc=faceColor)
+            ax.set_xlim((0,maxRate))
+            ax.set_ylim((0,maxRate))
+            ax.set_aspect('equal')
+            ax.tick_params(direction='out',top=False,right=False)
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.set_xlabel('Pre-Saccade Spikes/s')
+            ax.set_ylabel('Post-Saccade Spikes/s')
             
-    def analyzeOKR(self,protocol):
-        protocol = str(protocol)        
-        if not hasattr(self,'behaviorData') or 'eyeTracking' not in self.behaviorData[protocol]:
-            print('no eye tracking data for protocol '+protocol)
+            # saccade direction comparison
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            maxDiff = 1.1*max(abs(np.mean(post[j])-np.mean(pre[j]))/winDur for pre,post in zip(preSaccadeSpikeCount,postSaccadeSpikeCount) for j in (0,1))
+            ax.plot([-maxDiff,maxDiff],[-maxDiff,maxDiff],'k:')
+            for i,(pre,post) in enumerate(zip(preSaccadeSpikeCount,postSaccadeSpikeCount)):
+                if hasResp[i,:2].any():
+                    ax.plot((np.mean(post[0])-np.mean(pre[0]))/winDur,(np.mean(post[1])-np.mean(pre[1]))/winDur,'ko')
+            ax.set_xlim((-maxDiff,maxDiff))
+            ax.set_ylim((-maxDiff,maxDiff))
+            ax.set_aspect('equal')
+            ax.tick_params(direction='out',top=False,right=False)
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.set_xlabel('Neg Saccades Spikes/s')
+            ax.set_ylabel('Pos Saccades Spikes/s')
+            
+            
+    def analyzeOKR(self,protocolName='gratings'):
+        if protocolName not in ('gratings','checkerboard'):
+            print('protocolName must be gratings or checkerboard')
             return
-        protocolLabel = self.getProtocolLabel(protocol)
+        protocol = self.getProtocolIndex(protocolName)
+        if protocol is None:
+            expDate,anmID = self.getExperimentInfo()
+            print('no '+protocolName+' for '+expDate+'_'+anmID)
+            return
+        else:
+            protocol = str(protocol)
+        if not hasattr(self,'behaviorData') or 'eyeTracking' not in self.behaviorData[protocol]:
+            print('no eye tracking data for '+protocolName)
+            return
+        
         p = self.visstimData[protocol]        
-        if protocolLabel=='gratings':
+        if protocolName=='gratings':
             trialStartFrames = p['stimStartFrames']
             trialEndFrames = trialStartFrames+p['stimTime']
             trials = np.logical_and(trialEndFrames<p['frameSamples'].size,np.logical_and(p['stimulusHistory_contrast']>0,p['stimulusHistory_ori']==0))
@@ -1808,7 +1883,7 @@ class probeData():
             trialY = p['stimulusHistory_tf'][trials]
             xparamName = 'sf'
             yparamName = 'tf'
-        elif protocolLabel=='checkerboard':
+        elif protocolName=='checkerboard':
             trialStartFrames = p['trialStartFrame']
             trialEndFrames = trialStartFrames+p['trialNumFrames'].astype(int)
             trials = trialEndFrames<p['frameSamples'].size
@@ -1820,9 +1895,6 @@ class probeData():
             trialY[p['trialPatchDir'][trials]==180] *= -1
             xparamName = 'background speed'
             yparamName = 'patch speed'
-        else:
-            print('protocol must be gratings or checkerboard okr analysis')
-            return
         
         eyeTrackSamples = self.behaviorData[protocol]['eyeTracking']['samples']
         pupilX = self.behaviorData[protocol]['eyeTracking']['pupilX'][0:eyeTrackSamples.size]
@@ -1865,7 +1937,7 @@ class probeData():
         cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
         cb.set_ticks([0,math.floor(meanPupilVel.max()*10)/10])
         
-        if protocolLabel=='gratings':
+        if protocolName=='gratings':
             stimSpeed = [yparam[:,None]/xparam]
             stimSpeedLabel = ['grating']
         else:
@@ -1938,7 +2010,64 @@ class probeData():
                 else:
                     a.set_yticks([])
                     
-    
+    def plotAutoCorr(self,units=None,protocols=None, bin_width=0.0005, width=0.1, rfViolWin=0.0015):
+        units,unitsYPos = self.getOrderedUnits(units)
+        
+        if protocols is None:
+            protocols = []
+            for pro in self.kwdFileList:
+                name = os.path.dirname(pro)
+                pname = name[name.rfind('_')+1:]
+                protocols.append(pname)
+        
+        if not isinstance(protocols,list):
+            protocols = [protocols]
+            
+        plt.figure(facecolor='w', figsize=[14, 5])
+        gs = gridspec.GridSpec(len(units),len(protocols))
+        for ii,u in enumerate(units):
+            ax = []
+            for jj,p in enumerate(protocols):
+                proIndex = self.getProtocolIndex(p)
+                if proIndex is None:
+                    print('No protocol matching ' + str(p))
+                    continue
+                spike_times = self.units[u]['times'][str(proIndex)]/float(self.sampleRate)
+                d = []                   # Distance between any two spike times
+                n_sp = len(spike_times)  # Number of spikes in the input spike train
+                
+                i, j = 0, 0
+                for t in spike_times:
+                    # For each spike we only consider those spikes times that are at most
+                    # at a 'width' time lag. This requires finding the indices
+                    # associated with the limiting spikes.
+                    while i < n_sp and spike_times[i] < t - width:
+                        i += 1
+                    while j < n_sp and spike_times[j] < t + width:
+                        j += 1
+                    # Once the relevant spikes are found, add the time differences
+                    # to the list
+                    d.extend(spike_times[i:j] - t)
+                    
+                rfViolations = np.sum(np.logical_and(np.array(d)>0, np.array(d)<rfViolWin))
+                rfViolPer = np.round(100*rfViolations/len(spike_times), 3)
+                n_b = int( np.ceil(width / bin_width) )  # Num. edges per side
+                # Define the edges of the bins (including rightmost bin)
+                b = np.linspace(-width, width, 2 * n_b, endpoint=True)
+                [h, hb] = np.histogram(d, bins=b)
+                h[np.ceil(len(h)/2).astype(int) - 1] = 0
+                                
+                
+                ax.append(plt.subplot(gs[ii,jj]))
+                ax[-1].bar(hb[:-1], h, bin_width)
+                ax[-1].set_xlim([-width,width])
+                ax[-1].spines['right'].set_visible(False)
+                ax[-1].spines['top'].set_visible(False)
+                ax[-1].tick_params(direction='out',top=False,right=False,labelsize='xx-small')
+                if ii==0:
+                    ax[-1].set_title(p,fontsize='x-small')
+                ax[-1].text(-width*0.9, 0.95*ax[-1].get_ylim()[1], 'rf viol: ' + str(rfViolPer), color='r')
+             
     def plotSDF(self,unit,protocol,startSamples=None,offset=0,windowDur=None,sigma=0.02,sampInt=0.001,paramNames=None):
         # offset in seconds
         # windowDur input in seconds then converted to samples
@@ -2203,6 +2332,7 @@ class probeData():
                         self.findRF(units, protocol=protocol, useCache=useCache, saveTag=laserTag+'_allTrials',plot=plot)
                     else:                    
                         self.findRF(units, protocol=protocol, useCache=useCache, plot=plot)
+                        
                 elif 'flash' in pro:
                     if splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                 
@@ -2210,6 +2340,7 @@ class probeData():
                         self.analyzeFlash(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag=laserTag+'_run', plot=plot)
                     else:                    
                         self.analyzeFlash(units, protocol=protocol, useCache=useCache, plot=plot)
+                        
                 elif 'spots' in pro:
                     if splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                    
@@ -2217,6 +2348,7 @@ class probeData():
                         self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag=laserTag+'_run', plot=plot)
                     else:
                         self.analyzeSpots(units, protocol=protocol, useCache=useCache, plot=plot)
+                        
                 elif 'checkerboard' in pro:
                     if splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
@@ -2229,7 +2361,112 @@ class probeData():
                             self.analyzeCheckerboard(units, protocol=protocol, laser=laser, saveTag=laserTag+'_allTrials', plot=plot)
                     else:
                         self.analyzeCheckerboard(units, protocol=protocol, plot=plot)
+        
+        if plot:
+            units, _ = self.getOrderedUnits(units)
+            if len(units)==1:
+                self.plotSpikeRateOverProtocols(units)
+                self.plotAutoCorr(units[0])
+                self.plotSpikeAmplitudes(units[0])
+                self.plotSpikeTemplate(units[0])
+            
+    def plotSpikeRateOverProtocols(self, units=None, protocols = None, binsize = 10):        
+        units, _ = self.getOrderedUnits(units)        
+
+        if protocols is None:
+            protocols = []
+            for pro in self.kwdFileList:
+                name = os.path.dirname(pro)
+                pname = name[name.rfind('_')+1:]
+                protocols.append(pname)
+        
+        if not isinstance(protocols,list):
+            protocols = [protocols]
+            
+        proInds = []
+        for pro in protocols:
+            pi = self.getProtocolIndex(pro)
+            if pi is not None:
+                proInds.append(pi)                                                
+        try:
+            nSamps = np.array(self.nsamps)[proInds]
+        except:
+            nSamps = []
+            for pro in proInds:
+                nSamps.append(self.behaviorData[str(pro)]['running'].size * 500)
                 
+        for u in units:
+            fig = plt.figure(u, facecolor='w', figsize=[8, 2*len(proInds)])
+            axes = []
+            maxSpikeRate = 0
+            for ip, pro in enumerate(proInds):
+                spikes = self.units[u]['times'][str(pro)]
+                if spikes.size > 0 and nSamps[ip] > binsize*self.sampleRate:
+                    ax = fig.add_subplot(len(proInds), 1, ip+1)
+                    h, b = np.histogram(spikes, int(round(nSamps[ip]/(binsize*self.sampleRate))), [0, nSamps[ip]])
+                    h_spr = h/binsize
+                    if np.max(h_spr) > maxSpikeRate:
+                        maxSpikeRate = np.max(h_spr)
+                    ax.plot(b[1:], h_spr, 'k')
+                    ax.set_title(self.getProtocolLabel(pro))
+                    formatFigure(fig, ax, yLabel='Spike Rate (Hz)')
+                    axes.append(ax)
+
+            for a in axes:
+                a.set_ylim([0, maxSpikeRate])
+            fig.tight_layout()
+            
+    def plotSpikeTemplate(self, unit):
+        temp = self.units[str(unit)]['template']
+        maxChan = np.unravel_index(np.argmax(temp), temp.shape)[1]
+        t = np.copy(temp[:, maxChan])
+        x = 1000*np.arange(t.size)/self.sampleRate
+        
+        # convert template to real units
+        if hasattr(self, 'digitalGain'):
+            dg = self.digitalGain
+        else:
+            dg = 0.195
+        
+        if 'amplitudes' in self.units[str(unit)]:
+            meanTempScaleFactor = np.mean(self.units[str(unit)]['amplitudes'])
+            t *= meanTempScaleFactor*dg
+        else:
+            print('No spike amplitudes found for: ' + str(unit) + '. Displaying arb units')
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(111)
+        ax.plot(x, t, 'k')
+        formatFigure(fig, ax, 'Spike Template for: ' + str(unit), xLabel='ms', yLabel='mV')
+        
+                                    
+    def plotSpikeAmplitudes(self, unit):
+        filelist = self.kwdFileList
+        filePaths = [os.path.dirname(f) for f in filelist]
+        fileDir=os.path.dirname(filePaths[0])
+        _, kwdNsamplesList = getKwdInfo(dirPath=fileDir)        
+        
+        if 'amplitudes' in self.units[str(unit)]:
+            
+            fig = plt.figure(facecolor='w', figsize=[14, 4.5])                        
+            ax = fig.add_subplot(111)        
+            
+            protocolEnds = np.cumsum(kwdNsamplesList)
+            protocolStarts = np.insert(protocolEnds, 0, 0)[:-1] - 1
+            spikeTimes = []
+            for i, _ in enumerate(self.kwdFileList):
+                sts = self.units[str(unit)]['times'][str(i)]                
+                spikeTimes.extend(sts + protocolStarts[i])
+            
+            ax.plot(spikeTimes[::100], self.units[str(unit)]['amplitudes'][::100], 'ko', alpha=0.2)
+            ax.set_xlim([0, protocolEnds[-1]])
+            for i, p in enumerate(self.kwdFileList):
+                name = os.path.dirname(p)
+                ax.plot([protocolEnds[i], protocolEnds[i]], [ax.get_ylim()[0], ax.get_ylim()[1]], 'k--')
+                ax.text(np.mean([protocolStarts[i], protocolEnds[i]]), 0.95*ax.get_ylim()[1], name[name.rfind('_')+1:], horizontalalignment='center')
+            formatFigure(fig, ax, 'Spike Template Amplitudes for unit: ' + str(unit), xLabel='Sample #', yLabel='Template Scale Factor')
+        else:
+            print('No amplitudes found for unit: ' + str(unit))
+                       
     def getTrialStartsEnds(self, protocol, timeUnit='samples'):
         if isinstance(protocol, str):
             protocol = self.getProtocolIndex(protocol)
@@ -2311,6 +2548,29 @@ class probeData():
             self.loadClusteredData(kwdNsamplesList=nsamps, fileDir=fileDir, protocolsToAnalyze=protocolsToAnalyze)
     
     
+#    def loadClusteredData(self, kwdNsamplesList = None, protocolsToAnalyze = None, fileDir = None):
+#        from load_phy_template import load_phy_template
+#                 
+#        if fileDir is None:
+#            fileDir = fileIO.getDir()
+#        
+#        if protocolsToAnalyze is None:
+#            protocolsToAnalyze = np.arange(len(self.kwdFileList))
+#        
+#        self.units = load_phy_template(fileDir, sampling_rate = self.sampleRate)
+#        for unit in self.units:
+#            spikeTimes = (self.units[unit]['times']).astype(int)
+#            
+#            if kwdNsamplesList is not None:
+#                self.units[unit]['times'] = {}
+#                protocolEnds = np.cumsum(kwdNsamplesList)
+#                protocolStarts = np.insert(protocolEnds, 0, 0)[:-1] - 1
+#                for pro in protocolsToAnalyze:                    
+#                    self.units[unit]['times'][str(pro)] = spikeTimes[np.logical_and(spikeTimes >= protocolStarts[pro], spikeTimes < protocolEnds[pro])]
+#                    self.units[unit]['times'][str(pro)] -= protocolStarts[pro]
+#            else:
+#              self.units[unit]['times'] = spikeTimes       
+    
     def loadClusteredData(self, kwdNsamplesList = None, protocolsToAnalyze = None, fileDir = None):
         from load_phy_template import load_phy_template
                  
@@ -2318,22 +2578,34 @@ class probeData():
             fileDir = fileIO.getDir()
         
         if protocolsToAnalyze is None:
-            protocolsToAnalyze = np.arange(len(self._d))
+            protocolsToAnalyze = np.arange(len(self.kwdFileList))
         
-        self.units = load_phy_template(fileDir, sampling_rate = self.sampleRate)
-        for unit in self.units:
-            spikeTimes = (self.units[unit]['times']).astype(int)
-           
+        units = load_phy_template(fileDir, sampling_rate = self.sampleRate)
+        for unit in units:
+            spikeTimes = (units[unit]['times']).astype(int)
+            
             if kwdNsamplesList is not None:
-                self.units[unit]['times'] = {}
+                units[unit]['times'] = {}
                 protocolEnds = np.cumsum(kwdNsamplesList)
                 protocolStarts = np.insert(protocolEnds, 0, 0)[:-1] - 1
                 for pro in protocolsToAnalyze:                    
-                    self.units[unit]['times'][str(pro)] = spikeTimes[np.logical_and(spikeTimes >= protocolStarts[pro], spikeTimes < protocolEnds[pro])]
-                    self.units[unit]['times'][str(pro)] -= protocolStarts[pro]
+                    units[unit]['times'][str(pro)] = spikeTimes[np.logical_and(spikeTimes >= protocolStarts[pro], spikeTimes < protocolEnds[pro])]
+                    units[unit]['times'][str(pro)] -= protocolStarts[pro]
             else:
-              self.units[unit]['times'] = spikeTimes       
-
+              units[unit]['times'] = spikeTimes       
+        
+        
+        if hasattr(self, 'units'):
+            for u in units:
+                if u in self.units:
+                    for key in units[u]:
+                        self.units[u][key] = units[u][key]
+                else:
+                    self.units[u]= {}
+                    self.units[u] = units[str(u)]
+        else:
+            self.units = units
+                    
 
     def saveHDF5(self,filePath=None):
         fileIO.objToHDF5(self,filePath)
@@ -2341,7 +2613,12 @@ class probeData():
                     
     def loadHDF5(self,filePath=None):
         fileIO.hdf5ToObj(self,filePath)
-                    
+        if not hasattr(self, 'nsamps'):
+            try:
+                _, self.nsamps = getKwdInfo(os.path.dirname(os.path.dirname(self.kwdFileList[0])))
+            except:
+                print('Could not find number of samples for kwd files')
+                pass
     
     def saveWorkspace(self, variables=None, saveGlobals = False, fileName=None, exceptVars = []):
         if fileName is None:
