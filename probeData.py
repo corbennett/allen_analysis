@@ -159,24 +159,25 @@ class probeData():
             protocolIndex = self.getProtocolIndex(protocolName)
             protocol = str(protocolIndex)
             eyeDataFile = h5py.File(os.path.join(dirPath,fileName))
+            frameTimes = eyeDataFile['frameTimes'][:]
             
             if len(self.TTL[protocol])>0:
                 camExposingSamples = self.TTL[protocol]['CamExposing']['rising']
                 camSavingSamples = self.TTL[protocol]['CamSaving']['rising']
                 firstFrameSample = camExposingSamples[np.where(camExposingSamples<camSavingSamples[0])[0][-1]]
-                frameSamples = (eyeDataFile['frameTimes'][:]*self.sampleRate+firstFrameSample).astype(int)
+                frameSamples = (frameTimes*self.sampleRate+firstFrameSample).astype(int)
             else:
                 kwdFile = h5py.File(self.kwdFileList[protocolIndex])
                 thresh = 10000
-                camExposing = kwdFile['recordings']['0']['data'][:,self.camExposingChannel]
-                camExposingSamples = np.where(np.logical_and(camExposing[:-1]<thresh,camExposing[1:]>thresh))[0]+1
-                del(camExposing)
-                camSaving = kwdFile['recordings']['0']['data'][:,self.camSavingChannel]
-                camSavingSamples = np.where(np.logical_and(camSaving[:-1]<thresh,camSaving[1:]>thresh))[0]+1
-                del(camSaving)
-                frameSamples = camExposingSamples[np.searchsorted(camExposingSamples,camSavingSamples)-1]
+                camExposing,camSaving = kwdFile['recordings']['0']['data'][:,[self.camExposingChannel,self.camSavingChannel]].T
+                camExposingSamples = np.where(np.logical_and(camExposing[:-1]<=thresh,camExposing[1:]>thresh))[0]+1
+                camSavingSamples = np.where(np.logical_and(camSaving[:-1]<=thresh,camSaving[1:]>thresh))[0]+1
+#                frameSamples = camExposingSamples[np.searchsorted(camExposingSamples,camSavingSamples)-1]
+                firstFrameIndex = np.where(camExposingSamples<camSavingSamples[0])[0][-1]
+                frameSampleIndex = firstFrameIndex+np.concatenate(([0],np.cumsum(np.round(np.diff(frameTimes)*60)).astype(int)))
+                frameSamples = camExposingSamples[frameSampleIndex[frameSampleIndex<camExposingSamples.size]]        
         
-            self.behaviorData[protocol]['eyeTracking'] = {'samples': frameSamples}    
+            self.behaviorData[protocol]['eyeTracking'] = {'samples':frameSamples,'frameTimes':frameTimes}    
             for param in ('pupilArea','pupilX','pupilY','negSaccades','posSaccades'):      
                 self.behaviorData[protocol]['eyeTracking'][param] = eyeDataFile[param][:]
     
@@ -1694,7 +1695,7 @@ class probeData():
             ax.plot(unitsYPos, prefSpeeds, 'ko', alpha=0.5)
 
 
-    def analyzeSaccades(self,units=None,protocol=0,preTime=1,postTime=1,analysisWindow=[0.05,0.15],sdfSigma=0.01,sdfSampInt=0.001,plot=True):
+    def analyzeSaccades(self,units=None,protocol=0,preTime=1,postTime=1,analysisWindow=[0,0.2],sdfSigma=0.01,sdfSampInt=0.001,plot=True):
         units,_ = self.getOrderedUnits(units)        
         protocol = str(protocol)        
         if not hasattr(self,'behaviorData') or 'eyeTracking' not in self.behaviorData[protocol]:
@@ -1706,6 +1707,9 @@ class probeData():
         negSaccades = self.behaviorData[protocol]['eyeTracking']['negSaccades']
         posSaccades = self.behaviorData[protocol]['eyeTracking']['posSaccades']
         allSaccades = np.sort(np.concatenate((negSaccades,posSaccades)))
+        
+        saccadeRate = allSaccades.size/(eyeTrackSamples[-1]-eyeTrackSamples[0])*self.sampleRate
+        print(saccadeRate)
         
         # get average saccade and saccade amplitudes
         preFrames = int(preTime*60)
@@ -1727,7 +1731,7 @@ class probeData():
         postSamples = int(postTime*self.sampleRate)
         sdf = np.full((len(units),3,int(round((preSamples+postSamples)/self.sampleRate/sdfSampInt))),np.nan)
         winDur = analysisWindow[1]-analysisWindow[0]
-        baseWindow = [analysisWindow[0]-1.5*winDur,analysisWindow[0]-0.5*winDur]
+        baseWindow = [analysisWindow[0]-2*winDur,analysisWindow[0]-winDur]
         preSaccadeSpikeCount = [[[] for j in range(3)] for i in units]
         postSaccadeSpikeCount = [[[] for j in range(3)] for i in units]
         hasResp = np.zeros((len(units),3),dtype=bool)
@@ -1754,110 +1758,112 @@ class probeData():
                                                        
         #return sdf[:,-1], spontRateMean[:,-1], spontRateStd[:,-1], preSaccadeSpikeCount[-1], postSaccadeSpikeCount[-1], negAmp, posAmp
         
-        if plot:
-            # pupil position histogram
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
-            pupilX -= np.nanmedian(pupilX)
-            ax.hist(pupilX[~np.isnan(pupilX)],bins=np.arange(np.nanmin(pupilX)-1,np.nanmax(pupilX)+1),color='k')
-            for side in ('right','top'):
-                ax.spines[side].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False)
-            ax.set_xlabel('Horizontal Pupil Position (degrees)')
-            ax.set_ylabel('# Frames')
+        if not plot:
+            return pupilX, saccadeRate, negAmp, posAmp, preSaccadeSpikeCount, postSaccadeSpikeCount, hasResp, peakRate, peakTime
+        
+        # pupil position histogram
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        pupilX -= np.nanmedian(pupilX)
+        ax.hist(pupilX[~np.isnan(pupilX)],bins=np.arange(np.nanmin(pupilX)-1,np.nanmax(pupilX)+1),color='k')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False)
+        ax.set_xlabel('Horizontal Pupil Position (degrees)')
+        ax.set_ylabel('# Frames')
+        
+        # saccdade amplitude histogram
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        bins = np.arange(30)
+        negCount,_ = np.histogram(-negAmp[~np.isnan(negAmp)],bins)
+        plt.bar(bins[:-1],-negCount,color='b')
+        posCount,_ = np.histogram(posAmp[~np.isnan(posAmp)],bins)
+        plt.bar(bins[:-1],posCount,color='r')
+        ax.tick_params(direction='out',top=False,right=False)
+        maxCount = max(negCount.max(),posCount.max())
+        ax.set_ylim((-maxCount,maxCount))
+        ax.set_yticks((-maxCount,maxCount))
+        ax.set_yticklabels((maxCount,maxCount))
+        ax.set_xlabel('Saccade Amplitude (degrees)')
+        ax.set_ylabel('Count')
+        
+        # sdfs and mean saccade
+        fig = plt.figure(facecolor='w')
+        saccadeColor = ('b','r','k')
+        ax = fig.add_subplot(1,1,1)
+        sdfMax = np.nanmax(sdf)
+        ymax = 1.2*sdfMax
+        yoffset = 0
+        ax.plot([0,0],[0,ymax*(len(units)+2.5)],color='0.5')
+        ax.plot([analysisWindow[0]]*2,[0,ymax*(len(units)+2.5)],'k:')
+        ax.plot([analysisWindow[1]]*2,[0,ymax*(len(units)+2.5)],'k:')
+        for i,u in zip(reversed(range(len(units))),reversed(units)):
+            for j,clr in enumerate(saccadeColor):
+                ax.plot(sdfTime-preTime,sdf[i,j]+yoffset,color=clr)
+            ax.text(-preTime-0.02*(preTime+postTime),ymax/2+yoffset,str(u),fontsize='xx-small',horizontalalignment='right',verticalalignment='center')
+            yoffset += ymax
+        for j,clr in enumerate(saccadeColor[:2]):
+            s = avgSaccade[j].copy()
+            s -= s.min()
+            s *= 1.5*ymax/s.max()
+            ax.plot(saccadeTime,s+yoffset+0.5*ymax,color= clr)
+        for side in ('left','bottom','right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,left=False,labelleft=False,labelright=True,labelsize='x-small')
+        ax.set_xlim((-preTime,postTime))
+        ax.set_ylim((0,ymax*(len(units)+2.5)))
+        ax.set_yticks((0,round(sdfMax)))
+        
+        # mean sdf
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        meanSDF = np.nanmean(sdf[:,2],axis=0)
+        ax.plot(sdfTime-preTime,meanSDF,'k')
+        for side in ('left','bottom','right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,left=False,labelleft=False,labelright=True)
+        ax.set_xlim((-preTime,postTime))
+        ax.set_ylim((0,1.1*meanSDF.max()))
+        ax.set_yticks((0,round(meanSDF.max())))
+        
+        # spike rate scatter plot
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        maxRate = 1.1*max(np.mean(count)/winDur for unit in postSaccadeSpikeCount for count in unit)
+        ax.plot([0,maxRate],[0,maxRate],'k:')
+        for i,(pre,post) in enumerate(zip(preSaccadeSpikeCount,postSaccadeSpikeCount)):
+            for j,clr in enumerate(saccadeColor):
+                faceColor = clr if hasResp[i,j] else 'none'
+                ax.plot(np.mean(pre[j])/winDur,np.mean(post[j])/winDur,'o',mec=clr,mfc=faceColor)
+        ax.set_xlim((0,maxRate))
+        ax.set_ylim((0,maxRate))
+        ax.set_aspect('equal')
+        ax.tick_params(direction='out',top=False,right=False)
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.set_xlabel('Pre-Saccade Spikes/s')
+        ax.set_ylabel('Post-Saccade Spikes/s')
+        
+        # saccade direction comparison
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        maxDiff = 1.1*max(abs(np.mean(post[j])-np.mean(pre[j]))/winDur for pre,post in zip(preSaccadeSpikeCount,postSaccadeSpikeCount) for j in (0,1))
+        ax.plot([-maxDiff,maxDiff],[-maxDiff,maxDiff],'k:')
+        for i,(pre,post) in enumerate(zip(preSaccadeSpikeCount,postSaccadeSpikeCount)):
+            if hasResp[i,:2].any():
+                ax.plot((np.mean(post[0])-np.mean(pre[0]))/winDur,(np.mean(post[1])-np.mean(pre[1]))/winDur,'ko')
+        ax.set_xlim((-maxDiff,maxDiff))
+        ax.set_ylim((-maxDiff,maxDiff))
+        ax.set_aspect('equal')
+        ax.tick_params(direction='out',top=False,right=False)
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.set_xlabel('Neg Saccades Spikes/s')
+        ax.set_ylabel('Pos Saccades Spikes/s')
             
-            # saccdade amplitude histogram
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
-            bins = np.arange(30)
-            negCount,_ = np.histogram(-negAmp[~np.isnan(negAmp)],bins)
-            plt.bar(bins[:-1],-negCount,color='b')
-            posCount,_ = np.histogram(posAmp[~np.isnan(posAmp)],bins)
-            plt.bar(bins[:-1],posCount,color='r')
-            ax.tick_params(direction='out',top=False,right=False)
-            maxCount = max(negCount.max(),posCount.max())
-            ax.set_ylim((-maxCount,maxCount))
-            ax.set_yticks((-maxCount,maxCount))
-            ax.set_yticklabels((maxCount,maxCount))
-            ax.set_xlabel('Saccade Amplitude (degrees)')
-            ax.set_ylabel('Count')
             
-            # sdfs and mean saccade
-            fig = plt.figure(facecolor='w')
-            saccadeColor = ('b','r','k')
-            ax = fig.add_subplot(1,1,1)
-            sdfMax = np.nanmax(sdf)
-            ymax = 1.2*sdfMax
-            yoffset = 0
-            ax.plot([0,0],[0,ymax*(len(units)+2.5)],color='0.5')
-            ax.plot([analysisWindow[0]]*2,[0,ymax*(len(units)+2.5)],'k:')
-            ax.plot([analysisWindow[1]]*2,[0,ymax*(len(units)+2.5)],'k:')
-            for i,u in zip(reversed(range(len(units))),reversed(units)):
-                for j,clr in enumerate(saccadeColor):
-                    ax.plot(sdfTime-preTime,sdf[i,j]+yoffset,color=clr)
-                ax.text(-preTime-0.02*(preTime+postTime),ymax/2+yoffset,str(u),fontsize='xx-small',horizontalalignment='right',verticalalignment='center')
-                yoffset += ymax
-            for j,clr in enumerate(saccadeColor[:2]):
-                s = avgSaccade[j].copy()
-                s -= s.min()
-                s *= 1.5*ymax/s.max()
-                ax.plot(saccadeTime,s+yoffset+0.5*ymax,color= clr)
-            for side in ('left','bottom','right','top'):
-                ax.spines[side].set_visible(False)
-            ax.tick_params(direction='out',top=False,left=False,labelleft=False,labelright=True,labelsize='x-small')
-            ax.set_xlim((-preTime,postTime))
-            ax.set_ylim((0,ymax*(len(units)+2.5)))
-            ax.set_yticks((0,round(sdfMax)))
-            
-            # mean sdf
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
-            meanSDF = np.nanmean(sdf[:,2],axis=0)
-            ax.plot(sdfTime-preTime,meanSDF,'k')
-            for side in ('left','bottom','right','top'):
-                ax.spines[side].set_visible(False)
-            ax.tick_params(direction='out',top=False,left=False,labelleft=False,labelright=True)
-            ax.set_xlim((-preTime,postTime))
-            ax.set_ylim((0,1.1*meanSDF.max()))
-            ax.set_yticks((0,round(meanSDF.max())))
-            
-            # spike rate scatter plot
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
-            maxRate = 1.1*max(np.mean(count)/winDur for unit in postSaccadeSpikeCount for count in unit)
-            ax.plot([0,maxRate],[0,maxRate],'k:')
-            for i,(pre,post) in enumerate(zip(preSaccadeSpikeCount,postSaccadeSpikeCount)):
-                for j,clr in enumerate(saccadeColor):
-                    faceColor = clr if hasResp[i,j] else 'none'
-                    ax.plot(np.mean(pre[j])/winDur,np.mean(post[j])/winDur,'o',mec=clr,mfc=faceColor)
-            ax.set_xlim((0,maxRate))
-            ax.set_ylim((0,maxRate))
-            ax.set_aspect('equal')
-            ax.tick_params(direction='out',top=False,right=False)
-            for side in ('right','top'):
-                ax.spines[side].set_visible(False)
-            ax.set_xlabel('Pre-Saccade Spikes/s')
-            ax.set_ylabel('Post-Saccade Spikes/s')
-            
-            # saccade direction comparison
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
-            maxDiff = 1.1*max(abs(np.mean(post[j])-np.mean(pre[j]))/winDur for pre,post in zip(preSaccadeSpikeCount,postSaccadeSpikeCount) for j in (0,1))
-            ax.plot([-maxDiff,maxDiff],[-maxDiff,maxDiff],'k:')
-            for i,(pre,post) in enumerate(zip(preSaccadeSpikeCount,postSaccadeSpikeCount)):
-                if hasResp[i,:2].any():
-                    ax.plot((np.mean(post[0])-np.mean(pre[0]))/winDur,(np.mean(post[1])-np.mean(pre[1]))/winDur,'ko')
-            ax.set_xlim((-maxDiff,maxDiff))
-            ax.set_ylim((-maxDiff,maxDiff))
-            ax.set_aspect('equal')
-            ax.tick_params(direction='out',top=False,right=False)
-            for side in ('right','top'):
-                ax.spines[side].set_visible(False)
-            ax.set_xlabel('Neg Saccades Spikes/s')
-            ax.set_ylabel('Pos Saccades Spikes/s')
-            
-            
-    def analyzeOKR(self,protocolName='gratings'):
+    def analyzeOKR(self,protocolName='gratings',smoothPts=3,plot=True):
         if protocolName not in ('gratings','checkerboard'):
             print('protocolName must be gratings or checkerboard')
             return
@@ -1876,11 +1882,11 @@ class probeData():
         if protocolName=='gratings':
             trialStartFrames = p['stimStartFrames']
             trialEndFrames = trialStartFrames+p['stimTime']
-            trials = np.logical_and(trialEndFrames<p['frameSamples'].size,np.logical_and(p['stimulusHistory_contrast']>0,p['stimulusHistory_ori']==0))
+            trials = np.logical_and(trialEndFrames<p['frameSamples'].size,np.logical_and(p['stimulusHistory_contrast'][:trialStartFrames.size]>0,p['stimulusHistory_ori'][:trialStartFrames.size]==0))
             trialStartSamples = p['frameSamples'][trialStartFrames[trials]]
             trialEndSamples = p['frameSamples'][trialEndFrames[trials]]   
-            trialX = p['stimulusHistory_sf'][trials]
-            trialY = p['stimulusHistory_tf'][trials]
+            trialX = p['stimulusHistory_sf'][:trialStartFrames.size][trials]
+            trialY = p['stimulusHistory_tf'][:trialStartFrames.size][trials]
             xparamName = 'sf'
             yparamName = 'tf'
         elif protocolName=='checkerboard':
@@ -1904,9 +1910,8 @@ class probeData():
         allSaccades = np.sort(np.concatenate((negSaccades,posSaccades)))
         allSaccades = allSaccades[allSaccades<eyeTrackSamples.size]
         for saccade in allSaccades:
-            pupilVel[int(saccade-3):int(saccade+6)] = np.nan
-            
-        smoothPts = 31
+            pupilVel[int(saccade-6):int(saccade+12)] = np.nan
+        
         n = smoothPts//2
         pupilVelSmoothed = np.convolve(pupilVel,np.ones(smoothPts)/smoothPts,mode='same')
         pupilVelSmoothed[:n] = pupilVel[:n].mean()
@@ -1922,10 +1927,38 @@ class probeData():
                 for n,trial in enumerate(trialInd):
                     v[n] = np.nanmean(pupilVelSmoothed[np.argmin(abs(eyeTrackSamples-trialStartSamples[trial])):np.argmin(abs(eyeTrackSamples-trialEndSamples[trial]))])
                 meanPupilVel[i,j] = np.nanmean(v)
+        meanPupilVel[np.isnan(meanPupilVel)] = 0
+        if protocolName=='checkerboard':
+            for i in range(yparam.size):
+                for j in range(xparam.size):
+                    if i==j:
+                        meanPupilVel[i,j] = meanPupilVel[yparam==0,j]
+        
+        if protocolName=='gratings':
+            stimSpeed = yparam[:,None]/xparam
+            stimSpeedLabel = 'grating'
+        else:
+            stimSpeed = np.tile(xparam,(xparam.size,1))
+            stimSpeedLabel = 'background'
+        okrGain = meanPupilVel/stimSpeed
+        okrGain[okrGain<0] = 0
+        okrGain[np.isinf(okrGain)] = 0
+        okrGain[np.isnan(okrGain)] = 0
+        
+        if not plot:
+            return xparam, yparam, meanPupilVel, stimSpeed, okrGain
                 
         fig = plt.figure(facecolor='w')
-        ax = fig.add_subplot(3,2,1)
-        im = ax.imshow(meanPupilVel,clim=[0,meanPupilVel.max()],cmap='gray',origin='lower',interpolation='none')
+        gs = gridspec.GridSpec(2,2)
+        ax = fig.add_subplot(gs[0,0])
+        maxVel = np.absolute(meanPupilVel).max()
+        if protocolName=='gratings':
+            clim = (0,maxVel)
+            cmap = 'gray'
+        else:
+            clim = (-maxVel,maxVel)
+            cmap = 'bwr'
+        im = ax.imshow(meanPupilVel,clim=clim,cmap=cmap,origin='lower',interpolation='none')
         ax.tick_params(direction='out',top=False,right=False)
         ax.set_xticks([0,xparam.size-1])
         ax.set_yticks([0,yparam.size-1])
@@ -1935,39 +1968,32 @@ class probeData():
         ax.set_ylabel(yparamName)
         ax.set_title('pupil speed (deg/s)')
         cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
-        cb.set_ticks([0,math.floor(meanPupilVel.max()*10)/10])
+        cb.set_ticks(clim)
         
-        if protocolName=='gratings':
-            stimSpeed = [yparam[:,None]/xparam]
-            stimSpeedLabel = ['grating']
-        else:
-            stimSpeed = [np.tile(xparam,(xparam.size,1)),np.tile(yparam[:,None],(1,yparam.size))]
-            stimSpeedLabel = ['background','patch']
-        for i,(speed,label) in enumerate(zip(stimSpeed,stimSpeedLabel)):
-            okrGain = meanPupilVel/speed
-            ax = fig.add_subplot(3,2,i+3)
-            im = ax.imshow(okrGain,clim=[0,1.1*okrGain.max()],cmap='gray',origin='lower',interpolation='none')
-            ax.tick_params(direction='out',top=False,right=False)
-            ax.set_xticks([0,xparam.size-1])
-            ax.set_yticks([0,yparam.size-1])
-            ax.set_xticklabels(xparam[[0,-1]])
-            ax.set_yticklabels(yparam[[0,-1]])
-            ax.set_xlabel(xparamName)
-            ax.set_ylabel(yparamName)
-            ax.set_title('pupil speed / '+label+' speed')
-            cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
-            cb.set_ticks([0,math.floor(okrGain.max()*10)/10])
-            
-            ax = fig.add_subplot(3,2,i+4)
-            ax.semilogx(speed.ravel(),okrGain.ravel(),'ko')
-            for side in ('top','right'):
-                ax.spines[side].set_visible(False)
-            ax.tick_params(which='both',direction='out',top=False,right=False)
-            ax.set_xlim([0.9,1000])
-            ax.set_ylim([0,1.1])
-            ax.set_yticks([0,0.5,1])
-            ax.set_xlabel(label+' speed')
-            ax.set_ylabel('OKR gain')
+        ax = fig.add_subplot(gs[1,0])
+        im = ax.imshow(okrGain,clim=[0,okrGain.max()],cmap='gray',origin='lower',interpolation='none')
+        ax.tick_params(direction='out',top=False,right=False)
+        ax.set_xticks([0,xparam.size-1])
+        ax.set_yticks([0,yparam.size-1])
+        ax.set_xticklabels(xparam[[0,-1]])
+        ax.set_yticklabels(yparam[[0,-1]])
+        ax.set_xlabel(xparamName)
+        ax.set_ylabel(yparamName)
+        ax.set_title('pupil speed / '+stimSpeedLabel+' speed')
+        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+        cb.set_ticks([0,okrGain.max()])
+        
+        ax = fig.add_subplot(gs[1,1])
+        ax.semilogx(np.absolute(stimSpeed.ravel()),okrGain.ravel(),'ko')
+        for side in ('top','right'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(which='both',direction='out',top=False,right=False)
+        ax.set_xlim([0.9,1000])
+        ax.set_ylim([0,1.1])
+        ax.set_yticks([0,0.5,1])
+        ax.set_xlabel(stimSpeedLabel+' speed')
+        ax.set_ylabel('OKR gain')
+        
         plt.tight_layout()
 
         
