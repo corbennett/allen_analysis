@@ -1697,7 +1697,10 @@ class probeData():
 
     def analyzeSaccades(self,units=None,protocol=0,preTime=1,postTime=1,analysisWindow=[0,0.2],sdfSigma=0.01,sdfSampInt=0.001,plot=True):
         units,_ = self.getOrderedUnits(units)        
-        protocol = str(protocol)        
+        protocol = str(protocol)
+        if protocol not in self.visstimData:
+            print('no protocol '+protocol+' in experiment')
+            return
         if not hasattr(self,'behaviorData') or 'eyeTracking' not in self.behaviorData[protocol]:
             print('no eye tracking data for protocol '+protocol)
             return
@@ -1705,11 +1708,11 @@ class probeData():
         eyeTrackSamples = self.behaviorData[protocol]['eyeTracking']['samples']
         pupilX = self.behaviorData[protocol]['eyeTracking']['pupilX']
         negSaccades = self.behaviorData[protocol]['eyeTracking']['negSaccades']
+        negSaccades = negSaccades[negSaccades<eyeTrackSamples.size]
         posSaccades = self.behaviorData[protocol]['eyeTracking']['posSaccades']
+        posSaccades = posSaccades[posSaccades<eyeTrackSamples.size]
         allSaccades = np.sort(np.concatenate((negSaccades,posSaccades)))
-        
         saccadeRate = allSaccades.size/(eyeTrackSamples[-1]-eyeTrackSamples[0])*self.sampleRate
-        print(saccadeRate)
         
         # get average saccade and saccade amplitudes
         preFrames = int(preTime*60)
@@ -1726,40 +1729,47 @@ class probeData():
         negAmp = np.array([np.nanmin(pupilX[s:s+6])-np.nanmedian(pupilX[s-6:s-2]) for s in negSaccades])
         posAmp = np.array([np.nanmax(pupilX[s:s+6])-np.nanmedian(pupilX[s-6:s-2]) for s in posSaccades])
                 
-        # get sdf and latency
-        preSamples = int(preTime*self.sampleRate)
-        postSamples = int(postTime*self.sampleRate)
-        sdf = np.full((len(units),3,int(round((preSamples+postSamples)/self.sampleRate/sdfSampInt))),np.nan)
+        # get spike count, sdf, and latency
         winDur = analysisWindow[1]-analysisWindow[0]
         baseWindow = [analysisWindow[0]-2*winDur,analysisWindow[0]-winDur]
         preSaccadeSpikeCount = [[[] for j in range(3)] for i in units]
         postSaccadeSpikeCount = [[[] for j in range(3)] for i in units]
         hasResp = np.zeros((len(units),3),dtype=bool)
+        respPolarity = np.zeros((len(units),3),dtype=int)
+        preSamples = int(preTime*self.sampleRate)
+        postSamples = int(postTime*self.sampleRate)
+        sdf = np.full((len(units),3,int(round((preSamples+postSamples)/self.sampleRate/sdfSampInt))),np.nan)
         peakRate = np.full((len(units),3),np.nan)
-        peakTime = peakRate.copy()
+        latency = peakRate.copy()
         for i,u in enumerate(units):
             spikes = self.units[str(u)]['times'][protocol]
             for j,saccades in enumerate((negSaccades,posSaccades,allSaccades)):
                 if saccades.size>0:
                     saccadeSamples = eyeTrackSamples[saccades]
-                    sdf[i,j],sdfTime = self.getSDF(spikes,saccadeSamples-preSamples,preSamples+postSamples,sigma=sdfSigma,sampInt=sdfSampInt)
-                    # pre- and post-saccade spike counts
+                    # get pre- and post-saccade spike counts and test for significant difference
                     for s in saccadeSamples:
                         preSaccadeSpikeCount[i][j].append(np.count_nonzero(np.logical_and(spikes>s+int(baseWindow[0]*self.sampleRate),spikes<s+int(baseWindow[1]*self.sampleRate))))
                         postSaccadeSpikeCount[i][j].append(np.count_nonzero(np.logical_and(spikes>s+int(analysisWindow[0]*self.sampleRate),spikes<s+int(analysisWindow[1]*self.sampleRate))))
                     _,pval = scipy.stats.wilcoxon(preSaccadeSpikeCount[i][j],postSaccadeSpikeCount[i][j])
                     if pval<0.05:
                         hasResp[i,j] = True
+                    respPolarity[i,j] = 1 if sum(postSaccadeSpikeCount[i][j])>sum(preSaccadeSpikeCount[i][j]) else -1
+                    # get sdf, peak resp, and latency
+                    sdf[i,j],sdfTime = self.getSDF(spikes,saccadeSamples-preSamples,preSamples+postSamples,sigma=sdfSigma,sampInt=sdfSampInt)
                     inAnalysisWindow = np.logical_and(sdfTime>preTime+analysisWindow[0],sdfTime<preTime+analysisWindow[1])
-                    peakInd = np.argmax(sdf[i,j,inAnalysisWindow]) if sum(postSaccadeSpikeCount[i][j])>sum(preSaccadeSpikeCount[i][j]) else np.argmin(sdf[i,j,inAnalysisWindow])
+                    peakInd = np.argmax(sdf[i,j,inAnalysisWindow]) if respPolarity[i,j]>0 else np.argmin(sdf[i,j,inAnalysisWindow])
                     peakInd += np.where(inAnalysisWindow)[0][0]
                     peakRate[i,j] = sdf[i,j,peakInd]
-                    peakTime[i,j] = sdfTime[peakInd]
-                                                       
-        #return sdf[:,-1], spontRateMean[:,-1], spontRateStd[:,-1], preSaccadeSpikeCount[-1], postSaccadeSpikeCount[-1], negAmp, posAmp
+                    spontRateMean,spontRateStd = self.getSDFNoise(spikes,saccadeSamples+baseWindow[0],int(winDur*self.sampleRate),sigma=sdfSigma,sampInt=sdfSampInt)
+                    latencyThresh = spontRateMean+5*spontRateStd if respPolarity[i,j]>0 else spontRateMean-5*spontRateStd
+                    if (respPolarity[i,j]>0 and peakRate[i,j]>latencyThresh) or (respPolarity[i,j]<0 and peakRate[i,j]<latencyThresh):
+                        latencyInd = np.where(sdf[i,j,:peakInd]<latencyThresh)[0][-1]+1 if respPolarity[i,j] else np.where(sdf[i,j,:peakInd]>latencyThresh)[0][-1]+1
+                        latency[i,j] = latencyInd*sdfSampInt-preTime
         
         if not plot:
-            return pupilX, saccadeRate, negAmp, posAmp, preSaccadeSpikeCount, postSaccadeSpikeCount, hasResp, peakRate, peakTime
+            return {'pupilX':pupilX, 'saccadeRate':saccadeRate, 'negAmp':negAmp, 'posAmp':posAmp, 
+                    'preSaccadeSpikeCount':preSaccadeSpikeCount, 'postSaccadeSpikeCount':postSaccadeSpikeCount,
+                    'hasResp':hasResp, 'respPolarity':respPolarity, 'peakRate':peakRate, 'latency':latency}
         
         # pupil position histogram
         fig = plt.figure(facecolor='w')
@@ -1861,6 +1871,17 @@ class probeData():
             ax.spines[side].set_visible(False)
         ax.set_xlabel('Neg Saccades Spikes/s')
         ax.set_ylabel('Pos Saccades Spikes/s')
+        
+        # latency
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        lat = latency[hasResp[:,-1],-1]*1000
+        ax.hist(lat[~np.isnan(lat)],bins=np.arange(np.nanmin(lat)-25,np.nanmax(lat)+50,25),color='k')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False)
+        ax.set_xlabel('Latency')
+        ax.set_ylabel('Count')
             
             
     def analyzeOKR(self,protocolName='gratings',smoothPts=3,plot=True):
@@ -1906,9 +1927,10 @@ class probeData():
         pupilX = self.behaviorData[protocol]['eyeTracking']['pupilX'][0:eyeTrackSamples.size]
         pupilVel = -np.diff(pupilX)/np.diff(eyeTrackSamples)*self.sampleRate
         negSaccades = self.behaviorData[protocol]['eyeTracking']['negSaccades']
+        negSaccades = negSaccades[negSaccades<eyeTrackSamples.size]
         posSaccades = self.behaviorData[protocol]['eyeTracking']['posSaccades']
+        posSaccades = posSaccades[posSaccades<eyeTrackSamples.size]
         allSaccades = np.sort(np.concatenate((negSaccades,posSaccades)))
-        allSaccades = allSaccades[allSaccades<eyeTrackSamples.size]
         for saccade in allSaccades:
             pupilVel[int(saccade-6):int(saccade+12)] = np.nan
         
@@ -1946,7 +1968,7 @@ class probeData():
         okrGain[np.isnan(okrGain)] = 0
         
         if not plot:
-            return xparam, yparam, meanPupilVel, stimSpeed, okrGain
+            return {'xparam':xparam, 'yparam':yparam, 'meanPupilVel':meanPupilVel, 'stimSpeed':stimSpeed, 'okrGain':okrGain}
                 
         fig = plt.figure(facecolor='w')
         gs = gridspec.GridSpec(2,2)
@@ -1962,8 +1984,16 @@ class probeData():
         ax.tick_params(direction='out',top=False,right=False)
         ax.set_xticks([0,xparam.size-1])
         ax.set_yticks([0,yparam.size-1])
-        ax.set_xticklabels(xparam[[0,-1]])
-        ax.set_yticklabels(yparam[[0,-1]])
+        if protocolName=='gratings':
+            ax.set_xticks([0,xparam.size-1])
+            ax.set_yticks([0,yparam.size-1])
+            ax.set_xticklabels(xparam[[0,-1]])
+            ax.set_yticklabels(yparam[[0,-1]])
+        else:
+            ax.set_xticks([0,xparam.size//2,xparam.size-1])
+            ax.set_yticks([0,yparam.size//2,yparam.size-1])
+            ax.set_xticklabels([xparam[0],0,xparam[-1]])
+            ax.set_yticklabels([yparam[0],0,yparam[-1]])
         ax.set_xlabel(xparamName)
         ax.set_ylabel(yparamName)
         ax.set_title('pupil speed (deg/s)')
@@ -1973,10 +2003,16 @@ class probeData():
         ax = fig.add_subplot(gs[1,0])
         im = ax.imshow(okrGain,clim=[0,okrGain.max()],cmap='gray',origin='lower',interpolation='none')
         ax.tick_params(direction='out',top=False,right=False)
-        ax.set_xticks([0,xparam.size-1])
-        ax.set_yticks([0,yparam.size-1])
-        ax.set_xticklabels(xparam[[0,-1]])
-        ax.set_yticklabels(yparam[[0,-1]])
+        if protocolName=='gratings':
+            ax.set_xticks([0,xparam.size-1])
+            ax.set_yticks([0,yparam.size-1])
+            ax.set_xticklabels(xparam[[0,-1]])
+            ax.set_yticklabels(yparam[[0,-1]])
+        else:
+            ax.set_xticks([0,xparam.size//2,xparam.size-1])
+            ax.set_yticks([0,yparam.size//2,yparam.size-1])
+            ax.set_xticklabels([xparam[0],0,xparam[-1]])
+            ax.set_yticklabels([yparam[0],0,yparam[-1]])
         ax.set_xlabel(xparamName)
         ax.set_ylabel(yparamName)
         ax.set_title('pupil speed / '+stimSpeedLabel+' speed')
@@ -1984,12 +2020,16 @@ class probeData():
         cb.set_ticks([0,okrGain.max()])
         
         ax = fig.add_subplot(gs[1,1])
-        ax.semilogx(np.absolute(stimSpeed.ravel()),okrGain.ravel(),'ko')
+        if protocolName=='gratings':
+            ax.semilogx(stimSpeed.ravel(),okrGain.ravel(),'ko')
+            ax.set_xlim([0.9,1000])
+        else:
+            ax.plot(stimSpeed.ravel(),okrGain.ravel(),'ko')
+            ax.set_xlim([-100,100])
         for side in ('top','right'):
             ax.spines[side].set_visible(False)
         ax.tick_params(which='both',direction='out',top=False,right=False)
-        ax.set_xlim([0.9,1000])
-        ax.set_ylim([0,1.1])
+        ax.set_ylim([0,1.15])
         ax.set_yticks([0,0.5,1])
         ax.set_xlabel(stimSpeedLabel+' speed')
         ax.set_ylabel('OKR gain')
