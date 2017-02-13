@@ -406,11 +406,17 @@ class probeData():
         elev, azim = ypos/pixPerDeg, xpos/pixPerDeg
         gridExtent = self.visstimData[protocol]['gridBoundaries']
         
+        rfArea = np.full((len(units),2),np.nan)
+        
         adjustX = np.zeros_like(stimStartSamples).astype(float)
         adjustY = np.zeros_like(stimStartSamples).astype(float)
         eyeWindow = int(self.sampleRate*self.visstimData[protocol]['trialDuration']/60.0)
         gridSpacing = self.visstimData[protocol]['gridSpacing']
         if adjustForPupil:
+            if protocol not in self.behaviorData or 'eyeTracking' not in self.behaviorData[protocol]:
+                print('no eye tracking data')
+                if not plot:
+                    return rfArea
             px = self.behaviorData[protocol]['eyeTracking']['pupilX']
             py = self.behaviorData[protocol]['eyeTracking']['pupilY']
             eyeSamples = self.behaviorData[protocol]['eyeTracking']['samples']
@@ -437,7 +443,7 @@ class probeData():
                         posHistory[t,1] = ypos[newYindex]
                     else:
                         posHistory[t,0] = np.nan
-                        posHistory[t,1] = np.nan            
+                        posHistory[t,1] = np.nan
                 
         colorHistory = self.visstimData[protocol]['boxColorHistory'][trials, 0]
         boxSizeHistory = self.visstimData[protocol]['boxSizeHistory'][trials]/pixPerDeg
@@ -707,6 +713,12 @@ class probeData():
                     ax.set_xticklabels(sizeTuningLabel)
                     ax.set_xlabel('Size',fontsize='small')
                     ax.set_ylabel('Spikes/s',fontsize='small')
+        
+        sizeInd = np.argmin(np.absolute(boxSize-10))
+        rfArea[:,0] = np.pi*np.prod(onFit[:,sizeInd,2:4],axis=1)
+        rfArea[:,1] = np.pi*np.prod(offFit[:,sizeInd,2:4],axis=1)
+        if adjustForPupil:                                             
+            return rfArea
                     
         if plot and len(units)>1:
             # population plots
@@ -750,10 +762,6 @@ class probeData():
                         ax.set_ylabel('Best Size Count',fontsize='medium')
             
             # onVsOff, respLatency, respNormArea, respHalfWidth, and rfArea
-            sizeInd = np.argmin(np.absolute(boxSize-10))
-            rfArea = np.full((len(units),2),np.nan)
-            rfArea[:,0] = np.pi*np.prod(onFit[:,sizeInd,2:4],axis=1)
-            rfArea[:,1] = np.pi*np.prod(offFit[:,sizeInd,2:4],axis=1)
             for i,(data,bins,label) in enumerate(zip((respLatency,respNormArea,rfArea),
                                                 (np.arange(0,0.275,0.025),np.arange(0,1.1,0.1),np.arange(0,4400,400)),
                                                 ('Resp Latency','Resp Norm Area','RF Area'))):
