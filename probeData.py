@@ -426,8 +426,10 @@ class probeData():
 #                    posHistory[t,0] = np.nan
 #                    posHistory[t,1] = np.nan
                 if np.isnan(np.nanmedian(px[trialEyeFrames])):
-                    posHistory[t,0] = np.nan
-                    posHistory[t,1] = np.nan
+#                    posHistory[t,0] = np.nan
+#                    posHistory[t,1] = np.nan
+                    pass
+                
                 else:    
                     adjustX[it] = np.round((np.nanmedian(px) - np.nanmedian(px[trialEyeFrames]))/gridSpacing)
                     adjustY[it] = np.round((np.nanmedian(py) - np.nanmedian(py[trialEyeFrames]))/gridSpacing)
