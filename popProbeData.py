@@ -7,7 +7,7 @@ Created on Tue Oct 25 11:07:49 2016
 
 from __future__ import division
 import clust, fileIO, probeData
-import cv2, datetime, math, nrrd, os, re
+import cv2, datetime, math, nrrd, os, re, itertools
 import numpy as np
 import pandas as pd
 import scipy.stats
@@ -1340,40 +1340,35 @@ class popProbeData():
                 rTrials = p.units[units[0]]['gratings_stf_laserOff_run']['trials']
                 r_sf = v['stimulusHistory_sf'][rTrials]
                 r_tf = v['stimulusHistory_tf'][rTrials]
+                r_ori = v['stimulusHistory_ori'][rTrials]
                 
                 sTrials = p.units[units[0]]['gratings_stf_laserOff_stat']['trials']
                 s_sf = v['stimulusHistory_sf'][sTrials]
                 s_tf = v['stimulusHistory_tf'][sTrials]
+                s_ori = v['stimulusHistory_ori'][sTrials]
                 
                 #match trial number and identity
                 if np.min([sTrials.size, rTrials.size]) > 5:
-                    if sTrials.size <= rTrials.size:
-                        sTrialMatch = sTrials
-                        rTrialMatch = []
-                        for sf in np.unique(s_sf):
-                            for tf in np.unique(s_tf):
-                                trialCount = np.where(np.logical_and(s_sf==sf, s_tf==tf))[0].size
+                    sTrialMatch = []
+                    rTrialMatch = []
+                    for sf in np.unique(v['stimulusHistory_sf']):
+                        for tf in np.unique(v['stimulusHistory_tf']):
+                            for ori in np.unique(v['stimulusHistory_ori']):
+                                sMatchedTrialInds = np.where(np.logical_and(np.logical_and(s_sf==sf, s_tf==tf), s_ori==ori))[0]
+                                rMatchedTrialInds = np.where(np.logical_and(np.logical_and(r_sf==sf, r_tf==tf), r_ori==ori))[0]
+                                
+                                trialCount = np.min([sMatchedTrialInds.size, rMatchedTrialInds.size])
+                                
                                 if trialCount > 0:
-                                    matchedTrialInds = np.where(np.logical_and(r_sf==sf, r_tf==tf))[0]
-                                    if matchedTrialInds.size>0:
-                                        matchedTrials = rTrials[matchedTrialInds]
-                                        rTrialMatch.extend(np.random.choice(matchedTrials, trialCount, replace=False))
-                        rTrialMatch = np.array(rTrialMatch)
-                        
-                    else:
-                        rTrialMatch = rTrials
-                        sTrialMatch = []
-                        for sf in np.unique(r_sf):
-                            for tf in np.unique(r_tf):
-                                trialCount = np.where(np.logical_and(r_sf==sf, r_tf==tf))[0].size
-                                if trialCount > 0:
-                                    matchedTrialInds = np.where(np.logical_and(s_sf==sf, s_tf==tf))[0]
-                                    if matchedTrialInds.size>0:
-                                        matchedTrials = sTrials[matchedTrialInds]
-                                        sTrialMatch.extend(np.random.choice(matchedTrials, trialCount, replace=False))
-                        
-                        sTrialMatch = np.array(sTrialMatch)
-                                            
+                                    sMatchedTrials = sTrials[sMatchedTrialInds]
+                                    rMatchedTrials = rTrials[rMatchedTrialInds]
+                                    
+                                    sTrialMatch.extend(np.random.choice(sMatchedTrials, trialCount, replace=False))
+                                    rTrialMatch.extend(np.random.choice(rMatchedTrials, trialCount, replace=False))
+                                                                           
+                    sTrialMatch = np.array(sTrialMatch)                   
+                    rTrialMatch = np.array(rTrialMatch)
+                             
                         
                     trialStarts, trialEnds = p.getTrialStartsEnds('gratings')
                     for u in units:
@@ -1386,8 +1381,34 @@ class popProbeData():
         ax.plot(sR, rR, 'ko', alpha=0.5)
         maxR = np.max([np.max(sR), np.max(rR)])
         ax.plot([0, maxR], [0, maxR], 'r--')            
+        
     
-    
+    def trialMatch(self, pObj, protocol, paramsToMatch, cond1Trials, cond2Trials):
+        
+        pind = pObj.getProtocolIndex(protocol)
+        v = pObj.visstimData[str(pind)]
+        paramList = [np.unique(v[pm]) for pm in paramsToMatch]
+        paramCombos = list(itertools.product(*paramList))
+        
+        c1ParamList = np.array([[v[pm][t] for pm in paramsToMatch] for t in cond1Trials])
+        c2ParamList = np.array([[v[pm][t] for pm in paramsToMatch] for t in cond2Trials])
+        
+        c1TrialMatch = []
+        c2TrialMatch = []
+        for combo in paramCombos:
+            c1MatchedTrialInds = [it for it, t in enumerate(c1ParamList) if all(t==combo)]
+            c2MatchedTrialInds = [it for it, t in enumerate(c2ParamList) if all(t==combo)]
+            
+            trialCount = np.min([len(c1MatchedTrialInds), len(c2MatchedTrialInds)])
+            if trialCount > 0:
+                c1MatchedTrials = cond1Trials[c1MatchedTrialInds]
+                c2MatchedTrials = cond2Trials[c2MatchedTrialInds]
+                
+                c1TrialMatch.extend(np.random.choice(c1MatchedTrials, trialCount, replace=False))
+                c2TrialMatch.extend(np.random.choice(c2MatchedTrials, trialCount, replace=False))
+        
+        return c1TrialMatch, c2TrialMatch
+        
     def analyzeRunningSpontaneous(self):
         sR = []
         rR = []
@@ -1419,17 +1440,23 @@ class popProbeData():
         ax.plot(sR, rR, 'ko', alpha=0.5)
         maxR = np.max([np.max(sR), np.max(rR)])
         ax.plot([0, maxR], [0, maxR], 'r--')           
-        
-    
+
     def runningHistograms(self):
          for exp in self.experimentFiles[:3]:
             p = self.getProbeDataObj(exp)
-            
+            expD, expID = p.getExperimentInfo()
+            fig = plt.figure('Running Distribution for '+expD+'_'+expID, facecolor='w', figsize=[ 13.725 ,   8.8625])
+            gs = gridspec.GridSpec(2,int(np.ceil(len(p.kwdFileList)/2)))
             for pro, _ in enumerate(p.kwdFileList):  
                 if 'running' in p.behaviorData[str(pro)]:
-                    wheelData = p.behaviorData[str(pro)]['running']
-                    plt.figure()
-                    plt.hist(wheelData)
+                    wheelData = -p.behaviorData[str(pro)]['running']
+                    h, b = np.histogram(wheelData, np.arange(100), normed=True)                    
+                    
+                    ax = fig.add_subplot(gs[int(pro%2), int(np.floor(pro/2))])
+                    ax.bar(b[:-1], h, color='k')
+                    ax.set_title(p.getProtocolLabel(pro))
+            
+            fig.set_tight_layout(True)
 
         
 if __name__=="__main__":

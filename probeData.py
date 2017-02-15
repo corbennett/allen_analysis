@@ -2492,7 +2492,7 @@ class probeData():
                 a.set_ylim([0, maxSpikeRate])
             fig.tight_layout()
             
-    def plotSpikeTemplate(self, unit):
+    def getSpikeTemplate(self, unit, plot=True):
         temp = self.units[str(unit)]['template']
         maxChan = np.unravel_index(np.argmax(temp), temp.shape)[1]
         t = np.copy(temp[:, maxChan])
@@ -2509,10 +2509,14 @@ class probeData():
             t *= meanTempScaleFactor*dg
         else:
             print('No spike amplitudes found for: ' + str(unit) + '. Displaying arb units')
-        fig = plt.figure(facecolor='w')
-        ax = fig.add_subplot(111)
-        ax.plot(x, t, 'k')
-        formatFigure(fig, ax, 'Spike Template for: ' + str(unit), xLabel='ms', yLabel='mV')
+        
+        if plot:        
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(111)
+            ax.plot(x, t, 'k')
+            formatFigure(fig, ax, 'Spike Template for: ' + str(unit), xLabel='ms', yLabel='mV')
+        
+        return t
         
                                     
     def plotSpikeAmplitudes(self, unit):
