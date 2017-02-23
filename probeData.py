@@ -2444,7 +2444,7 @@ class probeData():
                 self.plotSpikeRateOverProtocols(units)
                 self.plotAutoCorr(units[0])
                 self.plotSpikeAmplitudes(units[0])
-                self.plotSpikeTemplate(units[0])
+                _ = self.getSpikeTemplate(units[0])
             
     def plotSpikeRateOverProtocols(self, units=None, protocols = None, binsize = 10):        
         units, _ = self.getOrderedUnits(units)        
