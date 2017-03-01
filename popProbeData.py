@@ -868,20 +868,20 @@ class popProbeData():
         for i,j,k in zip(y,x,z):
             respMat[i,j,k] = statRespMat[i,j,k]
         
-        # find distance between RF and patch
-        onVsOff = np.array(self.data.sparseNoise.onVsOff[uindex])
-        onFit = np.stack(self.data.sparseNoise.onFit[uindex])
-        offFit = np.stack(self.data.sparseNoise.offFit[uindex])
-        rfElev = offFit[:,1].copy()
-        rfElev[onVsOff>0] = onFit[onVsOff>0,1]
-        patchDist = np.full(uindex.size,np.nan)
-        for i,u in enumerate(uindex):
-            patchDist[i] = np.min(np.absolute(self.data.checkerboard.patchElevation[u]-rfElev[i]))
-        fig = plt.figure(facecolor='w')
-        ax = fig.add_subplot(1,1,1)
-        ax.plot(patchDist,respMat[:,patchSpeed!=0,bckgndSpeed==0].max(axis=1),'ko')
-        ax.set_xlabel('Patch RF Distance')
-        ax.set_ylabel('Max Patch Response')
+#        # find distance between RF and patch
+#        onVsOff = np.array(self.data.sparseNoise.onVsOff[uindex])
+#        onFit = np.stack(self.data.sparseNoise.onFit[uindex])
+#        offFit = np.stack(self.data.sparseNoise.offFit[uindex])
+#        rfElev = offFit[:,1].copy()
+#        rfElev[onVsOff>0] = onFit[onVsOff>0,1]
+#        patchDist = np.full(uindex.size,np.nan)
+#        for i,u in enumerate(uindex):
+#            patchDist[i] = np.min(np.absolute(self.data.checkerboard.patchElevation[u]-rfElev[i]))
+#        fig = plt.figure(facecolor='w')
+#        ax = fig.add_subplot(1,1,1)
+#        ax.plot(patchDist,respMat[:,patchSpeed!=0,bckgndSpeed==0].max(axis=1),'ko')
+#        ax.set_xlabel('Patch RF Distance')
+#        ax.set_ylabel('Max Patch Response')
         
         # compare patch and bckgnd responses and contribution to variance
         maxPatchResp = respMat[:,patchSpeed!=0,bckgndSpeed==0].max(axis=1)
@@ -1100,8 +1100,8 @@ class popProbeData():
         ax.set_yticks(np.arange(0,0.4,0.1))
         ax.set_ylabel('Saccades/s',fontsize=18)
         plt.tight_layout()
-                
     
+           
     def analyzeSaccades(self,protocol=0):
         # get data from all experiments
         protocol = str(protocol)
@@ -1118,7 +1118,9 @@ class popProbeData():
             print('analyzing experiment '+str(i+1)+' of '+str(len(self.experimentFiles)))
             p = self.getProbeDataObj(exp)
             units = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
+            units, _ = p.getOrderedUnits(units)
             saccadeData = p.analyzeSaccades(units,protocol,analysisWindow=analysisWindow,plot=False)
+    
             if saccadeData is not None:
                 pupilX.append(saccadeData['pupilX'])
                 saccadeAmp.append(np.concatenate((saccadeData['negAmp'],saccadeData['posAmp'])))
@@ -1457,7 +1459,28 @@ class popProbeData():
                     ax.set_title(p.getProtocolLabel(pro))
             
             fig.set_tight_layout(True)
-
+            
+            
+    def analyzeWaveforms(self):
+        
+        templates = []
+        for i,exp in enumerate(self.experimentFiles):
+            print('analyzing experiment '+str(i+1)+' of '+str(len(self.experimentFiles)))
+            p = self.getProbeDataObj(exp)
+            units = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
+            units, _ = p.getOrderedUnits(units)
+            temps = [p.getSpikeTemplate(u, plot=False) for u in units]
+            templates.extend(temps)
+        
+        tempArray = np.array(templates)
+        maxs = np.max(np.abs(tempArray), axis=1)
+        tempArray /= maxs[:, None]
+        peakPosition = np.argmax(np.abs(tempArray),axis=1)
+        tempShifted = [tempArray[i, ppo - peakPosition.min() : ppo + tempArray.shape[1] - peakPosition.max()] for i, ppo in enumerate(peakPosition)]
+        tempShifted = np.array(tempShifted)
+        
+        
+        return tempShifted
         
 if __name__=="__main__":
     pass
