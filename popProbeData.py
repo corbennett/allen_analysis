@@ -19,7 +19,7 @@ from matplotlib import cm
 
 class popProbeData():
     
-     def __init__(self):
+    def __init__(self):
         self.experimentFiles = None
         self.excelFile = None
         self.data = None
