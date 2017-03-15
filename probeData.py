@@ -1704,13 +1704,11 @@ class probeData():
             ax = fig.add_subplot(111)
             ax.plot(unitsYPos, prefSpeeds, 'ko', alpha=0.5)
 
-
+        return tuningCurves
+        
     def analyzeSaccades(self,units=None,protocol=0,preTime=1,postTime=1,analysisWindow=[0,0.2],sdfSigma=0.01,sdfSampInt=0.001,plot=True):
         units,_ = self.getOrderedUnits(units)        
         protocol = str(protocol)
-        if protocol not in self.visstimData:
-            print('no protocol '+protocol+' in experiment')
-            return
         if not hasattr(self,'behaviorData') or 'eyeTracking' not in self.behaviorData[protocol]:
             print('no eye tracking data for protocol '+protocol)
             return
