@@ -896,7 +896,8 @@ class popProbeData():
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
         
         # get data from units with spikes during checkerboard protocol
-        hasCheckerboard = data.respMat.notnull()
+        # ignore days with laser trials
+        hasCheckerboard = (data.respMat.notnull()) & (self.data.laserOn.run.checkerboard.respMat.isnull()) 
         respMat = np.stack(data.respMat[hasCheckerboard])
         hasSpikes = respMat.any(axis=2).any(axis=1)
         respMat = respMat[hasSpikes]
@@ -921,9 +922,7 @@ class popProbeData():
         y,x,z = np.where(np.isnan(respMat))
         for i,j,k in zip(y,x,z):
             respMat[i,j,k] = statRespMat[i,j,k]
-
-        respMat = respMat
-#        
+       
 # find distance between RF and patch
 #        onVsOff = np.array(self.data.sparseNoise.onVsOff[uindex])
 #        onFit = np.stack(self.data.sparseNoise.onFit[uindex])
@@ -980,43 +979,43 @@ class popProbeData():
         plt.tight_layout()
         
         # correlate responses with response-type templates
-        patchTemplate = np.zeros((patchSpeed.size,bckgndSpeed.size))
-        patchTemplate[patchSpeed!=0,bckgndSpeed==0] = 1
-        bckgndRightTemplate = np.zeros((patchSpeed.size,bckgndSpeed.size))
-        bckgndRightTemplate[:,bckgndSpeed>0] = 1
-        bckgndLeftTemplate = bckgndRightTemplate[:,::-1]
-        frameTemplate = np.zeros((patchSpeed.size,bckgndSpeed.size))
-        frameTemplate[:,[0,-1]] = 1
-        frameTemplate[[0,-1],:] = 1
-        
-        templates = (patchTemplate,frameTemplate,bckgndRightTemplate,bckgndLeftTemplate)
-        cc = np.zeros((respMat.shape[0],len(templates)))
-        for i,resp in enumerate(respMat):
-            for j,template in enumerate(templates):
-                cc[i,j] = np.corrcoef(resp.ravel(),template.ravel())[0,1]
-        cc[:,2] = cc[:,2:].max(axis=1)
-        cc = cc[:,:-1]
-        
-        for i in (0,1,2):
-            plt.figure()
-            plt.hist(cc[:,i],np.arange(-1,1,0.1))
-        
-        patchSortInd = np.argsort(cc[:,0])[::-1]
-        plt.imshow(cc[patchSortInd],clim=(-1,1),cmap='bwr',interpolation='none')
-        
-        bestMatch = np.argmax(cc,axis=1)
-        aboveThresh = cc.max(axis=1)>0.4
-        typeCount = [np.count_nonzero(bestMatch[aboveThresh]==i) for i in range(3)]
-        print(typeCount)
-        
-        for n in range(10):
-            c = 2
-            if n<typeCount[c]:
-                ind = np.logical_and(bestMatch==c,aboveThresh)
-                fig = plt.figure()
-                ax = plt.subplot(1,1,1)
-                ax.imshow(respMat[ind][n],origin='lower',cmap='gray',interpolation='none')
-                ax.set_title(str(round(cc[ind,c][n],2)))
+#        patchTemplate = np.zeros((patchSpeed.size,bckgndSpeed.size))
+#        patchTemplate[patchSpeed!=0,bckgndSpeed==0] = 1
+#        bckgndRightTemplate = np.zeros((patchSpeed.size,bckgndSpeed.size))
+#        bckgndRightTemplate[:,bckgndSpeed>0] = 1
+#        bckgndLeftTemplate = bckgndRightTemplate[:,::-1]
+#        frameTemplate = np.zeros((patchSpeed.size,bckgndSpeed.size))
+#        frameTemplate[:,[0,-1]] = 1
+#        frameTemplate[[0,-1],:] = 1
+#        
+#        templates = (patchTemplate,frameTemplate,bckgndRightTemplate,bckgndLeftTemplate)
+#        cc = np.zeros((respMat.shape[0],len(templates)))
+#        for i,resp in enumerate(respMat):
+#            for j,template in enumerate(templates):
+#                cc[i,j] = np.corrcoef(resp.ravel(),template.ravel())[0,1]
+#        cc[:,2] = cc[:,2:].max(axis=1)
+#        cc = cc[:,:-1]
+#        
+#        for i in (0,1,2):
+#            plt.figure()
+#            plt.hist(cc[:,i],np.arange(-1,1,0.1))
+#        
+#        patchSortInd = np.argsort(cc[:,0])[::-1]
+#        plt.imshow(cc[patchSortInd],clim=(-1,1),cmap='bwr',interpolation='none')
+#        
+#        bestMatch = np.argmax(cc,axis=1)
+#        aboveThresh = cc.max(axis=1)>0.4
+#        typeCount = [np.count_nonzero(bestMatch[aboveThresh]==i) for i in range(3)]
+#        print(typeCount)
+#        
+#        for n in range(10):
+#            c = 2
+#            if n<typeCount[c]:
+#                ind = np.logical_and(bestMatch==c,aboveThresh)
+#                fig = plt.figure()
+#                ax = plt.subplot(1,1,1)
+#                ax.imshow(respMat[ind][n],origin='lower',cmap='gray',interpolation='none')
+#                ax.set_title(str(round(cc[ind,c][n],2)))
         
         # normalize responses various ways
         maxResp = respMat.max(axis=2).max(axis=1)

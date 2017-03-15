@@ -33,7 +33,22 @@ def ward(data,nClusters=None,plotDendrogram=False):
     linkageMat = scipy.cluster.hierarchy.linkage(data,'ward')
     if plotDendrogram:
         plt.figure(facecolor='w')
-        scipy.cluster.hierarchy.dendrogram(linkageMat)
+        ax = plt.subplot(1,1,1)
+        colorThresh = 0 if nClusters<2 else linkageMat[::-1,2][nClusters-2]
+        scipy.cluster.hierarchy.dendrogram(linkageMat,ax=ax,color_threshold=colorThresh)
+        ax.set_yticks([])
+        for side in ('right','top','left','bottom'):
+            ax.spines[side].set_visible(False)
+        
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        ax.plot(np.arange(linkageMat.shape[0])+2,linkageMat[::-1,2],'k')
+        ax.set_xlim([0,data.shape[0]])
+        ax.set_xlabel('# Clusters')
+        ax.set_ylabel('Minimum Linkage Distance')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False)
     if nClusters is not None:
         clustID = scipy.cluster.hierarchy.fcluster(linkageMat,nClusters,'maxclust')
         return clustID,linkageMat
