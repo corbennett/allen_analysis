@@ -19,7 +19,7 @@ from matplotlib import cm
 
 class popProbeData():
     
-    def __init__(self):
+     def __init__(self):
         self.experimentFiles = None
         self.excelFile = None
         self.data = None
@@ -82,7 +82,7 @@ class popProbeData():
             probeDataObj.readExcelFile(fileName=self.excelFile)
     
     
-    def getData(self,analyzeExperiments=False):
+    def makeDataFrame(self,analyzeExperiments=False):
         # determine which experiments to append to dataframe
         if self.experimentFiles is None:
             self.getExperimentFiles()
@@ -166,14 +166,14 @@ class popProbeData():
         self.data = dframe if self.data is None else pd.concat((self.data,dframe))
     
     
-    def loadData(self, filePath=None):
+    def loadDataFrame(self, filePath=None):
         filePath = fileIO.getFile(fileType='*.hdf5')
         if filePath=='':
             return
         self.data = pd.read_hdf(filePath,'table')
     
     
-    def saveData(self, filePath=None):
+    def saveDataFrame(self, filePath=None):
         filePath = fileIO.saveFile(fileType='*.hdf5')
         if filePath=='':
             return
@@ -587,8 +587,20 @@ class popProbeData():
                         x,y = data[fitType][uindex][data.boxSize[uindex]==10][0][:2]
                         elev[ccf[1], ccf[0], ccf[2]] += y
                         azi[ccf[1], ccf[0], ccf[2]] += x
+                        
+        # plot recording positions
+        for a in range(3):
+            anyCounts = 255-counts.any(axis=a).astype(np.uint8)*255
+            anyCounts = np.stack([anyCounts]*3,axis=-1)
+            _,contours,_ = cv2.findContours(LPmask.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(anyCounts,contours,-1,(127,)*3)
+            if a==0:
+                anyCounts = anyCounts.transpose(1,0,2)
+            fig = plt.figure()
+            ax = plt.subplot(1,1,1)
+            ax.imshow(anyCounts)
                 
-        if weighted is False:
+        if not weighted:
             elev /= counts
             azi /= counts
         
@@ -1603,8 +1615,19 @@ class popProbeData():
         for i,t in enumerate(tempShifted):
             peakInd = np.argmax(np.absolute(t))
             peakToTrough[i] = (np.argmin(t[peakInd:]) if t[peakInd]>0 else np.argmax(t[peakInd:]))/30.0
+            
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        ax.hist(peakToTrough,np.arange(0,1.2,0.05),color='k')
+        ax.plot([0.35]*2,[0,180],'k--')
+        for side in ('top','right'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(which='both',direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlabel('Spike peak-to-trough (ms)',fontsize=20)
+        ax.set_ylabel('# Units',fontsize=20)
+        plt.tight_layout()
         
-        return tempShifted
+        return tempShifted, peakToTrough
         
 if __name__=="__main__":
     pass
