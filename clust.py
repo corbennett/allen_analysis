@@ -8,24 +8,70 @@ Created on Sun Oct 30 12:16:42 2016
 import numpy as np
 import scipy.cluster
 from matplotlib import pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 
-def pca(data,plotEigVal=False):
+def standardizeData(data):
+    # data is n samples x m parameters
+    data = data.copy()
+    data -= data.mean(axis=0)
+    data /= data.std(axis=0)
+    return data
+
+
+def pca(data,plot=False):
     # data is n samples x m parameters
     eigVal,eigVec = np.linalg.eigh(np.cov(data,rowvar=False))
     order = np.argsort(eigVal)[::-1]
     eigVal = eigVal[order]
     eigVec = eigVec[:,order]
     pcaData = data.dot(eigVec)
-    if plotEigVal:
+    if plot:
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
         ax.plot(np.arange(1,eigVal.size+1),eigVal.cumsum()/eigVal.sum(),'k')
         ax.set_xlim((0.5,eigVal.size+0.5))
-        ax.set_ylim((0,1))
+        ax.set_ylim((0,1.02))
         ax.set_xlabel('PC')
         ax.set_ylabel('Cumulative Fraction of Variance')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False)
+        
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        im = ax.imshow(eigVec,clim=(-1,1),cmap='bwr',interpolation='none',origin='lower')
+        ax.set_xlabel('PC')
+        ax.set_ylabel('Parameter')
+        ax.set_title('PC Weightings')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False)
+        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+        cb.ax.tick_params(length=0)
+        cb.set_ticks([-1,0,1])
     return pcaData,eigVal,eigVec
+    
+    
+def plotClusters3d(data,clustID,colors=None):
+    pcaData,_,_ = pca(data)
+    clusters = np.unique(clustID)
+    plt.figure()
+    ax = plt.subplot(111,projection='3d')
+    if colors is None:
+        colors = plt.cm.Set1(1/(np.arange(clusters.size)+1))
+    for clust,clr in zip(clusters,colors):
+        i = clustID==clust
+        ax.scatter(pcaData[i,0],pcaData[i,1],pcaData[i,2],marker='o',c=clr)
+    ax.set_xlabel('PC1')
+    ax.set_ylabel('PC2')
+    ax.set_zlabel('PC3')
+    
+    
+def kmeans(data,k,iterations=100,initCentroids='points'):
+    # data is n samples x m parameters 
+    centriods,clustID = scipy.cluster.vq.kmeans2(data,k,iter=iterations,minit=initCentroids)
+    return clustID
 
     
 def ward(data,nClusters=None,plotDendrogram=False):
