@@ -1135,10 +1135,13 @@ class popProbeData():
                     protocol = p.getProtocolIndex(label)
                     if protocol is not None and 'eyeTracking' in p.behaviorData[str(protocol)]:
                         eyeTrackSamples = p.behaviorData[str(protocol)]['eyeTracking']['samples']
+                        pupilX = p.behaviorData[str(protocol)]['eyeTracking']['pupilX']
                         negSaccades = p.behaviorData[str(protocol)]['eyeTracking']['negSaccades']
                         negSaccades = negSaccades[negSaccades<eyeTrackSamples.size]
+                        negSaccades = negSaccades[~np.isnan(pupilX[negSaccades])]
                         posSaccades = p.behaviorData[str(protocol)]['eyeTracking']['posSaccades']
                         posSaccades = posSaccades[posSaccades<eyeTrackSamples.size]
+                        posSaccades = posSaccades[~np.isnan(pupilX[posSaccades])]
                         saccadeRate[i,j] = (negSaccades.size+posSaccades.size)/(eyeTrackSamples[-1]-eyeTrackSamples[0])*p.sampleRate
         mean = np.nanmean(saccadeRate,axis=0)
         sem = np.nanstd(saccadeRate,axis=0)/np.sqrt(np.nansum(~np.isnan(saccadeRate),axis=0))

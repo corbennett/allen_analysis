@@ -1717,8 +1717,10 @@ class probeData():
         pupilX = self.behaviorData[protocol]['eyeTracking']['pupilX']
         negSaccades = self.behaviorData[protocol]['eyeTracking']['negSaccades']
         negSaccades = negSaccades[negSaccades<eyeTrackSamples.size]
+        negSaccades = negSaccades[~np.isnan(pupilX[negSaccades])]
         posSaccades = self.behaviorData[protocol]['eyeTracking']['posSaccades']
         posSaccades = posSaccades[posSaccades<eyeTrackSamples.size]
+        posSaccades = posSaccades[~np.isnan(pupilX[posSaccades])]
         allSaccades = np.sort(np.concatenate((negSaccades,posSaccades)))
         saccadeRate = allSaccades.size/(eyeTrackSamples[-1]-eyeTrackSamples[0])*self.sampleRate
         
@@ -1936,8 +1938,10 @@ class probeData():
         pupilVel = -np.diff(pupilX)/np.diff(eyeTrackSamples)*self.sampleRate
         negSaccades = self.behaviorData[protocol]['eyeTracking']['negSaccades']
         negSaccades = negSaccades[negSaccades<eyeTrackSamples.size]
+        negSaccades = negSaccades[~np.isnan(pupilX[negSaccades])]
         posSaccades = self.behaviorData[protocol]['eyeTracking']['posSaccades']
         posSaccades = posSaccades[posSaccades<eyeTrackSamples.size]
+        posSaccades = posSaccades[~np.isnan(pupilX[posSaccades])]
         allSaccades = np.sort(np.concatenate((negSaccades,posSaccades)))
         for saccade in allSaccades:
             pupilVel[int(saccade-6):int(saccade+12)] = np.nan
