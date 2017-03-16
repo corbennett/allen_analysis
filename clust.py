@@ -62,7 +62,7 @@ def plotClusters3d(data,clustID,colors=None):
         colors = plt.cm.Set1(1/(np.arange(clusters.size)+1))
     for clust,clr in zip(clusters,colors):
         i = clustID==clust
-        ax.scatter(pcaData[i,0],pcaData[i,1],pcaData[i,2],marker='o',c=clr)
+        ax.plot(pcaData[i,0],pcaData[i,1],pcaData[i,2],'o',mec=clr,mfc='none')
     ax.set_xlabel('PC1')
     ax.set_ylabel('PC2')
     ax.set_zlabel('PC3')
