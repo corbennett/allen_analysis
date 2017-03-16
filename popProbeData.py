@@ -199,10 +199,17 @@ class popProbeData():
         
         onFit = np.full((self.data.shape[0],7),np.nan)
         offFit = onFit.copy()
+        sizeUsed = np.full(self.data.shape[0],np.nan)
         for u in range(self.data.shape[0]):
-            sizeInd = data.boxSize[u]==10
-            onFit[u] = data.onFit[u][sizeInd]
-            offFit[u] = data.offFit[u][sizeInd]
+            for size in (10,5,20):
+                sizeInd = data.boxSize[u]==size
+                if sizeInd.any():
+                    onFit[u] = data.onFit[u][sizeInd]
+                    offFit[u] = data.offFit[u][sizeInd]
+                    if not np.all(np.isnan(onFit[u])) or not np.all(np.isnan(offFit[u])):
+                        sizeUsed[u] = size
+                        break
+        sizeUsed[noRF] = np.nan
         onFit[isOff | noRF,:] = np.nan
         offFit[isOn | noRF,:] = np.nan
         minRFCutoff = 100
