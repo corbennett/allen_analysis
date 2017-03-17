@@ -30,12 +30,12 @@ class popProbeData():
         if len(filePaths)<1:
             return
         if append and self.experimentFiles is not None:
-            self.experimentFiles.append(filePaths)
+            self.experimentFiles.extend(filePaths)
         else:
             self.experimentFiles = filePaths
         # sort by date
         expDates,_ = self.getExperimentInfo()
-        self.experimentFiles = [z[0] for z in sorted(zip(filePaths,[datetime.datetime.strptime(date,'%m%d%Y') for date in expDates]),key=lambda i: i[1])]
+        self.experimentFiles = [z[0] for z in sorted(zip(self.experimentFiles,[datetime.datetime.strptime(date,'%m%d%Y') for date in expDates]),key=lambda i: i[1])]
         
         
     def getExperimentInfo(self):
