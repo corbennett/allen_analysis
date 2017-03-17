@@ -898,7 +898,7 @@ class popProbeData():
     
     def analyzeCheckerboard(self):
         
-        data = self.data.laserOff.run.checkerboard
+        data = self.data.laserOff.allTrials.checkerboard
         
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
         
@@ -914,7 +914,7 @@ class popProbeData():
         spontRateMean = data.spontRateMean[uindex]
         spontRateStd = data.spontRateStd[uindex]
         respZ = (respMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
-        hasResp = (respZ>10).any(axis=2).any(axis=1)
+        hasResp = (respZ>5).any(axis=2).any(axis=1)
         respMat = respMat[hasResp]
         uindex = uindex[hasResp]
         
@@ -924,11 +924,11 @@ class popProbeData():
         ccfZ = np.array(self.data.index.get_level_values('ccfZ'))
         inSCAxons = np.logical_and(ccfX<=170*25,ccfZ>=300*25)[uindex]
         
-        # fill in NaNs where no running trials
-        statRespMat = np.stack(self.data.laserOff.stat.checkerboard.respMat[uindex])
-        y,x,z = np.where(np.isnan(respMat))
-        for i,j,k in zip(y,x,z):
-            respMat[i,j,k] = statRespMat[i,j,k]
+#        # fill in NaNs where no running trials
+#        statRespMat = np.stack(self.data.laserOff.stat.checkerboard.respMat[uindex])
+#        y,x,z = np.where(np.isnan(respMat))
+#        for i,j,k in zip(y,x,z):
+#            respMat[i,j,k] = statRespMat[i,j,k]
        
 # find distance between RF and patch
 #        onVsOff = np.array(self.data.sparseNoise.onVsOff[uindex])
@@ -1081,7 +1081,7 @@ class popProbeData():
         for r in (respMat, respMatNorm, respMatBaseSub, respMatBaseSubNorm):
             r = r.reshape((r.shape[0],r[0].size))
             k = 3
-            clustID,_ = clust.ward(r,nClusters=k,plotDendrogram=True)
+            clustID,_ = clust.ward(r,nClusters=k,plot=True)
             fig = plt.figure(facecolor='w')
             for i in np.unique(clustID):
                 ax = fig.add_subplot(round(k**0.5),math.ceil(k**0.5),i)
@@ -1102,7 +1102,7 @@ class popProbeData():
         nSplit = 3
         for r in (respMat, respMatNorm, respMatBaseSub, respMatBaseSubNorm):
             r = r.reshape((r.shape[0],r[0].size))
-            clustIDHier,linkageMat = clust.nestedPCAClust(r,nSplit=nSplit,minClustSize=2,varExplained=0.75,clustID=[],linkageMat=[])
+            clustIDHier,linkageMat = clust.nestedPCAClust(r,method='ward',nSplit=nSplit,minClustSize=2,varExplained=0.75,clustID=[],linkageMat=[])
             clustID = clust.getClustersFromHierarchy(clustIDHier)
             k = len(set(clustID))
             fig = plt.figure(facecolor='w')

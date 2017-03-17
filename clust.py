@@ -153,6 +153,7 @@ def plotClusterDispersion(data,kmax=None,method='kmeans',iterations=100):
 def kmeans(data,k,iterations=100,initCentroids='points',plot=False):
     # data is n samples x m parameters 
     centroids,clustID = scipy.cluster.vq.kmeans2(data,k,iter=iterations,minit=initCentroids)
+    clustID += 1
     if plot:
         plotClusterDispersion(data,kmax=min(k*2,data.shape[0]),method='kmeans',iterations=iterations)
         plotClusters3d(data,clustID)
@@ -190,18 +191,23 @@ def ward(data,nClusters=None,plot=False):
     return clustID,linkageMat
 
         
-def nestedPCAClust(data,nSplit,minClustSize,varExplained=0.9,clustID=[],linkageMat=[]):
+def nestedPCAClust(data,method='kmeans',nSplit=2,minClustSize=2,varExplained=0.9,clustID=[],linkageMat=[]):
     pcaData,eigVal,_ = pca(data)
     pcToUse = np.where(eigVal.cumsum()/eigVal.sum()>varExplained)[0][0]+1
-    c,link = ward(pcaData[:,:pcToUse],nClusters=2)
-    clustID.append(c)
-    linkageMat.append(link)
+    if method=='kmeans':
+        c,_ = kmeans(pcaData[:,:pcToUse],2)
+        clustID.append(c)
+        linkageMat.append(None)
+    elif method=='ward':
+        c,link = ward(pcaData[:,:pcToUse],nClusters=2)
+        clustID.append(c)
+        linkageMat.append(link)
     if nSplit>1:
         for i in (1,2):
             clustID.append([])
             linkageMat.append([])
             if np.count_nonzero(c==i)>minClustSize:
-                _,_ = nestedPCAClust(data[c==i],nSplit-1,minClustSize,varExplained,clustID[-1],linkageMat[-1])
+                _,_ = nestedPCAClust(data[c==i],method,nSplit-1,minClustSize,varExplained,clustID[-1],linkageMat[-1])
     return clustID,linkageMat
 
     
