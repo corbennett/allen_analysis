@@ -53,31 +53,120 @@ def pca(data,plot=False):
     return pcaData,eigVal,eigVec
     
     
-def plotClusters3d(data,clustID,colors=None):
-    pcaData,_,_ = pca(data)
+def lda(data,clustID,plot=False):
+    clusters = np.unique(clustID)
+    withinClassScatter = np.zeros((data.shape[1],)*2)
+    betweenClassScatter = np.zeros_like(withinClassScatter)
+    overallMean = data.mean(axis=0)
+    for clust in clusters:
+        classData = data[clustID==clust]
+        classMean = classData.mean(axis=0)
+        diff = classMean-overallMean
+        betweenClassScatter += classData.shape[0]*diff[:,None].dot(diff[None,:])
+        classScatter = np.zeros_like(withinClassScatter)
+        for sample in classData:
+            diff = sample-classMean
+            classScatter +=  diff[:,None].dot(diff[None,:])
+        withinClassScatter += classScatter
+        
+    eigVal,eigVec = np.linalg.eig(np.linalg.inv(withinClassScatter+np.eye(data.shape[1])*1e-6).dot(betweenClassScatter))
+    eigVal = np.real(eigVal)
+    order = np.argsort(eigVal)[::-1]
+    eigVal = eigVal[order]
+    eigVec = np.real(eigVec)[:,order]
+    ldaData = data.dot(eigVec)
+    
+    if plot:
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        ax.plot(np.arange(1,clusters.size),eigVal[:clusters.size-1].cumsum()/eigVal[:clusters.size-1].sum(),'k')
+        ax.set_xlim((0.5,clusters.size-0.5))
+        ax.set_ylim((0,1.02))
+        ax.set_xlabel('Discriminant')
+        ax.set_ylabel('Cumulative Fraction of Variance')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False)
+        
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        im = ax.imshow(eigVec,clim=(-1,1),cmap='bwr',interpolation='none',origin='lower')
+        ax.set_xlabel('Discriminant')
+        ax.set_ylabel('Parameter')
+        ax.set_title('Dicriminant Weightings')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False)
+        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+        cb.ax.tick_params(length=0)
+        cb.set_ticks([-1,0,1])
+    return ldaData,eigVal,eigVec
+    
+    
+def plotClusters3d(data,clustID,method='pca',colors=None):
+    if method=='pca':
+        plotData = pca(data)[0]
+    elif method=='lda':
+        plotData = lda(data,clustID)[0]
     clusters = np.unique(clustID)
     plt.figure()
     ax = plt.subplot(111,projection='3d')
     if colors is None:
-        colors = plt.cm.Set1(1/(np.arange(clusters.size)+1))
+        colors = plt.cm.Set1(1/(np.arange(clusters.size,dtype=float)+1))[:,:3]
     for clust,clr in zip(clusters,colors):
         i = clustID==clust
-        ax.plot(pcaData[i,0],pcaData[i,1],pcaData[i,2],'o',mec=clr,mfc='none')
+        if clusters.size>2:
+            ax.plot(plotData[i,0],plotData[i,1],plotData[i,2],'o',mec=clr,mfc='none')
+        else:
+            ax.plot(plotData[i,0],plotData[i,1],'o',mec=clr,mfc='none')
     ax.set_xlabel('PC1')
     ax.set_ylabel('PC2')
-    ax.set_zlabel('PC3')
+    if clusters.size>2:
+        ax.set_zlabel('PC3')
     
     
-def kmeans(data,k,iterations=100,initCentroids='points'):
+def plotClusterDispersion(data,kmax=None,method='kmeans',iterations=100):
+    if kmax is None:
+        kmax = data.shape[0]
+    sse = np.zeros(kmax)
+    for k in range(1,kmax+1):
+        if method=='kmeans':
+            clustID,_ = kmeans(data,k,iterations)
+        elif method=='ward':
+            clustID,_ = ward(data,k)
+        for clust in np.unique(clustID):
+            d = data[clustID==clust,:]
+            sse[k-1] += np.sum(np.sqrt(np.sum(np.square(d-d.mean(axis=0)),axis=1)))
+    sse /= sse[0]
+    fig = plt.figure(facecolor='w')
+    ax = fig.add_subplot(1,1,1)
+    ax.plot(np.arange(1,kmax+1),sse,'k')
+    ax.set_xlim([0,kmax+0.5])
+    ax.set_ylim([0.9*sse.min(),1.01])
+    ax.set_xlabel('# Clusters')
+    ax.set_ylabel('Cluster Dispersion')
+    for side in ('right','top'):
+        ax.spines[side].set_visible(False)
+    ax.tick_params(direction='out',top=False,right=False)
+    
+    
+def kmeans(data,k,iterations=100,initCentroids='points',plot=False):
     # data is n samples x m parameters 
-    centriods,clustID = scipy.cluster.vq.kmeans2(data,k,iter=iterations,minit=initCentroids)
-    return clustID
+    centroids,clustID = scipy.cluster.vq.kmeans2(data,k,iter=iterations,minit=initCentroids)
+    if plot:
+        plotClusterDispersion(data,kmax=min(k*2,data.shape[0]),method='kmeans',iterations=iterations)
+        plotClusters3d(data,clustID)
+    return clustID,centroids
 
     
-def ward(data,nClusters=None,plotDendrogram=False):
+def ward(data,nClusters=None,plot=False):
     # data is n samples x m parameters
     linkageMat = scipy.cluster.hierarchy.linkage(data,'ward')
-    if plotDendrogram:
+    if nClusters is None:
+        clustID = None
+    else:
+        clustID = scipy.cluster.hierarchy.fcluster(linkageMat,nClusters,'maxclust')
+    if plot:
         plt.figure(facecolor='w')
         ax = plt.subplot(1,1,1)
         colorThresh = 0 if nClusters<2 else linkageMat[::-1,2][nClusters-2]
@@ -95,9 +184,10 @@ def ward(data,nClusters=None,plotDendrogram=False):
         for side in ('right','top'):
             ax.spines[side].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False)
-    if nClusters is not None:
-        clustID = scipy.cluster.hierarchy.fcluster(linkageMat,nClusters,'maxclust')
-        return clustID,linkageMat
+        
+        plotClusterDispersion(data,method='ward')
+        plotClusters3d(data,clustID)
+    return clustID,linkageMat
 
         
 def nestedPCAClust(data,nSplit,minClustSize,varExplained=0.9,clustID=[],linkageMat=[]):

@@ -475,6 +475,8 @@ class probeData():
         if fit:
             onFit = np.full((len(units),len(boxSize),7),np.nan)
             offFit = np.copy(onFit)
+            onFitError = np.full((len(units),len(boxSize)),np.nan)
+            offFitError = np.copy(onFitError)
         
         if plot:
             fig = plt.figure(figsize=(10,10*len(units)),facecolor='w')
@@ -567,6 +569,8 @@ class probeData():
                 hasOffResp[sizeInd] = np.nanmax(offResp[sizeInd])>respThresh
             
             # filter responses for each box size
+            onRespRaw = onResp.copy()
+            offRespRaw = offResp.copy()
             for resp in (onResp,offResp):
                 for sizeInd,_ in enumerate(boxSize):
                     resp[sizeInd] = convolve(resp[sizeInd], gaussianKernel, boundary='extend')
@@ -575,15 +579,16 @@ class probeData():
             if fit:
                 maxOffGrid = 15
                 for sizeInd,_ in enumerate(boxSize):
-                    for hasResp,resp,fitParams in zip((hasOnResp[sizeInd],hasOffResp[sizeInd]),(onResp[sizeInd],offResp[sizeInd]),(onFit[uindex,sizeInd],offFit[uindex,sizeInd])):
+                    for hasResp,resp,fitParams,fitError in zip((hasOnResp[sizeInd],hasOffResp[sizeInd]),(onResp[sizeInd],offResp[sizeInd]),(onFit[uindex,sizeInd],offFit[uindex,sizeInd]),(onFitError[uindex],offFitError[uindex])):
                         if hasResp and not np.any(np.isnan(resp)):
                             # params: x0 , y0, sigX, sigY, theta, amplitude, offset
                             i,j = np.unravel_index(np.argmax(resp),resp.shape)
                             sigmaGuess = (azim[1]-azim[0])*0.5*np.sqrt(np.count_nonzero(resp>resp.min()+0.5*(resp.max()-resp.min())))
                             initialParams = (azim[j],elev[i],sigmaGuess,sigmaGuess,0,resp.max(),np.percentile(resp,10))
-                            fitResult = fitRF(azim,elev,resp,initialParams,maxOffGrid)
+                            fitResult,rmse = fitRF(azim,elev,resp,initialParams,maxOffGrid)
                             if fitResult is not None:
                                 fitParams[:] = fitResult
+                                fitError[sizeInd] = rmse
                 
             # compare on and off resp magnitude (max across all box sizes)
             onMax = np.nanmax(onResp)
@@ -627,12 +632,16 @@ class probeData():
                                                          'elev': elev,
                                                          'azim': azim,
                                                          'boxSize': boxSize,
+                                                         'onRespRaw': onRespRaw,
+                                                         'offRespRaw': offRespRaw,
                                                          'onResp': onResp,
                                                          'offResp': offResp,
                                                          'spontRateMean': spontRateMean,
                                                          'spontRateStd': spontRateStd,
                                                          'onFit': onFit[uindex],
                                                          'offFit': offFit[uindex],
+                                                         'onFitError': onFitError[uindex],
+                                                         'offFitError': offFitError[uindex],
                                                          'sizeTuningOn': sizeTuningOn[uindex],
                                                          'sizeTuningOff': sizeTuningOff[uindex],
                                                          'onVsOff': onVsOff[uindex],
@@ -1009,6 +1018,7 @@ class probeData():
         
         if protocolType=='stf':
             stfFitParams = np.full((len(units),7),np.nan)
+            stfFitError = np.full(len(units),np.nan)
         else:
             dsi = np.full(len(units),np.nan)
             prefDir = np.copy(dsi)
@@ -1083,9 +1093,10 @@ class probeData():
                     if not np.any(np.isnan(resp)):
                         i,j = np.unravel_index(np.argmax(resp),resp.shape)
                         initialParams = (sf[j], tf[i], 1, 1, 0.5, resp.max(), resp.min())
-                        fitPrms = fitStf(sf,tf,resp,initialParams)
+                        fitPrms,rmse = fitStf(sf,tf,resp,initialParams)
                         if fitPrms is not None:
                             stfFitParams[uindex] = fitPrms
+                            stfFitError[uindex] = rmse
             elif protocolType=='ori':
                 # calculate DSI and OSI for sf/tf that elicited max resp
                 if tfHasResp.size>0 and sfHasResp.size>0:
@@ -1106,6 +1117,7 @@ class probeData():
                                           'trials': trials}
             if protocolType=='stf':
                 self.units[str(unit)][tag]['stfFitParams'] = stfFitParams[uindex]
+                self.units[str(unit)][tag]['stfFitError'] = stfFitError[uindex]
             elif protocolType=='ori':
                 self.units[str(unit)][tag]['dsi'] = dsi[uindex]
                 self.units[str(unit)][tag]['prefDir'] = prefDir[uindex]
@@ -3048,18 +3060,20 @@ def gauss2D(xyTuple,x0,y0,sigX,sigY,theta,amplitude,offset):
 
 
 def fitRF(x,y,data,initialParams,maxOffGrid):
+    gridSize = max(x[-1]-x[0],y[-1]-y[0])
+    lowerBounds = np.array([x[0]-maxOffGrid,y[0]-maxOffGrid,0,0,0,data.min(),data.min()])
+    upperBounds = np.array([x[-1]+maxOffGrid,y[-1]+maxOffGrid,0.5*gridSize,0.5*gridSize,2*math.pi,1.5*data.max(),data.mean()])
     try:
-        gridSize = max(x[-1]-x[0],y[-1]-y[0])
-        lowerBounds = np.array([x[0]-maxOffGrid,y[0]-maxOffGrid,0,0,0,data.min(),data.min()])
-        upperBounds = np.array([x[-1]+maxOffGrid,y[-1]+maxOffGrid,0.5*gridSize,0.5*gridSize,2*math.pi,1.5*data.max(),data.mean()])
         fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
-        if not all([lowerBounds[i]+1<fitParams[i]<upperBounds[i]-1 for i in (0,1)]):
-            fitParams = None # if fit center on edge of boundaries
     except RuntimeError:
         print('fit failed')
-        return
-    # fitData = gauss2D((x,y),*fitParams).reshape(y.size,x.size)
-    return fitParams
+        return None,None
+    if not all([lowerBounds[i]+1<fitParams[i]<upperBounds[i]-1 for i in (0,1)]):
+        fitParams = fitError = None # if fit center on edge of boundaries
+    else:
+        fitData = gauss2D((x,y),*fitParams).reshape(y.size,x.size)
+        fitError = np.sqrt(np.mean(np.square(data-fitData)))/data.max() # normalized root mean squared error
+    return fitParams,fitError
 
 
 def getEllipseXY(x,y,a,b,angle):
@@ -3078,15 +3092,16 @@ def stfLogGauss2D(stfTuple,sf0,tf0,sigSF,sigTF,speedTuningIndex,amplitude,offset
 
 
 def fitStf(sf,tf,data,initialParams):
+    lowerBounds = np.array([sf[0]-0.25*sf[0],tf[0]-0.25*tf[0],0,0,-0.25,0,data.min()])
+    upperBounds = np.array([sf[-1]+0.25*sf[-1],tf[-1]+0.25*tf[-1],0.25*tf[-1],0.25*tf[-1],1.25,1.5*data.max(),np.median(data)])
     try:
-        lowerBounds = np.array([sf[0]-0.25*sf[0],tf[0]-0.25*tf[0],0,0,-0.25,0,data.min()])
-        upperBounds = np.array([sf[-1]+0.25*sf[-1],tf[-1]+0.25*tf[-1],0.25*tf[-1],0.25*tf[-1],1.25,1.5*data.max(),np.median(data)])
         fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except RuntimeError:
         print('fit failed')
-        return
-    # fitData = stfLogGauss2D((sf,tf),*fitParams).reshape(tf.size,sf.size)
-    return fitParams
+        return None,None
+    fitData = stfLogGauss2D((sf,tf),*fitParams).reshape(tf.size,sf.size)
+    fitError = np.sqrt(np.mean(np.square(data-fitData)))/data.max() # normalized root mean squared error
+    return fitParams,fitError
 
 
 def getStfContour(sf,tf,fitParams):
