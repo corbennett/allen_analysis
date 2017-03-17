@@ -558,16 +558,20 @@ class popProbeData():
         
         annotationData,_ = nrrd.read(annotationDataFile)
         annotationData = annotationData.transpose((1,2,0))
-        inLP = np.where(annotationData == 218)
+        
         inLPbinary = annotationData==218
+        inLPbinary[:,inLPbinary.shape[1]//2:,:] = False
+        inLP = np.where(inLPbinary)
         
         #find left hemisphere region for xRange
-        maxProj = np.max(inLPbinary, axis=2).astype(int)                
-        cnts,_ = cv2.findContours(maxProj.copy(order='C').astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        leftSide = np.argmin([np.min(u[:, :, 0]) for u in cnts])
+#        maxProj = np.max(inLPbinary, axis=2).astype(int)                
+#        cnts,_ = cv2.findContours(maxProj.copy(order='C').astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+#        leftSide = np.argmin([np.min(u[:, :, 0]) for u in cnts])
         
-        xRange = [np.min(cnts[leftSide][:, :, 0]) - padding, np.max(cnts[leftSide][:, :, 0]) + padding]
+#        xRange = [np.min(cnts[leftSide][:, :, 0]) - padding, np.max(cnts[leftSide][:, :, 0]) + padding]
+        
         yRange = [np.min(inLP[0])-padding, np.max(inLP[0])+padding]
+        xRange = [np.min(inLP[1])-padding, np.max(inLP[1])+padding]
         zRange = [np.min(inLP[2])-padding, np.max(inLP[2])+padding]
         
         LPmask = inLPbinary[yRange[0]:yRange[1], xRange[0]:xRange[1], zRange[0]:zRange[1]].astype(np.float)
