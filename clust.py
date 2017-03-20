@@ -55,21 +55,19 @@ def pca(data,plot=False):
     
 def lda(data,clustID,plot=False):
     clusters = np.unique(clustID)
-    withinClassScatter = np.zeros((data.shape[1],)*2)
-    betweenClassScatter = np.zeros_like(withinClassScatter)
+    withinClusterScatter = np.zeros((data.shape[1],)*2)
+    betweenClusterScatter = np.zeros_like(withinClusterScatter)
     overallMean = data.mean(axis=0)
     for clust in clusters:
-        classData = data[clustID==clust]
-        classMean = classData.mean(axis=0)
-        diff = classMean-overallMean
-        betweenClassScatter += classData.shape[0]*diff[:,None].dot(diff[None,:])
-        classScatter = np.zeros_like(withinClassScatter)
-        for sample in classData:
-            diff = sample-classMean
-            classScatter +=  diff[:,None].dot(diff[None,:])
-        withinClassScatter += classScatter
+        clusterData = data[clustID==clust]
+        clusterMean = clusterData.mean(axis=0)
+        diff = clusterMean-overallMean
+        betweenClusterScatter += clusterData.shape[0]*diff[:,None].dot(diff[None,:])
+        for sample in clusterData:
+            diff = sample-clusterMean
+            withinClusterScatter +=  diff[:,None].dot(diff[None,:])
         
-    eigVal,eigVec = np.linalg.eig(np.linalg.inv(withinClassScatter+np.eye(data.shape[1])*1e-6).dot(betweenClassScatter))
+    eigVal,eigVec = np.linalg.eig(np.linalg.inv(withinClusterScatter+np.eye(data.shape[1])*1e-6).dot(betweenClusterScatter))
     eigVal = np.real(eigVal)
     order = np.argsort(eigVal)[::-1]
     eigVal = eigVal[order]
@@ -125,37 +123,73 @@ def plotClusters3d(data,clustID,method='pca',colors=None):
         ax.set_zlabel('PC3')
     
     
-def plotClusterDispersion(data,kmax=None,method='kmeans',iterations=100):
-    if kmax is None:
-        kmax = data.shape[0]
-    sse = np.zeros(kmax)
-    for k in range(1,kmax+1):
+def plotPseudoF(data,maxClusters=None,method='kmeans',iterations=100):
+    if maxClusters is None:
+        maxClusters = data.shape[0]
+    Fratio = np.zeros(maxClusters)
+    overallMean = data.mean(axis=0)
+    for k in range(1,maxClusters+1):
         if method=='kmeans':
             clustID,_ = kmeans(data,k,iterations)
         elif method=='ward':
             clustID,_ = ward(data,k)
+        betweenClusterSSE = 0
+        withinClusterSSE = 0
         for clust in np.unique(clustID):
-            d = data[clustID==clust,:]
-            sse[k-1] += np.sum(np.sqrt(np.sum(np.square(d-d.mean(axis=0)),axis=1)))
-    sse /= sse[0]
+            clusterData = data[clustID==clust]
+            clusterMean = clusterData.mean(axis=0)
+            betweenClusterSSE += clusterData.shape[0]*np.sum(np.square(clusterMean-overallMean))
+            withinClusterSSE += np.sum(np.square(clusterData-clusterMean))
+        Fratio[k-1] = betweenClusterSSE/withinClusterSSE
+        
     fig = plt.figure(facecolor='w')
     ax = fig.add_subplot(1,1,1)
-    ax.plot(np.arange(1,kmax+1),sse,'k')
-    ax.set_xlim([0,kmax+0.5])
-    ax.set_ylim([0.9*sse.min(),1.01])
+    ax.plot(np.arange(1,maxClusters+1),Fratio,'k')
+    ax.set_xlim([0,maxClusters+0.5])
     ax.set_xlabel('# Clusters')
-    ax.set_ylabel('Cluster Dispersion')
+    ax.set_ylabel('Pseudo F Ratio (SSE Between/SSE Within)')
     for side in ('right','top'):
         ax.spines[side].set_visible(False)
     ax.tick_params(direction='out',top=False,right=False)
     
+    
+def plotMeanSilhouetteValue(data,maxClusters=None,method='kmeans',iterations=100):
+    if maxClusters is None:
+        maxClusters = data.shape[0]
+    sil = np.zeros(maxClusters)
+    for k in range(1,maxClusters+1):
+        if method=='kmeans':
+            clustID,_ = kmeans(data,k,iterations)
+        elif method=='ward':
+            clustID,_ = ward(data,k)
+        clusters = np.unique(clustID)
+        clusterMeans = [data[clustID==clust,:].mean(axis=0) for clust in clusters]
+        sil = 0
+        for ind,clust in enumerate(clusters):
+            sse = np.array([np.sum(np.square(data[clustID==clust]-cMean),axis=1) for cMean in clusterMeans])
+            a = sse[ind] # distance from own cluster centroid
+            b = sse[np.arange(k)!=ind].min(axis=0) # distance from closest other cluster centroid
+            sil[k-1] += np.sum((a-b)/np.maximum(a,b))
+    sil /= data.shape[0]
+        
+    fig = plt.figure(facecolor='w')
+    ax = fig.add_subplot(1,1,1)
+    ax.plot(np.arange(1,maxClusters+1),sil,'k')
+    ax.set_xlim([0,maxClusters+0.5])
+    ax.set_xlabel('# Clusters')
+    ax.set_ylabel('Mean Silhouette Value')
+    for side in ('right','top'):
+        ax.spines[side].set_visible(False)
+    ax.tick_params(direction='out',top=False,right=False)
+            
     
 def kmeans(data,k,iterations=100,initCentroids='points',plot=False):
     # data is n samples x m parameters 
     centroids,clustID = scipy.cluster.vq.kmeans2(data,k,iter=iterations,minit=initCentroids)
     clustID += 1
     if plot:
-        plotClusterDispersion(data,kmax=min(k*2,data.shape[0]),method='kmeans',iterations=iterations)
+        plotPseudoF(data,maxClusters=min(k*2,data.shape[0]),method='kmeans',iterations=iterations)
+        plotMeanSilhouetteValue(data,maxClusters=min(k*2,data.shape[0]),method='kmeans',iterations=iterations)
         plotClusters3d(data,clustID)
     return clustID,centroids
 
@@ -186,7 +220,8 @@ def ward(data,nClusters=None,plot=False):
             ax.spines[side].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False)
         
-        plotClusterDispersion(data,method='ward')
+        plotPseudoF(data,method='ward')
+        plotMeanSilhouetteValue(data,method='ward')
         plotClusters3d(data,clustID)
     return clustID,linkageMat
 
