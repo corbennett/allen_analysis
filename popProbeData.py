@@ -30,12 +30,12 @@ class popProbeData():
         if len(filePaths)<1:
             return
         if append and self.experimentFiles is not None:
-            self.experimentFiles.extend(filePaths)
+            self.experimentFiles.append(filePaths)
         else:
             self.experimentFiles = filePaths
         # sort by date
         expDates,_ = self.getExperimentInfo()
-        self.experimentFiles = [z[0] for z in sorted(zip(self.experimentFiles,[datetime.datetime.strptime(date,'%m%d%Y') for date in expDates]),key=lambda i: i[1])]
+        self.experimentFiles = [z[0] for z in sorted(zip(filePaths,[datetime.datetime.strptime(date,'%m%d%Y') for date in expDates]),key=lambda i: i[1])]
         
         
     def getExperimentInfo(self):
@@ -558,20 +558,16 @@ class popProbeData():
         
         annotationData,_ = nrrd.read(annotationDataFile)
         annotationData = annotationData.transpose((1,2,0))
-        
+        inLP = np.where(annotationData == 218)
         inLPbinary = annotationData==218
-        inLPbinary[:,inLPbinary.shape[1]//2:,:] = False
-        inLP = np.where(inLPbinary)
         
         #find left hemisphere region for xRange
-#        maxProj = np.max(inLPbinary, axis=2).astype(int)                
-#        cnts,_ = cv2.findContours(maxProj.copy(order='C').astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-#        leftSide = np.argmin([np.min(u[:, :, 0]) for u in cnts])
+        maxProj = np.max(inLPbinary, axis=2).astype(int)                
+        cnts,_ = cv2.findContours(maxProj.copy(order='C').astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        leftSide = np.argmin([np.min(u[:, :, 0]) for u in cnts])
         
-#        xRange = [np.min(cnts[leftSide][:, :, 0]) - padding, np.max(cnts[leftSide][:, :, 0]) + padding]
-        
+        xRange = [np.min(cnts[leftSide][:, :, 0]) - padding, np.max(cnts[leftSide][:, :, 0]) + padding]
         yRange = [np.min(inLP[0])-padding, np.max(inLP[0])+padding]
-        xRange = [np.min(inLP[1])-padding, np.max(inLP[1])+padding]
         zRange = [np.min(inLP[2])-padding, np.max(inLP[2])+padding]
         
         LPmask = inLPbinary[yRange[0]:yRange[1], xRange[0]:xRange[1], zRange[0]:zRange[1]].astype(np.float)
@@ -902,7 +898,7 @@ class popProbeData():
     
     def analyzeCheckerboard(self):
         
-        data = self.data.laserOff.allTrials.checkerboard
+        data = self.data.laserOff.run.checkerboard
         
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
         
@@ -918,7 +914,7 @@ class popProbeData():
         spontRateMean = data.spontRateMean[uindex]
         spontRateStd = data.spontRateStd[uindex]
         respZ = (respMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
-        hasResp = (respZ>5).any(axis=2).any(axis=1)
+        hasResp = (respZ>10).any(axis=2).any(axis=1)
         respMat = respMat[hasResp]
         uindex = uindex[hasResp]
         
@@ -928,11 +924,11 @@ class popProbeData():
         ccfZ = np.array(self.data.index.get_level_values('ccfZ'))
         inSCAxons = np.logical_and(ccfX<=170*25,ccfZ>=300*25)[uindex]
         
-#        # fill in NaNs where no running trials
-#        statRespMat = np.stack(self.data.laserOff.stat.checkerboard.respMat[uindex])
-#        y,x,z = np.where(np.isnan(respMat))
-#        for i,j,k in zip(y,x,z):
-#            respMat[i,j,k] = statRespMat[i,j,k]
+        # fill in NaNs where no running trials
+        statRespMat = np.stack(self.data.laserOff.stat.checkerboard.respMat[uindex])
+        y,x,z = np.where(np.isnan(respMat))
+        for i,j,k in zip(y,x,z):
+            respMat[i,j,k] = statRespMat[i,j,k]
        
 # find distance between RF and patch
 #        onVsOff = np.array(self.data.sparseNoise.onVsOff[uindex])
@@ -1085,7 +1081,7 @@ class popProbeData():
         for r in (respMat, respMatNorm, respMatBaseSub, respMatBaseSubNorm):
             r = r.reshape((r.shape[0],r[0].size))
             k = 3
-            clustID,_ = clust.ward(r,nClusters=k,plot=True)
+            clustID,_ = clust.ward(r,nClusters=k,plotDendrogram=True)
             fig = plt.figure(facecolor='w')
             for i in np.unique(clustID):
                 ax = fig.add_subplot(round(k**0.5),math.ceil(k**0.5),i)
@@ -1106,7 +1102,7 @@ class popProbeData():
         nSplit = 3
         for r in (respMat, respMatNorm, respMatBaseSub, respMatBaseSubNorm):
             r = r.reshape((r.shape[0],r[0].size))
-            clustIDHier,linkageMat = clust.nestedPCAClust(r,method='ward',nSplit=nSplit,minClustSize=2,varExplained=0.75,clustID=[],linkageMat=[])
+            clustIDHier,linkageMat = clust.nestedPCAClust(r,nSplit=nSplit,minClustSize=2,varExplained=0.75,clustID=[],linkageMat=[])
             clustID = clust.getClustersFromHierarchy(clustIDHier)
             k = len(set(clustID))
             fig = plt.figure(facecolor='w')
@@ -1641,6 +1637,30 @@ class popProbeData():
         plt.tight_layout()
         
         return tempShifted, peakToTrough
-        
+
+def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):
+    #waveform array should be units x samples x channels
+    maxChan = [np.unravel_index(np.argmin(t), t.shape)[1] for t in waveformArray]
+    tempArray = [waveformArray[i, :, maxChan[i]] for i in xrange(waveformArray.shape[0])]
+    
+    peakToTrough = np.zeros(len(tempArray))       
+    for i,t in enumerate(tempArray):
+        peakInd = np.argmax(np.absolute(t))
+        peakToTrough[i] = (np.argmin(t[peakInd:]) if t[peakInd]>0 else np.argmax(t[peakInd:]))/(sampleRate/1000.0)
+     
+    if plot:
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        ax.hist(peakToTrough,np.arange(0,1.2,0.05),color='k')
+        ax.plot([0.35]*2,[0,180],'k--')
+        for side in ('top','right'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(which='both',direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlabel('Spike peak-to-trough (ms)',fontsize=20)
+        ax.set_ylabel('# Units',fontsize=20)
+        plt.tight_layout()
+     
+    return peakToTrough
+     
 if __name__=="__main__":
     pass

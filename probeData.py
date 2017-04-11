@@ -27,7 +27,7 @@ class probeData():
     def __init__(self):
         self.recording = 0
         self.TTLChannelLabels = ['VisstimOn', 'CamExposing', 'CamSaving', 'OrangeLaserShutter']
-        self.channelMapFile = r'C:\Users\SVC_CCG\Documents\Python Scripts\imec_channel_map.prb'
+        self.channelMapFile = r'C:\Users\SVC_CCG\Documents\Python Scripts\imec_channel_map_D.prb'
         self.sampleRate = 30000.0
         self.digitalGain = 0.195
         self.analogGain = 0.00015258789
@@ -205,7 +205,8 @@ class probeData():
         f = open(self.channelMapFile, 'r') 
         fdict = json.load(f)
         self.channelMapping = np.array(fdict['0']['mapping'])
-        self.channelMapping = self.channelMapping[np.where(self.channelMapping > 0)] - 1
+#        self.channelMapping = self.channelMapping[np.where(self.channelMapping > 0)] - 1
+        self.channelMapping = self.channelMapping - 1
     
     
     def decodeWheel(self, wheelData, kernelLength = 0.5, wheelSampleRate = 60.0):
@@ -2761,12 +2762,13 @@ class probeData():
     def readExcelFile(self, sheetname = None, fileName = None):
         if sheetname is None:            
             expDate,animalID = self.getExperimentInfo()
+            sheetname = expDate+'_'+animalID
         if fileName is None:        
             fileName = fileIO.getFile()
             if fileName=='':
                 return        
         
-        table = pandas.read_excel(fileName, sheetname=expDate+'_'+animalID)
+        table = pandas.read_excel(fileName, sheetname=sheetname)
         for u in range(table.shape[0]):
             unit = table.Cell[u]
             if not np.isnan(unit):
@@ -3029,11 +3031,13 @@ def getKwdInfo(dirPath=None):
     return kwdFiles,nSamples
 
 
-def makeDat(kwdFiles=None):
+def makeDat(kwdFiles=None, saveDir=None, copyToSortComputer=True):
     if kwdFiles is None:
         kwdFiles, _ = getKwdInfo()
     dirPath = os.path.dirname(os.path.dirname(kwdFiles[0]))
-    datFilePath = os.path.join(dirPath,os.path.basename(dirPath)+'.dat')
+    if saveDir is None:
+        saveDir = dirPath
+    datFilePath = os.path.join(saveDir,os.path.basename(dirPath)+'.dat')
     datFile = open(datFilePath,'wb')
     for filenum, filePath in enumerate(kwdFiles):
         print('Copying kwd file ' + str(filenum + 1) + ' of ' + str(len(kwdFiles)) + ' to dat file')
@@ -3044,9 +3048,10 @@ def makeDat(kwdFiles=None):
             (dset[i:i+dset.chunks[0],:128]).tofile(datFile)                        
             i += dset.chunks[0]
     datFile.close()
-    copyPath = r'\\10.128.38.3\data_local_1\corbett'
-    print('Copying dat file to ' + copyPath)
-    shutil.copy(datFilePath,copyPath)
+    if copyToSortComputer:    
+        copyPath = r'\\10.128.38.3\data_local_1\corbett'
+        print('Copying dat file to ' + copyPath)
+        shutil.copy(datFilePath,copyPath)
     
     
 def gauss2D(xyTuple,x0,y0,sigX,sigY,theta,amplitude,offset):
