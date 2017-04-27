@@ -54,6 +54,7 @@ class makeGratings(VisStimControl):
                                            pos=[self.pixelsPerDeg*self.posx[0],self.pixelsPerDeg*self.posy[0]], sf=3, units='pix')
         
         #initialize stim parameters
+        self._parameterCombos = None
         shuffledTrials = self.set_params()
         self.numSweeps = len(shuffledTrials)
         
@@ -107,7 +108,7 @@ class makeGratings(VisStimControl):
         self.completeRun()
         
     def set_params(self):
-        if not hasattr(self,'_parameterCombos'):
+        if self._parameterCombos is None:
             self.stimulusParams = ['ori', 'tf', 'sf', 'contrast', 'phase', 'size', 'laserPower'] #the first six of these should be the grating parameters
             laserPwr = self.laserPower if self.laserRandom else [self.laserPower[0]]
             self._parameterCombos = list(itertools.product(self.ori, self.tf, [sf/self.pixelsPerDeg for sf in self.sf], self.contrast, self.phase, [size * self.pixelsPerDeg for size in self.size], laserPwr))

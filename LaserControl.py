@@ -102,7 +102,7 @@ class LaserControlObj():
             self.nidaqAnalogOut.Write(np.array([0.0]))
             self.powerControl.setSuffix(' V')
             self.powerControl.setDecimals(2)
-            self.powerControl.setRange(0,1.5)
+            self.powerControl.setRange(0,5)
             self.powerControl.setSingleStep(0.05)
             self.powerControl.setValue(1)
         self.powerControl.valueChanged.connect(self.powerControlChanged)

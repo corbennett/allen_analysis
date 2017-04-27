@@ -27,13 +27,14 @@ class VisStimControl():
         self.wheelRadius = 7.6 # cm
         self.wheelSpeedGain = 1 # arbitrary scale factor
         self.rewardDur = 0.02 # duration in seconds of analog output pulse controlling reward size
-        self.laser = None # 'Blue', 'Orange', or None
-        self.laserPower = [0] # until calibrated: 0-1 V for blue laser or 0-100 mW for orange laser
+        self.laser = None # 'Blue', 'Orange', 'LED', or None
+        self.laserPower = [0] # until calibrated: 0-1.5 V for blue laser, 0-100 mW for orange laser, or 0-5 V for LED
         self.laserRandom = False
         self.laserPreFrames = 30 # initLaser() sets laser pre and post frames to 0 if laser is None
         self.laserPostFrames = 30
+        self.laserRampFrames = 15
         self.blueLaserZeroOffset = 0.6
-        self.blueLaserRampFrames = 15
+        self.ledZeroOffset = 0.25
         if self.rig=='dome':
             self._saveDir = 'C:\Users\SVC_CCG\Desktop\Data' # path where parameters and data saved
             self.monWidth = None # cm
@@ -128,8 +129,8 @@ class VisStimControl():
         self._rotEncoderInput.StartTask()
         
         # blue laser analog modulation: AO0
-        self._blueLaserControl = nidaq.AnalogOutput(device='Dev1',channel=0,voltageRange=(0,5))
-        self._blueLaserControl.StartTask()
+        self._laserAnalogControl = nidaq.AnalogOutput(device='Dev1',channel=0,voltageRange=(0,5))
+        self._laserAnalogControl.StartTask()
         
         # reward delivery: AO1
         self._rewardOut = nidaq.AnalogOutput(device='Dev1',channel=1,voltageRange=(0,5))
@@ -148,7 +149,7 @@ class VisStimControl():
         self._digOutputs.Write(self._digOutputs.lastOut)
     
     def stopNidaqDevice(self):
-        for task in ['_rotEncoderInput','_blueLaserControl','_rewardOut','_digInputs','_digOutputs']:
+        for task in ['_rotEncoderInput','_laserAnalogControl','_rewardOut','_digInputs','_digOutputs']:
             getattr(self,task).StopTask()
             getattr(self,task).ClearTask()
         
@@ -180,7 +181,6 @@ class VisStimControl():
             self._laserPort.parity = serial.PARITY_NONE
             self._laserPort.open()
             self._laserPort.write('em\r sdmes 0\r sames 1\r') # analog modulation mode
-            self.setLaserOff()
         elif self.laser=='Orange':
             if min(self.laserPower)<0 or max(self.laserPower)>100:
                 raise ValueError('orange laser power must be 0 to 100 mW')
@@ -191,14 +191,16 @@ class VisStimControl():
             self._laserPort.stopbits = serial.STOPBITS_ONE
             self._laserPort.parity = serial.PARITY_NONE
             self._laserPort.open()
+        elif self.laser!='LED':
+            raise ValueError('laser must be Blue, Orange, LED, or None')
+        if self.laser is not None:
             self.setLaserOff()
-        else:
-            raise ValueError('laser must be Blue, Orange, or None')
     
     def closeLaser(self):
         if self.laser is not None:
             self.setLaserOff()
-            self._laserPort.close()
+            if self.laser!='LED':
+                self._laserPort.close()
             
     def setTrialLaserPower(self,trialTypes):
         if len(self.laserPower)>1 and not self.laserRandom:
@@ -215,21 +217,22 @@ class VisStimControl():
             
     def setLaserOn(self,power):
         if power>0:
-            if self.laser=='Blue':
-                if self.blueLaserRampFrames>0:
-                    rampSamples = round(self.blueLaserRampFrames/self.frameRate*self._blueLaserControl.sampRate)
-                    self._blueLaserControl.Write(np.linspace(self.blueLaserZeroOffset,power,rampSamples))
-                else:
-                    self._blueLaserControl.Write(np.array([float(power)]))
-            elif self.laser=='Orange':
+            if self.laser=='Orange':
                 self._laserPort.write('p '+str(power/1e3)+'\r')
                 self._digOutputs.WriteBit(1,0)
+            else:
+                if self.laserRampFrames>0:
+                    zeroOffset = self.blueLaserZeroOffset if self.laser=='Blue' else self.ledZeroOffset
+                    rampSamples = round(self.laserRampFrames/self.frameRate*self._laserAnalogControl.sampRate)
+                    self._laserAnalogControl.Write(np.linspace(zeroOffset,power,rampSamples))
+                else:
+                    self._laserAnalogControl.Write(np.array([float(power)]))
         
     def setLaserOff(self):
-        if self.laser=='Blue':
-            self._blueLaserControl.Write(np.array([0.0]))
-        elif self.laser=='Orange':
+        if self.laser=='Orange':
             self._digOutputs.WriteBit(1,1)
+        else:
+            self._laserAnalogControl.Write(np.array([0.0]))
 
 
 def saveParameters(fileOut,paramDict,dictName=None):
