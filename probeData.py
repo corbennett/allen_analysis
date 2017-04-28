@@ -367,7 +367,7 @@ class probeData():
         return spikesPerTrial
         
             
-    def findRF(self, units=None, adjustForPupil = False, usePeakResp = True, sigma = 1, plot = True, minLatency = 0.05, maxLatency = 0.15, trials = None, protocol=None, fit=True, saveTag='', useCache=False):
+    def findRF(self, units=None, adjustForPupil=False, usePeakResp=False, sigma=1, plot=True, minLatency=0.05, maxLatency=0.15, trials=None, protocol=None, fit=True, saveTag='', useCache=False):
 
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -396,7 +396,7 @@ class probeData():
 #        
 #        if len(trials) == 0:            
 #            return
-#        
+        
         minLatencySamples = minLatency*self.sampleRate
         maxLatencySamples = maxLatency*self.sampleRate
         
@@ -548,18 +548,16 @@ class probeData():
             # estimate spontRate using random trials and interval 0:minLatency
             nTrialTypes = np.unique(posHistory[~np.isnan(posHistory)]).size*boxSize.size*2
             nTrials = int(np.count_nonzero(boxSizeHistory<100)/nTrialTypes)
-            spontRate = np.zeros(nTrialTypes)
-            for n in range(nTrialTypes):
-                randTrials = np.random.choice(np.arange(trials.size),nTrials,replace=False)
-                spontRate[n] = np.max(self.getSDF(spikes,stimStartSamples[randTrials],minLatencySamples,sdfSigma,sdfSampInt))
-            peakSpontRateMean = spontRate.mean()
-            peakSpontRateStd = spontRate.std()
-            if usePeakResp:
-                spontRateMean,spontRateStd = peakSpontRateMean,peakSpontRateStd
-            else:
-                spontRate = self.findSpikesPerTrial(stimStartSamples,stimStartSamples+minLatencySamples,spikes)/(minLatency)
-                spontRateMean = spontRate.mean()
-                spontRateStd = spontRate.std()            
+            nreps = 1000
+            spontPeakDist = np.zeros(nreps)
+            spontCountDist = np.zeros(nreps)
+            for ind in range(nreps):
+                randTrials = np.random.choice(np.arange(trials.size),nTrials)
+                spontPeakDist[ind] = np.max(self.getSDF(spikes,stimStartSamples[randTrials],minLatencySamples,sdfSigma,sdfSampInt))
+                spontCountDist[ind] = np.mean(self.findSpikesPerTrial(stimStartSamples[randTrials],stimStartSamples[randTrials]+minLatencySamples,spikes))
+            spontRateDist = spontPeakDist if usePeakResp else spontCountDist/minLatency
+            spontRateMean = spontRateDist.mean()
+            spontRateStd = spontRateDist.std()
             
             # determine which box sizes elicited significant responses                
             respThresh = spontRateMean+5*spontRateStd
@@ -603,7 +601,7 @@ class probeData():
             sdfMaxInd = np.zeros((2,4),dtype=int)
             halfMaxInd = np.zeros((2,2),dtype=int)
             respLatencyInd = np.zeros(2,dtype=int)
-            latencyThresh = peakSpontRateMean+5*peakSpontRateStd
+            latencyThresh = spontPeakDist.mean()+5*spontPeakDist.std()
             for i,sdf in enumerate((sdfOn,sdfOff)):
                 if not np.any(sdf[:,:,:,inAnalysisWindow]>latencyThresh):
                     continue
@@ -957,7 +955,7 @@ class probeData():
         return sdfMeans
      
               
-    def analyzeGratings(self, units=None, trials=None, responseLatency=0.25, usePeakResp=True, plot=True, protocol=None, protocolType='stf', fit=True, saveTag='', useCache=False):
+    def analyzeGratings(self, units=None, trials=None, responseLatency=0.25, usePeakResp=False, plot=True, protocol=None, protocolType='stf', fit=True, saveTag='', useCache=False):
     
         units, unitsYPos = self.getOrderedUnits(units) 
             
@@ -1041,9 +1039,9 @@ class probeData():
             # make resp matrix with shape tf x sf x ori
             # make similar matrices for pre-trial spike rate, spike density functons, and f1/f0
             respMat = np.full((len(tf),len(sf),len(ori)),np.nan)
-            preTrialMat = np.copy(respMat)
-            sdf = np.full((len(tf),len(sf),len(ori),round(sdfSamples/self.sampleRate/sdfSampInt)),np.nan)
-            f1f0Mat = np.full((len(tf),len(sf),len(ori)),np.nan)
+            preTrialMat = respMat.copy()
+            sdf = np.full(respMat.shape+(round(sdfSamples/self.sampleRate/sdfSampInt),),np.nan)
+            f1f0Mat = respMat.copy()
             contrastTrials = trialContrast>0+tol
             for tfInd,thisTF in enumerate(tf):
                 tfTrials = np.isclose(trialTF,thisTF)
@@ -1070,34 +1068,63 @@ class probeData():
             
             # calculate spontRate from gray screen trials
             grayTrials = trialContrast<0+tol
-            if not any(grayTrials):
-                spontRateMean = np.nan
-                spontRateStd = np.nan
-                hasResp = np.zeros_like(respMat,dtype=bool)
-            else:
+            if any(grayTrials):
                 if usePeakResp:
-                    spontRateMean,spontRateStd = self.getSDFNoise(spikes,trialStartSamples[grayTrials],max(trialEndSamples[grayTrials]-trialStartSamples[grayTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
+                    spontRateDist = self.getSDFNoise(spikes,trialStartSamples[grayTrials],max(trialEndSamples[grayTrials]-trialStartSamples[grayTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
                 else:
-                    spontRateMean = trialResp[grayTrials].mean()
-                    spontRateStd = trialResp[grayTrials].std()
+                    nreps = 1000
+                    spontRateDist = np.zeros(nreps)
+                    grayTrialInd = np.where(grayTrials)[0]
+                    for ind in range(nreps):
+                        spontRateDist[ind] = trialResp[np.random.choice(grayTrialInd,grayTrialInd.size)].mean()
+                spontRateMean = spontRateDist.mean()
+                spontRateStd = spontRateDist.std()
                 hasResp = respMat>spontRateMean+5*spontRateStd
+            else:
+                spontRateMean = spontRateStd =  np.nan
+                hasResp = np.zeros_like(respMat,dtype=bool)
             
             # find significant responses
-            tfHasResp,sfHasResp,oriHasResp = [np.unique(np.where(hasResp)[i]) for i in (0,1,2)]
+            tfHasResp,sfHasResp,oriHasResp = [np.unique(i) for i in np.where(hasResp)]
             maxRespInd = np.unravel_index(np.nanargmax(respMat),respMat.shape)
+            bestOriInd = np.nanargmax([np.nansum(respMat[:,:,i]) for i in range(ori.size)])
             
             if protocolType=='stf':
                 # fit stf matrix for ori that elicited max resp
                 if fit and oriHasResp.size>0:
                     # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude, offset
-                    resp = respMat[:,:,maxRespInd[2]]
+                    resp = respMat[:,:,bestOriInd]
                     if not np.any(np.isnan(resp)):
                         i,j = np.unravel_index(np.argmax(resp),resp.shape)
-                        initialParams = (sf[j], tf[i], 1, 1, 0.5, resp.max(), resp.min())
-                        fitPrms,rmse = fitStf(sf,tf,resp,initialParams)
-                        if fitPrms is not None:
-                            stfFitParams[uindex] = fitPrms
-                            stfFitError[uindex] = rmse
+                        initialParams = (sf[j], tf[i], 1, 1, 0.25, resp.max(), resp.min())
+                        fitParams,rmse = fitStf(sf,tf,resp,initialParams)
+                        if fitParams is not None:
+                            # get confidence intervals for sf0, tf0, and speedTuningIndex
+                            nreps = 1000
+                            trialResampledFitParams = np.full((nreps,)+fitParams.shape,np.nan)
+                            for ind in range(nreps):
+                                resp[:] = 0
+                                for tfInd,thisTF in enumerate(tf):
+                                    for sfInd,thisSF in enumerate(sf):
+                                        trialIndex = np.where(np.isclose(trialOri,ori[bestOriInd]) & np.isclose(trialSF,thisSF) & np.isclose(trialTF,thisTF))[0]
+                                        trialIndexResampled = np.random.choice(trialIndex,trialIndex.size)
+                                        if usePeakResp:
+                                            s,_ = self.getSDF(spikes,trialStartSamples[trialIndexResampled]-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
+                                            resp[tfInd,sfInd] = s[inAnalysisWindow].max()
+                                        else:
+                                            resp[tfInd,sfInd] = trialResp[trialIndexResampled].mean()
+                                i,j = np.unravel_index(np.argmax(resp),resp.shape)
+                                initialParams = (sf[j], tf[i], 1, 1, 0.25, resp.max(), resp.min())
+                                f,_ = fitStf(sf,tf,resp,initialParams)
+                                if f is not None:
+                                    trialResampledFitParams[ind] = f
+                            trialResampledFitParams = trialResampledFitParams[~np.isnan(trialResampledFitParams[:,0])]
+                            ci = np.percentile(trialResampledFitParams,[2.5,97.5],axis=0)
+                            ci[:,:2] = np.log2(ci[:,:2])
+                            ci = np.diff(ci,axis=0).squeeze()
+                            if np.all(ci[:2]<2) and ci[4]<1:
+                                stfFitParams[uindex] = fitParams
+                                stfFitError[uindex] = rmse
             elif protocolType=='ori':
                 # calculate DSI and OSI for sf/tf that elicited max resp
                 if tfHasResp.size>0 and sfHasResp.size>0:
@@ -1165,7 +1192,7 @@ class probeData():
                         im = ax.imshow(respMatOri, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
                         for xypair in xyNan:    
                             ax.text(xypair[1], xypair[0], 'nan', color='white', ha='center')
-                        if fit and oriInd==maxRespInd[2] and not all(np.isnan(stfFitParams[uindex])):
+                        if fit and oriInd==bestOriInd and not all(np.isnan(stfFitParams[uindex])):
                             ax.plot(np.log2(stfFitParams[uindex][0])-np.log2(sf[0]),np.log2(stfFitParams[uindex][1])-np.log2(tf[0]),'kx',markeredgewidth=2)
                             fitX,fitY = getStfContour(sf,tf,stfFitParams[uindex])
                             ax.plot(fitX,fitY,'k',linewidth=2)
@@ -1364,13 +1391,17 @@ class probeData():
             spontTrials = np.logical_and(p['trialBckgndSpeed'][trials]==0,p['trialPatchSpeed'][trials]==0)
             if any(spontTrials):            
                 if usePeakResp:
-                    spontRateMean,spontRateStd = self.getSDFNoise(spikes,trialStartSamples[spontTrials],max(trialEndSamples[spontTrials]-trialStartSamples[spontTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
+                    spontRateDist = self.getSDFNoise(spikes,trialStartSamples[spontTrials],max(trialEndSamples[spontTrials]-trialStartSamples[spontTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
                 else:
-                    spontRateMean = np.nanmean(trialSpikeRate[spontTrials])
-                    spontRateStd = np.nanstd(trialSpikeRate[spontTrials])
+                    nreps = 1000
+                    spontRateDist = np.zeros(nreps)
+                    spontTrialInd = np.where(spontTrials)[0]
+                    for ind,_ in range(nreps):
+                        spontRateDist[ind] = np.nanmean(trialSpikeRate[np.random.choice(spontTrialInd,spontTrialInd.size)])
+                spontRateMean = spontRateDist.mean()
+                spontRateStd = spontRateDist.std()
             else:
-                spontRateMean = np.nan
-                spontRateStd = np.nan
+                spontRateMean = spontRateStd = np.nan
             
             respMat = peakResp.copy() if usePeakResp else meanResp.copy()
             patchResp = respMat[patchSpeed!=0,bckgndSpeed==0,:,:]
@@ -1718,6 +1749,7 @@ class probeData():
             ax.plot(unitsYPos, prefSpeeds, 'ko', alpha=0.5)
 
         return tuningCurves
+
         
     def analyzeSaccades(self,units=None,protocol=0,preTime=1,postTime=1,analysisWindow=[0,0.2],sdfSigma=0.01,sdfSampInt=0.001,plot=True):
         units,_ = self.getOrderedUnits(units)        
@@ -1774,8 +1806,6 @@ class probeData():
                         preSaccadeSpikeCount[i][j].append(np.count_nonzero(np.logical_and(spikes>s+int(baseWindow[0]*self.sampleRate),spikes<s+int(baseWindow[1]*self.sampleRate))))
                         postSaccadeSpikeCount[i][j].append(np.count_nonzero(np.logical_and(spikes>s+int(analysisWindow[0]*self.sampleRate),spikes<s+int(analysisWindow[1]*self.sampleRate))))
                     _,pval = scipy.stats.wilcoxon(preSaccadeSpikeCount[i][j],postSaccadeSpikeCount[i][j])
-                    if pval<0.05:
-                        hasResp[i,j] = True
                     respPolarity[i,j] = 1 if sum(postSaccadeSpikeCount[i][j])>sum(preSaccadeSpikeCount[i][j]) else -1
                     # get sdf, peak resp, and latency
                     sdf[i,j],sdfTime = self.getSDF(spikes,saccadeSamples-preSamples,preSamples+postSamples,sigma=sdfSigma,sampInt=sdfSampInt)
@@ -1783,11 +1813,15 @@ class probeData():
                     peakInd = np.argmax(sdf[i,j,inAnalysisWindow]) if respPolarity[i,j]>0 else np.argmin(sdf[i,j,inAnalysisWindow])
                     peakInd += np.where(inAnalysisWindow)[0][0]
                     peakRate[i,j] = sdf[i,j,peakInd]
-                    spontRateMean,spontRateStd = self.getSDFNoise(spikes,saccadeSamples+baseWindow[0],int(winDur*self.sampleRate),sigma=sdfSigma,sampInt=sdfSampInt)
+                    spontRateDist = self.getSDFNoise(spikes,saccadeSamples+baseWindow[0],int(winDur*self.sampleRate),sigma=sdfSigma,sampInt=sdfSampInt)
+                    spontRateMean = spontRateDist.mean()
+                    spontRateStd = spontRateDist.std()
                     latencyThresh = spontRateMean+5*spontRateStd if respPolarity[i,j]>0 else spontRateMean-5*spontRateStd
-                    if (respPolarity[i,j]>0 and peakRate[i,j]>latencyThresh) or (respPolarity[i,j]<0 and peakRate[i,j]<latencyThresh):
-                        latencyInd = np.where(sdf[i,j,:peakInd]<latencyThresh)[0][-1]+1 if respPolarity[i,j] else np.where(sdf[i,j,:peakInd]>latencyThresh)[0][-1]+1
-                        latency[i,j] = latencyInd*sdfSampInt-preTime
+                    if pval<0.05:
+                        if (respPolarity[i,j]>0 and peakRate[i,j]>latencyThresh) or (respPolarity[i,j]<0 and peakRate[i,j]<latencyThresh):
+                            latencyInd = np.where(sdf[i,j,:peakInd]<latencyThresh)[0][-1]+1 if respPolarity[i,j] else np.where(sdf[i,j,:peakInd]>latencyThresh)[0][-1]+1
+                            latency[i,j] = latencyInd*sdfSampInt-preTime
+                            hasResp[i,j] = True
         
         if not plot:
             return {'pupilX':pupilX, 'saccadeRate':saccadeRate, 'negAmp':negAmp, 'posAmp':posAmp, 
@@ -1896,15 +1930,16 @@ class probeData():
         ax.set_ylabel('Pos Saccades Spikes/s')
         
         # latency
-        fig = plt.figure(facecolor='w')
-        ax = fig.add_subplot(1,1,1)
-        lat = latency[hasResp[:,-1],-1]*1000
-        ax.hist(lat[~np.isnan(lat)],bins=np.arange(np.nanmin(lat)-25,np.nanmax(lat)+50,25),color='k')
-        for side in ('right','top'):
-            ax.spines[side].set_visible(False)
-        ax.tick_params(direction='out',top=False,right=False)
-        ax.set_xlabel('Latency')
-        ax.set_ylabel('Count')
+        if len(units)>1:
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            lat = latency[hasResp[:,-1],-1]*1000
+            ax.hist(lat[~np.isnan(lat)],bins=np.arange(np.nanmin(lat)-25,np.nanmax(lat)+50,25),color='k')
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False)
+            ax.set_xlabel('Latency')
+            ax.set_ylabel('Count')
             
             
     def analyzeOKR(self,protocolName='gratings',smoothPts=3,plot=True):
@@ -2292,7 +2327,7 @@ class probeData():
             for i,_ in enumerate(sdf):
                 sdf[i] = np.roll(sdf[i],np.random.randint(0,sdf.shape[1]))
             peaks[n] = sdf.mean(axis=0).max()
-        return peaks.mean(),peaks.std()
+        return peaks
     
     
     def plotRaster(self,unit,protocol,startSamples=None,offset=0,windowDur=None,paramNames=None,paramColors=None,grid=False):
@@ -3097,8 +3132,8 @@ def stfLogGauss2D(stfTuple,sf0,tf0,sigSF,sigTF,speedTuningIndex,amplitude,offset
 
 
 def fitStf(sf,tf,data,initialParams):
-    lowerBounds = np.array([sf[0]-0.25*sf[0],tf[0]-0.25*tf[0],0,0,-0.25,0,data.min()])
-    upperBounds = np.array([sf[-1]+0.25*sf[-1],tf[-1]+0.25*tf[-1],0.25*tf[-1],0.25*tf[-1],1.25,1.5*data.max(),np.median(data)])
+    lowerBounds = np.array([0.75*sf[0],0.75*tf[0],0.5,0.5,-0.5,0,data.min()])
+    upperBounds = np.array([1.25*sf[-1],1.25*tf[-1],0.5*sf.size,0.5*tf.size,1.5,1.5*data.max(),np.median(data)])
     try:
         fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except RuntimeError:

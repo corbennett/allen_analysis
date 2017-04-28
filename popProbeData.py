@@ -214,18 +214,25 @@ class popProbeData():
         offFit[isOn | noRF,:] = np.nan
         minRFCutoff = 100
         maxRFCutoff = 5000
+        minAspectCutoff = 0.25
+        maxAspectCutoff = 4
         onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
-        onArea[np.logical_or(onArea<minRFCutoff,onArea>maxRFCutoff)] = np.nan
+        onAspect = onFit[:,2]/onFit[:,3]
+        badOn = (onArea<minRFCutoff) | (onArea>maxRFCutoff) | (onAspect<minAspectCutoff) | (onAspect>maxAspectCutoff)
+        onArea[badOn] = np.nan
+        onAspect[badOn] = np.nan
         offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
-        offArea[np.logical_or(offArea<minRFCutoff,offArea>maxRFCutoff)] = np.nan
+        offAspect = offFit[:,2]/offFit[:,3]
+        badOff = (offArea<minRFCutoff) | (offArea>maxRFCutoff) | (offAspect<minAspectCutoff) | (offAspect>maxAspectCutoff)
+        offArea[badOff] = np.nan
+        offAspect[badOff] = np.nan
         rfAreaCombined = np.nanmean(np.stack((onArea,offArea)),axis=0)
-        
-#        sizeTuningOn = np.stack(self.data.run.sparseNoise.sizeTuningOn[ind])
-#        sizeTuningOff = np.stack(self.data.run.sparseNoise.sizeTuningOff[ind])
+        aspectCombined = np.nanmean(np.stack((onAspect,offAspect)),axis=0)
         
         ccfY = np.array(self.data.index.get_level_values('ccfY'))
         ccfX = np.array(self.data.index.get_level_values('ccfX'))    
         ccfZ = np.array(self.data.index.get_level_values('ccfZ'))
+        inSCAxons = np.logical_and(ccfX<=170*25,ccfZ>=300*25)
         
         # plot on vs off resp index
         plt.figure(facecolor='w')
@@ -263,8 +270,19 @@ class popProbeData():
         ax.set_ylabel('Number of Cells',fontsize='x-large')
         plt.tight_layout()
         
-        # plot RF area in and out of SC axons
-        inSCAxons = np.logical_and(ccfX<=170*25,ccfZ>=300*25)
+        # plot asepect ratio, on/off averaged
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        counts,bins,bars = ax.hist(aspectCombined[~np.isnan(aspectCombined)],bins=np.arange(0,maxAspectCutoff,0.2),color='k')
+        ax.plot([1,1],[0,1.1*max(counts)],'--',color='0.5',linewidth=3)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+        ax.set_xlabel('Aspect Ratio',fontsize='x-large')
+        ax.set_ylabel('Number of Cells',fontsize='x-large')
+        plt.tight_layout()
+        
+        # plot RF area and aspect ration in and out of SC axons
         for rfa in (rfAreaCombined[inSCAxons],rfAreaCombined[~inSCAxons]):
             plt.figure(facecolor='w')
             ax = plt.subplot(1,1,1)
@@ -272,8 +290,18 @@ class popProbeData():
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-            ax.set_xlim([0,4000])
             ax.set_xlabel('Receptive Field Area ($\mathregular{degrees^2}$)',fontsize='x-large')
+            ax.set_ylabel('Number of Cells',fontsize='x-large')
+            plt.tight_layout()
+        for aspect in (aspectCombined[inSCAxons],aspectCombined[~inSCAxons]):
+            plt.figure(facecolor='w')
+            ax = plt.subplot(1,1,1)
+            counts,bins,bars = ax.hist(aspect[~np.isnan(aspect)],bins=np.arange(0,maxAspectCutoff,0.2),color='k')
+            ax.plot([1,1],[0,1.1*max(counts)],'--',color='0.5',linewidth=3)
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+            ax.set_xlabel('Aspect Ratio',fontsize='x-large')
             ax.set_ylabel('Number of Cells',fontsize='x-large')
             plt.tight_layout()
         
@@ -558,16 +586,20 @@ class popProbeData():
         
         annotationData,_ = nrrd.read(annotationDataFile)
         annotationData = annotationData.transpose((1,2,0))
-        inLP = np.where(annotationData == 218)
+        
         inLPbinary = annotationData==218
+        inLPbinary[:,inLPbinary.shape[1]//2:,:] = False
+        inLP = np.where(inLPbinary)
         
         #find left hemisphere region for xRange
-        maxProj = np.max(inLPbinary, axis=2).astype(int)                
-        cnts,_ = cv2.findContours(maxProj.copy(order='C').astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        leftSide = np.argmin([np.min(u[:, :, 0]) for u in cnts])
+#        maxProj = np.max(inLPbinary, axis=2).astype(int)                
+#        cnts,_ = cv2.findContours(maxProj.copy(order='C').astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+#        leftSide = np.argmin([np.min(u[:, :, 0]) for u in cnts])
         
-        xRange = [np.min(cnts[leftSide][:, :, 0]) - padding, np.max(cnts[leftSide][:, :, 0]) + padding]
+#        xRange = [np.min(cnts[leftSide][:, :, 0]) - padding, np.max(cnts[leftSide][:, :, 0]) + padding]
+        
         yRange = [np.min(inLP[0])-padding, np.max(inLP[0])+padding]
+        xRange = [np.min(inLP[1])-padding, np.max(inLP[1])+padding]
         zRange = [np.min(inLP[2])-padding, np.max(inLP[2])+padding]
         
         LPmask = inLPbinary[yRange[0]:yRange[1], xRange[0]:xRange[1], zRange[0]:zRange[1]].astype(np.float)
@@ -622,6 +654,13 @@ class popProbeData():
             elev_s /= counts_s
             azi_s /= counts_s
      
+        mat = np.zeros((sigma*3,)*3)
+        i = (sigma*3)//2
+        mat[i,i,i] = 1
+        maskThresh = probeData.gaussianConvolve3D((mat>0).astype(float),sigma=sigma).max()*0.5
+        mask = probeData.gaussianConvolve3D((counts>0).astype(float),sigma=sigma)
+        elev_s[mask<maskThresh] = np.nan
+        azi_s[mask<maskThresh] = np.nan
         
         minVal = [np.nanmin(elev_s), np.nanmin(azi_s)]
         maxVal = [np.nanmax(elev_s- minVal[0]) , np.nanmax(azi_s- minVal[1])]
@@ -637,7 +676,10 @@ class popProbeData():
                             for i in (0,1,2):
                                 colorMaps[im][y, x, z, i] = RGB[i]
                             
-        fullMap = [np.full(annotationData.shape+(3,),np.nan) for _ in (0,1)]
+        fullShape = annotationData.shape+(3,)
+        del(annotationData,inLP,inLPbinary,LPmask,elev,azi,elev_s,azi_s,counts,mask)
+                            
+        fullMap = [np.full(fullShape,np.nan) for _ in (0,1)]
         for i in (0,1):
             fullMap[i][yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMaps[i]
 
@@ -1195,18 +1237,18 @@ class popProbeData():
                 hasResp.append(saccadeData['hasResp'])
                 respPolarity.append(saccadeData['respPolarity'])
                 latency.append(saccadeData['latency'])
-            
             else:
-                for param in [saccadeAmp, preSaccadeSpikeCount, postSaccadeSpikeCount, hasResp, respPolarity, latency]:
-                    param.append([np.nan]*len(units))
+                for param in [pupilX,saccadeAmp,preSaccadeSpikeCount, postSaccadeSpikeCount, hasResp, respPolarity, latency]:
+                    param.append(None)
             
         # pupil position histogram
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
         for x in pupilX:
-            x = x-np.nanmedian(x)
-            count,bins = np.histogram(x[~np.isnan(x)],bins=np.arange(np.nanmin(x)-1,np.nanmax(x)+2))
-            ax.plot(bins[1:]-0.5,count/count.sum(),'k')
+            if x is not None:
+                x = x-np.nanmedian(x)
+                count,bins = np.histogram(x[~np.isnan(x)],bins=np.arange(np.nanmin(x)-1,np.nanmax(x)+2))
+                ax.plot(bins[1:]-0.5,count/count.sum(),'k')
         ax.plot([-5,-5],[0,1],'k--')
         ax.plot([5,5],[0,1],'k--')
         for side in ('right','top'):
@@ -1223,9 +1265,10 @@ class popProbeData():
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
         for x in pupilX:
-            x = np.absolute(x-np.nanmedian(x))
-            count,bins = np.histogram(x[~np.isnan(x)],bins=np.arange(np.nanmin(x)-1,np.nanmax(x)+2))
-            ax.plot(bins[1:]-0.5,np.cumsum(count)/count.sum(),'k')
+            if x is not None:
+                x = np.absolute(x-np.nanmedian(x))
+                count,bins = np.histogram(x[~np.isnan(x)],bins=np.arange(np.nanmin(x)-1,np.nanmax(x)+2))
+                ax.plot(bins[1:]-0.5,np.cumsum(count)/count.sum(),'k')
         ax.plot([5,5],[0,1],'k--')
         for side in ('right','top'):
             ax.spines[side].set_visible(False)
@@ -1242,7 +1285,7 @@ class popProbeData():
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
         for amp in saccadeAmp:
-            if amp.size>0:
+            if amp is not None and amp.size>0:
                 count,bins = np.histogram(amp[~np.isnan(amp)],bins=np.arange(np.nanmin(amp)-1,np.nanmax(amp)+2))
                 ax.plot(bins[1:]-0.5,count/count.sum(),'k')
         for side in ('right','top'):
@@ -1253,17 +1296,26 @@ class popProbeData():
         plt.tight_layout()
         
         # pre and post saccade firing rate
+        totalCount = excitCount = inhibCount = bothCount = 0
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
         maxRate = 0
-        for preSpikes,postSpikes,isResp in zip(preSaccadeSpikeCount,postSaccadeSpikeCount,hasResp):
-            for u,_ in enumerate(preSpikes):
-                for saccadeDirInd,clr in zip((0,1),('k','k')):
-                    if preSpikes[u] is not None:
+        for preSpikes,postSpikes,isResp,pol in zip(preSaccadeSpikeCount,postSaccadeSpikeCount,hasResp,respPolarity):
+            if preSpikes is not None:
+                for u,_ in enumerate(preSpikes):
+                    for saccadeDirInd,clr in zip((0,1),('r','b')):
                         preRate = np.mean(preSpikes[u][saccadeDirInd])/winDur
                         postRate = np.mean(postSpikes[u][saccadeDirInd])/winDur
-                        ax.plot(preRate,postRate,'o',mec=clr, mfc=clr, alpha=0.2)
+                        mfc = clr if isResp[u,saccadeDirInd] else 'none'
+                        ax.plot(preRate,postRate,'o',mec=clr,mfc=mfc,alpha=0.5)
                         maxRate = max(maxRate,postRate)
+                totalCount += isResp.shape[0]
+                isExcit = np.logical_and(isResp[:,:2],pol[:,:2]>0).any(axis=1)
+                isInhib = np.logical_and(isResp[:,:2],pol[:,:2]<0).any(axis=1)
+                isBoth = np.logical_and(isExcit,isInhib)
+                excitCount += np.logical_xor(isExcit,isBoth).sum()
+                inhibCount += np.logical_xor(isInhib,isBoth).sum()
+                bothCount += isBoth.sum()
         maxRate *= 1.05
         ax.plot([0,maxRate],[0,maxRate],'k--')
         ax.set_xlim([0,75])
@@ -1275,6 +1327,31 @@ class popProbeData():
         ax.set_ylabel('Post-saccade spikes/s',fontsize=20)
         ax.set_aspect('equal')
         plt.tight_layout()
+        
+        print('total = '+str(totalCount))
+        print('excited only = '+str(excitCount))
+        print('inhibited only = '+str(inhibCount))
+        print('both = '+str(bothCount))
+        
+        # latency
+        excitLat = []
+        inhibLat = []
+        for lat,isResp,pol in zip(latency,hasResp,respPolarity):
+            if lat is not None:
+                excitLat = np.concatenate((excitLat,lat[pol[:,-1]>0,-1]*1000))
+                inhibLat = np.concatenate((inhibLat,lat[pol[:,-1]<0,-1]*1000))
+        for lat,label in zip((excitLat,inhibLat),('Excited','Inhibited')):
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            binSize = 10
+            ax.hist(lat[~np.isnan(lat)],bins=np.arange(np.nanmin(lat)-binSize,np.nanmax(lat)+2*binSize,binSize),color='k')
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlabel('Latency (ms)',fontsize=20)
+            ax.set_ylabel('# Units',fontsize=20)
+            ax.set_title(label,fontsize=20)
+            plt.tight_layout()
         
         # saccade modulation index
         postSac = []
@@ -1297,26 +1374,6 @@ class popProbeData():
         meanPost = np.array(meanPost)
         
         sacModIndex = (meanPost - meanPre)/(meanPre + meanPost)        
-        
-        # latency
-        excitLat = []
-        inhibLat = []
-        for lat,isResp,pol in zip(latency,hasResp,respPolarity):
-#            excitLat = np.concatenate((excitLat,lat[np.logical_and(isResp[:,-1],pol[:,-1]>0),-1]))
-#            inhibLat = np.concatenate((inhibLat,lat[np.logical_and(isResp[:,-1],pol[:,-1]<0),-1]))
-            excitLat = np.concatenate((excitLat,lat[pol[:,-1]>0,-1]*1000))
-            inhibLat = np.concatenate((inhibLat,lat[pol[:,-1]<0,-1]*1000))
-        fig = plt.figure(facecolor='w')
-        ax = fig.add_subplot(1,1,1)
-        binSize = 10
-        lat = np.concatenate((excitLat,inhibLat))
-        ax.hist(lat[~np.isnan(lat)],bins=np.arange(np.nanmin(lat)-binSize,np.nanmax(lat)+2*binSize,binSize),color='k')
-        for side in ('right','top'):
-            ax.spines[side].set_visible(False)
-        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-        ax.set_xlabel('Latency (ms)',fontsize=20)
-        ax.set_ylabel('# Units',fontsize=20)
-        plt.tight_layout()
         
         
     def analyzeOKR(self,protocolName='gratings'):
