@@ -367,7 +367,7 @@ class probeData():
         return spikesPerTrial
         
             
-    def findRF(self, units=None, adjustForPupil=False, usePeakResp=False, sigma=1, plot=True, minLatency=0.05, maxLatency=0.15, trials=None, protocol=None, fit=True, saveTag='', useCache=False):
+    def findRF(self, units=None, adjustForPupil=False, usePeakResp=True, sigma=1, plot=True, minLatency=0.05, maxLatency=0.15, trials=None, protocol=None, fit=True, saveTag='', useCache=False):
 
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -3105,8 +3105,8 @@ def fitRF(x,y,data,initialParams,maxOffGrid):
     upperBounds = np.array([x[-1]+maxOffGrid,y[-1]+maxOffGrid,0.5*gridSize,0.5*gridSize,2*math.pi,1.5*data.max(),data.mean()])
     try:
         fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
-    except RuntimeError:
-        print('fit failed')
+    except Exception as e:
+        print('fit failed because of '+str(type(e)))
         return None,None
     if not all([lowerBounds[i]+1<fitParams[i]<upperBounds[i]-1 for i in (0,1)]):
         fitParams = fitError = None # if fit center on edge of boundaries
@@ -3136,8 +3136,8 @@ def fitStf(sf,tf,data,initialParams):
     upperBounds = np.array([1.25*sf[-1],1.25*tf[-1],0.5*sf.size,0.5*tf.size,1.5,1.5*data.max(),np.median(data)])
     try:
         fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
-    except RuntimeError:
-        print('fit failed')
+    except Exception as e:
+        print('fit failed because of '+str(type(e)))
         return None,None
     fitData = stfLogGauss2D((sf,tf),*fitParams).reshape(tf.size,sf.size)
     fitError = np.sqrt(np.mean(np.square(data-fitData)))/data.max() # normalized root mean squared error
