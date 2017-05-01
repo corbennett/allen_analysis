@@ -48,14 +48,14 @@ class popProbeData():
         return expDate,anmID
         
         
-    def analyzeExperiments(self,exps=None,save=False):
+    def analyzeExperiments(self,exps=None,protocols=None,save=False):
         if exps is None:
             exps = self.experimentFiles
         for ind,exp in enumerate(exps):
             print('Analyzing experiment '+str(ind+1)+' of '+str(len(exps)))
             p = self.getProbeDataObj(exp)
             self.getUnitLabels(p)
-            p.runAllAnalyses(splitRunning=True,plot=False)
+            p.runAllAnalyses(splitRunning=True,protocolsToRun=protocols,plot=False)
             if save:
                 p.saveHDF5(exp)
         

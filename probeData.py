@@ -1017,7 +1017,6 @@ class probeData():
         
         if protocolType=='stf':
             stfFitParams = np.full((len(units),7),np.nan)
-            stfFitError = np.full(len(units),np.nan)
         else:
             dsi = np.full(len(units),np.nan)
             prefDir = np.copy(dsi)
@@ -1087,44 +1086,48 @@ class probeData():
             # find significant responses
             tfHasResp,sfHasResp,oriHasResp = [np.unique(i) for i in np.where(hasResp)]
             maxRespInd = np.unravel_index(np.nanargmax(respMat),respMat.shape)
-            bestOriInd = np.nanargmax([np.nansum(respMat[:,:,i]) for i in range(ori.size)])
             
             if protocolType=='stf':
                 # fit stf matrix for ori that elicited max resp
+                stfFitError = np.nan
+                stfFitOri = np.nan
                 if fit and oriHasResp.size>0:
                     # params: sf0 , tf0, sigSF, sigTF, speedTuningIndex, amplitude, offset
-                    resp = respMat[:,:,bestOriInd]
-                    if not np.any(np.isnan(resp)):
-                        i,j = np.unravel_index(np.argmax(resp),resp.shape)
-                        initialParams = (sf[j], tf[i], 1, 1, 0.25, resp.max(), resp.min())
-                        fitParams,rmse = fitStf(sf,tf,resp,initialParams)
-                        if fitParams is not None:
-                            # get confidence intervals for sf0, tf0, and speedTuningIndex
-                            nreps = 1000
-                            trialResampledFitParams = np.full((nreps,)+fitParams.shape,np.nan)
-                            for ind in range(nreps):
-                                resp[:] = 0
-                                for tfInd,thisTF in enumerate(tf):
-                                    for sfInd,thisSF in enumerate(sf):
-                                        trialIndex = np.where(np.isclose(trialOri,ori[bestOriInd]) & np.isclose(trialSF,thisSF) & np.isclose(trialTF,thisTF))[0]
-                                        trialIndexResampled = np.random.choice(trialIndex,trialIndex.size)
-                                        if usePeakResp:
-                                            s,_ = self.getSDF(spikes,trialStartSamples[trialIndexResampled]-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
-                                            resp[tfInd,sfInd] = s[inAnalysisWindow].max()
-                                        else:
-                                            resp[tfInd,sfInd] = trialResp[trialIndexResampled].mean()
-                                i,j = np.unravel_index(np.argmax(resp),resp.shape)
-                                initialParams = (sf[j], tf[i], 1, 1, 0.25, resp.max(), resp.min())
-                                f,_ = fitStf(sf,tf,resp,initialParams)
-                                if f is not None:
-                                    trialResampledFitParams[ind] = f
-                            trialResampledFitParams = trialResampledFitParams[~np.isnan(trialResampledFitParams[:,0])]
-                            ci = np.percentile(trialResampledFitParams,[2.5,97.5],axis=0)
-                            ci[:,:2] = np.log2(ci[:,:2])
-                            ci = np.diff(ci,axis=0).squeeze()
-                            if np.all(ci[:2]<2) and ci[4]<1:
-                                stfFitParams[uindex] = fitParams
-                                stfFitError[uindex] = rmse
+                    for oriInd in np.argsort([np.nanmax(respMat[:,:,i]) for i in range(ori.size)])[::-1]:
+                        resp = respMat[:,:,oriInd].copy()
+                        if not np.any(np.isnan(resp)):
+                            i,j = np.unravel_index(np.argmax(resp),resp.shape)
+                            initialParams = (sf[j], tf[i], 1, 1, 0.25, resp.max(), resp.min())
+                            fitParams,rmse = fitStf(sf,tf,resp,initialParams)
+                            if fitParams is not None:
+                                # get confidence intervals for sf0, tf0, and speedTuningIndex
+                                nreps = 1000
+                                trialResampledFitParams = np.full((nreps,)+fitParams.shape,np.nan)
+                                for ind in range(nreps):
+                                    resp[:] = 0
+                                    for tfInd,thisTF in enumerate(tf):
+                                        for sfInd,thisSF in enumerate(sf):
+                                            trialIndex = np.where(np.isclose(trialOri,ori[oriInd]) & np.isclose(trialSF,thisSF) & np.isclose(trialTF,thisTF))[0]
+                                            trialIndexResampled = np.random.choice(trialIndex,trialIndex.size)
+                                            if usePeakResp:
+                                                s,_ = self.getSDF(spikes,trialStartSamples[trialIndexResampled]-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
+                                                resp[tfInd,sfInd] = s[inAnalysisWindow].max()
+                                            else:
+                                                resp[tfInd,sfInd] = trialResp[trialIndexResampled].mean()
+                                    i,j = np.unravel_index(np.argmax(resp),resp.shape)
+                                    initialParams = (sf[j], tf[i], 1, 1, 0.25, resp.max(), resp.min())
+                                    f,_ = fitStf(sf,tf,resp,initialParams)
+                                    if f is not None:
+                                        trialResampledFitParams[ind] = f
+                                trialResampledFitParams = trialResampledFitParams[~np.isnan(trialResampledFitParams[:,0])]
+                                ci = np.percentile(trialResampledFitParams,[2.5,97.5],axis=0)
+                                ci[:,:2] = np.log2(ci[:,:2])
+                                ci = np.diff(ci,axis=0).squeeze()
+                                if np.all(ci[:2]<3) and ci[4]<1:
+                                    stfFitParams[uindex] = fitParams
+                                    stfFitError = rmse
+                                    stfFitOri = ori[oriInd]
+                                    break
             elif protocolType=='ori':
                 # calculate DSI and OSI for sf/tf that elicited max resp
                 if tfHasResp.size>0 and sfHasResp.size>0:
@@ -1145,7 +1148,8 @@ class probeData():
                                           'trials': trials}
             if protocolType=='stf':
                 self.units[str(unit)][tag]['stfFitParams'] = stfFitParams[uindex]
-                self.units[str(unit)][tag]['stfFitError'] = stfFitError[uindex]
+                self.units[str(unit)][tag]['stfFitError'] = stfFitError
+                self.units[str(unit)][tag]['stfFitOri'] = stfFitOri
             elif protocolType=='ori':
                 self.units[str(unit)][tag]['dsi'] = dsi[uindex]
                 self.units[str(unit)][tag]['prefDir'] = prefDir[uindex]
@@ -1192,7 +1196,7 @@ class probeData():
                         im = ax.imshow(respMatOri, clim=(centerPoint-cLim, centerPoint+cLim), cmap='bwr', origin = 'lower', interpolation='none')
                         for xypair in xyNan:    
                             ax.text(xypair[1], xypair[0], 'nan', color='white', ha='center')
-                        if fit and oriInd==bestOriInd and not all(np.isnan(stfFitParams[uindex])):
+                        if fit and not all(np.isnan(stfFitParams[uindex])) and ori[oriInd]==stfFitOri:
                             ax.plot(np.log2(stfFitParams[uindex][0])-np.log2(sf[0]),np.log2(stfFitParams[uindex][1])-np.log2(tf[0]),'kx',markeredgewidth=2)
                             fitX,fitY = getStfContour(sf,tf,stfFitParams[uindex])
                             ax.plot(fitX,fitY,'k',linewidth=2)
@@ -2423,7 +2427,9 @@ class probeData():
             rows[-1] += 1
     
     
-    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard'], splitRunning = False, useCache=False, plot=True):
+    def runAllAnalyses(self, units=None, protocolsToRun = None, splitRunning = False, useCache=False, plot=True):
+        if protocolsToRun is None:
+            protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard']
 
         for pro in protocolsToRun:
             protocol = self.getProtocolIndex(pro)
