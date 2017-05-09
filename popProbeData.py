@@ -178,9 +178,17 @@ class popProbeData():
         if filePath=='':
             return
         self.data.to_hdf(filePath,'table')
+        
+        
+    def getSCAxons(self):
+        ccfX = np.array(self.data.index.get_level_values('ccfX'))    
+        ccfZ = np.array(self.data.index.get_level_values('ccfZ'))
+        return np.logical_and(ccfX<=170*25,ccfZ>=300*25)
     
                 
     def analyzeRF(self):
+
+        inSCAxons = self.getSCAxons()
         
         data = self.data.laserOff.allTrials.sparseNoise        
         
@@ -226,13 +234,10 @@ class popProbeData():
         badOff = (offArea<minRFCutoff) | (offArea>maxRFCutoff) | (offAspect<minAspectCutoff) | (offAspect>maxAspectCutoff)
         offArea[badOff] = np.nan
         offAspect[badOff] = np.nan
-        rfAreaCombined = np.nanmean(np.stack((onArea,offArea)),axis=0)
-        aspectCombined = np.nanmean(np.stack((onAspect,offAspect)),axis=0)
-        
-        ccfY = np.array(self.data.index.get_level_values('ccfY'))
-        ccfX = np.array(self.data.index.get_level_values('ccfX'))    
-        ccfZ = np.array(self.data.index.get_level_values('ccfZ'))
-        inSCAxons = np.logical_and(ccfX<=170*25,ccfZ>=300*25)
+        rfArea = offArea.copy()
+        rfArea[onVsOff>0] = onArea[onVsOff>0].copy()
+        rfAspect = offAspect.copy()
+        rfAspect[onVsOff>0] = onAspect[onVsOff>0].copy()
         
         # plot on vs off resp index
         plt.figure(facecolor='w')
@@ -259,10 +264,10 @@ class popProbeData():
         ax.set_ylabel('Number of Cells',fontsize='x-large')
         plt.tight_layout()
         
-        # plot receptive field area, on/off averaged
+        # plot receptive field area
         plt.figure(facecolor='w')
         ax = plt.subplot(1,1,1)
-        ax.hist(rfAreaCombined[~np.isnan(rfAreaCombined)],bins=np.arange(0,maxRFCutoff,200),color='k')
+        ax.hist(rfArea[~np.isnan(rfArea)],bins=np.arange(0,maxRFCutoff,200),color='k')
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False,labelsize='large')
@@ -270,10 +275,10 @@ class popProbeData():
         ax.set_ylabel('Number of Cells',fontsize='x-large')
         plt.tight_layout()
         
-        # plot asepect ratio, on/off averaged
+        # plot asepect ratio
         plt.figure(facecolor='w')
         ax = plt.subplot(1,1,1)
-        counts,bins,bars = ax.hist(aspectCombined[~np.isnan(aspectCombined)],bins=np.arange(0,maxAspectCutoff,0.2),color='k')
+        counts,bins,bars = ax.hist(rfAspect[~np.isnan(rfAspect)],bins=np.arange(0,maxAspectCutoff,0.2),color='k')
         ax.plot([1,1],[0,1.1*max(counts)],'--',color='0.5',linewidth=3)
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
@@ -283,27 +288,66 @@ class popProbeData():
         plt.tight_layout()
         
         # plot RF area and aspect ration in and out of SC axons
-        for rfa in (rfAreaCombined[inSCAxons],rfAreaCombined[~inSCAxons]):
+        for rfa in (rfArea[inSCAxons],rfArea[~inSCAxons]):
             plt.figure(facecolor='w')
             ax = plt.subplot(1,1,1)
             ax.hist(rfa[~np.isnan(rfa)],bins=np.arange(0,maxRFCutoff,200),color='k')
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-            ax.set_xlabel('Receptive Field Area ($\mathregular{degrees^2}$)',fontsize='x-large')
-            ax.set_ylabel('Number of Cells',fontsize='x-large')
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlabel('Receptive Field Area ($\mathregular{degrees^2}$)',fontsize=20)
+            ax.set_ylabel('Number of Cells',fontsize=20)
             plt.tight_layout()
-        for aspect in (aspectCombined[inSCAxons],aspectCombined[~inSCAxons]):
+        
+        for aspect in (rfAspect[inSCAxons],rfAspect[~inSCAxons]):
             plt.figure(facecolor='w')
             ax = plt.subplot(1,1,1)
             counts,bins,bars = ax.hist(aspect[~np.isnan(aspect)],bins=np.arange(0,maxAspectCutoff,0.2),color='k')
             ax.plot([1,1],[0,1.1*max(counts)],'--',color='0.5',linewidth=3)
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-            ax.set_xlabel('Aspect Ratio',fontsize='x-large')
-            ax.set_ylabel('Number of Cells',fontsize='x-large')
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlabel('Aspect Ratio',fontsize=20)
+            ax.set_ylabel('Number of Cells',fontsize=20)
             plt.tight_layout()
+            
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        rfAreaSC = rfArea[~np.isnan(rfArea) & inSCAxons]
+        rfAreaNonSC  = rfArea[~np.isnan(rfArea) & ~inSCAxons]
+        cumProbSC = [np.count_nonzero(rfAreaSC<=i)/rfAreaSC.size for i in np.sort(rfAreaSC)]
+        cumProbNonSC = [np.count_nonzero(rfAreaNonSC<=i)/rfAreaNonSC.size for i in np.sort(rfAreaNonSC)]
+        ax.plot([0,0],[0,1],'k--')
+        ax.plot(np.sort(rfAreaNonSC),cumProbNonSC,'0.6',linewidth=3)
+        ax.plot(np.sort(rfAreaSC),cumProbSC,'k',linewidth=3)
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlim([0,maxRFCutoff])
+        ax.set_ylim([0,1.01])
+        ax.set_yticks([0,0.5,1])
+        ax.set_xlabel('RF Area',fontsize=20)
+        ax.set_ylabel('Cumulative Probability',fontsize=20)
+        plt.tight_layout()
+        
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        aspectSC = rfAspect[~np.isnan(rfAspect) & inSCAxons]
+        aspectNonSC  = rfAspect[~np.isnan(rfAspect) & ~inSCAxons]
+        cumProbSC = [np.count_nonzero(aspectSC<=i)/aspectSC.size for i in np.sort(aspectSC)]
+        cumProbNonSC = [np.count_nonzero(aspectNonSC<=i)/aspectNonSC.size for i in np.sort(aspectNonSC)]
+        ax.plot([0,0],[0,1],'k--')
+        ax.plot(np.sort(aspectNonSC),cumProbNonSC,'0.6',linewidth=3)
+        ax.plot(np.sort(aspectSC),cumProbSC,'r',linewidth=3)
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlim([0,maxAspectCutoff])
+        ax.set_ylim([0,1.01])
+        ax.set_yticks([0,0.5,1])
+        ax.set_xlabel('Aspect Ratio',fontsize=20)
+        ax.set_ylabel('Cumulative Probability',fontsize=20)
+        plt.tight_layout()
         
         # plot on and off resp latency
         for i,clr in zip((0,1),('r','b')):
@@ -328,10 +372,61 @@ class popProbeData():
             ax.set_xlabel('Receptive Field Area ($\mathregular{degrees^2}$)',fontsize='x-large')
             ax.set_ylabel('Number of Cells',fontsize='x-large')
             plt.tight_layout()
+            
+        # size tuning plots: all trials, SC vs nonSC
+        sizeTuningSize = [5,10,20,50]
+        sizeTuningLabel = [5,10,20,'full']
+        allSizesInd = np.zeros(data.shape[0],dtype=bool)
+        for i in range(data.shape[0]):
+            if data.sizeTuningOff[i].size>3:
+                allSizesInd[i] = True      
+        for scInd in (inSCAxons,~inSCAxons):
+            ind = allSizesInd & scInd
+            sizeTuningOn = np.stack(data.sizeTuningOn[ind])[isOn[ind] | isOnOff[ind]]
+            sizeTuningOff = np.stack(data.sizeTuningOff[ind])[isOff[ind] | isOnOff[ind]]
+            
+            sizeResp = sizeTuningOff.copy()
+            sizeResp[onVsOff>0] = sizeTuningOn[onVsOff>0].copy()
+            
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            sizeRespNorm = sizeResp/np.nanmax(sizeResp,axis=1)[:,None]
+            sizeRespMean = np.nanmean(sizeRespNorm,axis=0)
+            sizeRespStd = np.nanstd(sizeRespNorm,axis=0)
+            ax.plot(sizeTuningSize,sizeRespMean,color='k',linewidth=3)
+            ax.fill_between(sizeTuningSize,sizeRespMean+sizeRespStd,sizeRespMean-sizeRespStd,color='k',alpha=0.3)
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlim([0,55])
+            ax.set_xticks(sizeTuningSize)
+            ax.set_xticklabels(sizeTuningLabel)
+            ax.set_yticks([0,0.5,1])
+            ax.set_xlabel('Size (degrees)',fontsize=20)
+            ax.set_ylabel('Norm. Response',fontsize=20)
+            plt.tight_layout()
+            
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            sizeRespNorm[sizeRespNorm<1] = 0
+            bestSizeCount = np.nansum(sizeRespNorm,axis=0)
+            ax.bar(sizeTuningSize,bestSizeCount,color='k')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlim([0,55])
+            ax.set_xticks(sizeTuningSize)
+            ax.set_xticklabels(sizeTuningLabel)
+            ax.set_xlabel('Best Size (degrees)',fontsize=20)
+            ax.set_ylabel('Number of Cells',fontsize=20)
+            plt.tight_layout()
         
         # size tuning plots: run vs stat comparison
         sizeTuningSize = [5,10,20,50]
         sizeTuningLabel = [5,10,20,'full']
+        allSizesInd = [u for u, _ in enumerate(data.sizeTuningOff) if data.sizeTuningOff[u].size > 3]
+        sizeTuningOn = np.stack(data.sizeTuningOn[allSizesInd])[isOn[allSizesInd] | isOnOff[allSizesInd]]
+        sizeTuningOff = np.stack(data.sizeTuningOff[allSizesInd])[isOff[allSizesInd] | isOnOff[allSizesInd]]
         goodUnits = []
         self.data.index.get_level_values('unitLabel')
         for sub,tuning in zip(['on', 'off'], ['sizeTuningOn', 'sizeTuningOff']):
@@ -384,43 +479,6 @@ class popProbeData():
                 ax.set_xlabel('Size (degrees)',fontsize='x-large')
                 ax.set_ylabel('Best Size (# Units)',fontsize='x-large')
         
-        # size tuning plots: all trials
-        allSizesInd = [u for u, _ in enumerate(data.sizeTuningOff) if data.sizeTuningOff[u].size > 3]        
-        sizeTuningOn = np.stack(data.sizeTuningOn[allSizesInd])[isOn[allSizesInd] | isOnOff[allSizesInd]]
-        sizeTuningOff = np.stack(data.sizeTuningOff[allSizesInd])[isOff[allSizesInd] | isOnOff[allSizesInd]]
-        
-        fig = plt.figure('All trials', facecolor='w')
-        for axind,(sizeResp,clr) in enumerate(zip((sizeTuningOn,sizeTuningOff),('r','b'))):
-            ax = fig.add_subplot(2,2,2*axind + 1)
-            sizeRespNorm = sizeResp/np.nanmax(sizeResp,axis=1)[:,None]
-            sizeRespMean = np.nanmean(sizeRespNorm,axis=0)
-            sizeRespStd = np.nanstd(sizeRespNorm,axis=0)
-            ax.plot(sizeTuningSize,sizeRespMean,color=clr,linewidth=3)
-            ax.fill_between(sizeTuningSize,sizeRespMean+sizeRespStd,sizeRespMean-sizeRespStd,color=clr,alpha=0.3)
-            ax.spines['right'].set_visible(False)
-            ax.spines['top'].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-            ax.set_xlim([0,55])
-            ax.set_xticks(sizeTuningSize)
-            ax.set_xticklabels(sizeTuningLabel)
-            ax.set_yticks([0,0.5,1])
-            ax.set_xlabel('Size (degrees)',fontsize='x-large')
-            ax.set_ylabel('Norm. Response',fontsize='x-large')
-            plt.tight_layout()
-            
-            ax = fig.add_subplot(2,2,2*axind+2)
-            sizeRespNorm[sizeRespNorm<1] = 0
-            bestSizeCount = np.nansum(sizeRespNorm,axis=0)
-            ax.bar(sizeTuningSize,bestSizeCount,color=clr)
-            ax.spines['right'].set_visible(False)
-            ax.spines['top'].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-            ax.set_xlim([0,55])
-            ax.set_xticks(sizeTuningSize)
-            ax.set_xticklabels(sizeTuningLabel)
-            ax.set_xlabel('Size (degrees)',fontsize='x-large')
-            ax.set_ylabel('Best Size (# Units)',fontsize='x-large')
-        
         #center of mass for size tuning curves
         sizeTuningCOM = []
         sizes = [5, 10, 20]
@@ -443,18 +501,19 @@ class popProbeData():
         plt.figure()        
         plt.hist(sizeTuningCOM[~np.isnan(sizeTuningCOM)])
         
-        
         # plot all rf centers
         plt.figure(facecolor='w')
         ax = plt.subplot(1,1,1)
-        plt.plot(onFit[:,0],onFit[:,1],'ro',label='On')
-        plt.plot(offFit[:,0],offFit[:,1],'bo',label='Off')
+        onInd = (onFit[:,0]>-30) & (onFit[:,0]<130) & (onFit[:,1]>-40) & (onFit[:,1]<95)
+        offInd = (offFit[:,0]>-30) & (offFit[:,0]<130) & (offFit[:,1]>-40) & (offFit[:,1]<95)
+        plt.plot(onFit[onInd,0],onFit[onInd,1],'ro',label='On')
+        plt.plot(offFit[offInd,0],offFit[offInd,1],'bo',label='Off')
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False,labelsize=18)
         ax.set_xlabel('Azimuth',fontsize=20)
         ax.set_ylabel('Elevation',fontsize=20)
-        plt.legend(loc='upper left',numpoints=1,frameon=False,fontsize=18)
+        # plt.legend(loc='upper left',numpoints=1,frameon=False,fontsize=18)
         ax.set_aspect('equal')
         plt.tight_layout()
         
@@ -768,6 +827,8 @@ class popProbeData():
     
     def analyzeSTF(self):
         
+        inSCAxons = self.getSCAxons()
+        
         sf = np.array([0.01,0.02,0.04,0.08,0.16,0.32])
         tf = np.array([0.5,1,2,4,8])
         
@@ -792,21 +853,23 @@ class popProbeData():
             bestOriInd = np.unravel_index(np.argmax(resp),resp.shape)[2]
             respMat[ind] = resp[:,:,bestOriInd]
             f1f0Mat[ind] = f1f0[:,:,bestOriInd]
-        meanNormRespMat = np.nanmean(respMat/np.nanmax(np.nanmax(respMat,axis=2),axis=1)[:,None,None],axis=0)
         
-        fig = plt.figure(facecolor='w')
-        ax = fig.add_subplot(1,1,1)
-        plt.imshow(meanNormRespMat,cmap='gray',interpolation='none',origin='lower')
-        ax.spines['right'].set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-        ax.set_xticklabels(sf)
-        ax.set_yticklabels(tf)
-        ax.set_xticks(np.arange(sf.size))
-        ax.set_yticks(np.arange(tf.size))
-        ax.set_xlabel('Cycles/deg',fontsize=20)
-        ax.set_ylabel('Cycles/s',fontsize=20)
-        plt.tight_layout()
+        for scInd in (inSCAxons,~inSCAxons):
+            ind = scInd[np.where(hasGratings)[0]]
+            meanNormRespMat = np.nanmean(respMat[ind]/np.nanmax(np.nanmax(respMat[ind],axis=2),axis=1)[:,None,None],axis=0)
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            plt.imshow(meanNormRespMat,cmap='gray',interpolation='none',origin='lower')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xticklabels(sf)
+            ax.set_yticklabels(tf)
+            ax.set_xticks(np.arange(sf.size))
+            ax.set_yticks(np.arange(tf.size))
+            ax.set_xlabel('Cycles/deg',fontsize=20)
+            ax.set_ylabel('Cycles/s',fontsize=20)
+            plt.tight_layout()
         
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
@@ -940,7 +1003,9 @@ class popProbeData():
     
     def analyzeCheckerboard(self):
         
-        data = self.data.laserOff.run.checkerboard
+        inSCAxons = self.getSCAxons()
+        
+        data = self.data.laserOff.allTrials.checkerboard
         
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
         
@@ -959,12 +1024,6 @@ class popProbeData():
         hasResp = (respZ>10).any(axis=2).any(axis=1)
         respMat = respMat[hasResp]
         uindex = uindex[hasResp]
-        
-        # get index of cells in SC axons
-        ccfY = np.array(self.data.index.get_level_values('ccfY'))
-        ccfX = np.array(self.data.index.get_level_values('ccfX'))    
-        ccfZ = np.array(self.data.index.get_level_values('ccfZ'))
-        inSCAxons = np.logical_and(ccfX<=170*25,ccfZ>=300*25)[uindex]
         
         # fill in NaNs where no running trials
         statRespMat = np.stack(self.data.laserOff.stat.checkerboard.respMat[uindex])
@@ -1006,8 +1065,8 @@ class popProbeData():
         ax.set_xlabel('Patch vs Background Response')
         ax.set_ylabel('Patch vs Background Speed Variance')
         
-        patchIndexSC = patchIndex[inSCAxons]
-        patchIndexNonSC = patchIndex[~inSCAxons]
+        patchIndexSC = patchIndex[inSCAxons[uindex]]
+        patchIndexNonSC = patchIndex[~inSCAxons[uindex]]
         
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
@@ -1015,7 +1074,7 @@ class popProbeData():
         cumProbPatchIndexNonSC = [np.count_nonzero(patchIndexNonSC<=i)/patchIndexNonSC.size for i in np.sort(patchIndexNonSC)]
         ax.plot([0,0],[0,1],'k--')
         ax.plot(np.sort(patchIndexNonSC),cumProbPatchIndexNonSC,'0.6',linewidth=3)
-        ax.plot(np.sort(patchIndexSC),cumProbPatchIndexSC,'r',linewidth=3)
+        ax.plot(np.sort(patchIndexSC),cumProbPatchIndexSC,'k',linewidth=3)
         for side in ('right','top'):
             ax.spines[side].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False,labelsize=18)

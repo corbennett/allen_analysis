@@ -576,7 +576,7 @@ class probeData():
             
             # fit significant responses
             if fit:
-                maxOffGrid = 15
+                maxOffGrid = 10
                 for sizeInd,_ in enumerate(boxSize):
                     for hasResp,resp,fitParams,fitError in zip((hasOnResp[sizeInd],hasOffResp[sizeInd]),(onResp[sizeInd],offResp[sizeInd]),(onFit[uindex,sizeInd],offFit[uindex,sizeInd]),(onFitError[uindex],offFitError[uindex])):
                         if hasResp and not np.any(np.isnan(resp)):
@@ -1436,8 +1436,8 @@ class probeData():
                     for j,_ in enumerate(bckgndSpeed):
                         ax.plot(x+sdfTime,y+sdf[i,j,bestPatchRespInd[1],bestPatchRespInd[2],:],color='k')
                         # show response window start and end
-                        ax.plot([x+minInterTrialTime+latency]*2,[y+0,y+sdfYMax],color='r')
-                        ax.plot([x+minInterTrialTime+maxTrialTypeDur[i,j,bestPatchRespInd[1],bestPatchRespInd[2]]]*2,[y+0,y+sdfYMax],color='r')
+#                        ax.plot([x+minInterTrialTime+latency]*2,[y+0,y+sdfYMax],color='r')
+#                        ax.plot([x+minInterTrialTime+maxTrialTypeDur[i,j,bestPatchRespInd[1],bestPatchRespInd[2]]]*2,[y+0,y+sdfYMax],color='r')
                         x += sdfXMax*(1+spacing)
                     x = 0
                     y += sdfYMax*(1+spacing)
