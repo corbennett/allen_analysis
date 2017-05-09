@@ -2355,7 +2355,7 @@ class probeData():
         if windowDur is not None and not isinstance(windowDur,np.ndarray):
             windowDur = int(windowDur*self.sampleRate)
             windowDur = [windowDur for _ in startSamples]
-        startSamples += offset
+        startSamples = startSamples+offset
         spikes = self.units[str(unit)]['times'][protocol]
         
         if paramColors is None:
