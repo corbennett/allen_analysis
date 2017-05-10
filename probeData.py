@@ -1120,7 +1120,7 @@ class probeData():
                                     if f is not None:
                                         trialResampledFitParams[ind] = f
                                 trialResampledFitParams = trialResampledFitParams[~np.isnan(trialResampledFitParams[:,0])]
-                                ci = np.percentile(trialResampledFitParams,[2.5,97.5],axis=0)
+                                ci = np.percentile(trialResampledFitParams,[5,95],axis=0)
                                 ci[:,:2] = np.log2(ci[:,:2])
                                 ci = np.diff(ci,axis=0).squeeze()
                                 if np.all(ci[:2]<3) and ci[4]<1:
