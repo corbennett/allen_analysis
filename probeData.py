@@ -18,7 +18,8 @@ from matplotlib import gridspec
 from matplotlib import cm
 from astropy.convolution import Gaussian2DKernel, Gaussian1DKernel, convolve
 import pandas
-
+import extractWaveforms
+import itertools
 
 dataDir = r'C:\Users\SVC_CCG\Desktop\Data'
 
@@ -1120,7 +1121,7 @@ class probeData():
                                     if f is not None:
                                         trialResampledFitParams[ind] = f
                                 trialResampledFitParams = trialResampledFitParams[~np.isnan(trialResampledFitParams[:,0])]
-                                ci = np.percentile(trialResampledFitParams,[5,95],axis=0)
+                                ci = np.percentile(trialResampledFitParams,[2.5,97.5],axis=0)
                                 ci[:,:2] = np.log2(ci[:,:2])
                                 ci = np.diff(ci,axis=0).squeeze()
                                 if np.all(ci[:2]<3) and ci[4]<1:
@@ -1473,7 +1474,92 @@ class probeData():
                 cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
                 cb.ax.tick_params(length=0,labelsize='large')
     
-    
+    def analyzeLoom(self, units=None, trials=None, protocol=None, saveTag='', sdfSigma=0.1, plot=True):
+        units, unitsYPos = self.getOrderedUnits(units)
+        if protocol is None:
+            protocol = self.getProtocolIndex('loom')        
+            if protocol is None:
+                print 'Could not find loom protocol'
+                return
+        if trials is None:
+            trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
+        else:
+            trials = np.array(trials)
+        
+        if len(trials) == 0:            
+            return
+        v = self.visstimData[str(protocol)]
+        trialStarts = v['frameSamples'][v['stimStartFrames'][trials]]
+        trialFrameLengths = (np.diff(v['stimStartFrames']) - v['interTrialInterval'])[trials]
+        trialEnds = v['frameSamples'][v['stimStartFrames'][trials] + trialFrameLengths]
+        trialSampleLengths = trialEnds - trialStarts
+        
+        
+        trialPos = np.copy(v['posHistory'][trials])/v['pixelsPerDeg']
+        trialLV = v['lvHistory'][trials]
+        trialColor = v['colorHistory'][trials]        
+        trialParams = np.stack((trialLV, trialPos[:, 0], trialPos[:, 1], trialColor)).T        
+#        trialParams = np.round(trialParams).astype(int)
+        trialConditions = np.array(list(itertools.product(np.unique(trialLV), np.unique(trialPos[:, 0]), np.unique(trialPos[:, 1]), np.unique(trialColor))))
+        
+        sdfSamples = trialSampleLengths.max() + 10
+        sdfSampInt = 0.001
+
+        #figure out time to collision for LV values
+        time = np.arange(0, 360000, sdfSampInt*1000)
+        timeToCollision = []
+        for lv in v['lvratio']:        
+            halfTheta = np.arctan(lv/time)[::-1] * (180./np.pi)
+            start = np.where(halfTheta>=v['startRadius'])[0][0]
+            plt.plot(halfTheta)
+            timeToCollision.append(360000 - start)
+            
+        sdfPadding = round(0.4/sdfSampInt)
+        
+        
+        for uindex, unit in enumerate(units):
+            spikes = self.units[str(unit)]['times'][str(protocol)]
+            sdf = np.full((trialConditions.shape[0],round(sdfSamples/self.sampleRate/sdfSampInt)),np.nan) 
+            for ic, c in enumerate(trialConditions):
+                condTrials = np.array([i for i,t in enumerate(trialParams) if all(t == c)])
+                thissdf, sdfTime = self.getSDF(spikes, trialEnds[condTrials] - np.max(trialSampleLengths[condTrials]), np.max(trialSampleLengths[condTrials]), sigma=sdfSigma)
+                collision = timeToCollision[np.where(np.unique(trialLV)==c[0])[0]]
+                thissdf = thissdf[:collision+sdfPadding]
+                sdf[ic, -thissdf.size:] = thissdf
+            
+            #get mean responses for each LV value at best parameters
+            numLVs = np.unique(trialLV).size
+            peakTimeFromCollision = np.full(numLVs, np.nan)
+            bestCond = np.copy(trialConditions[np.unravel_index(np.nanargmax(sdf), sdf.shape)[0]])
+            lvCurves = []
+            for ilv, lv in enumerate(np.unique(trialLV)):
+                bestCond[0] = lv
+                condition = np.array([i for i,t in enumerate(trialConditions) if all(t == bestCond)])
+                lvCurves.append(sdf[condition].T)
+                peakTimeFromCollision[ilv] = sdf.shape[1] - np.nanargmax(sdf[condition]) - sdfPadding
+            
+            if plot:
+                alphas = np.linspace(0.2, 1, numLVs)
+                fig = plt.figure()
+                gs = gridspec.GridSpec(v['ypos'].size, v['xpos'].size)
+                colors = ['b', 'r']
+                for ic, c in enumerate(trialConditions):
+                    xaxis = int(np.where(np.unique(trialPos[:, 0]) == c[1])[0])
+                    yaxis = int(np.where(np.unique(trialPos)[::-1] == c[2])[0])
+                    linecolor = colors[np.where(np.unique(trialColor) == c[3])[0]]
+                    alpha = alphas[np.where(np.unique(trialLV) == c[0])[0]]
+                    ax = fig.add_subplot(gs[yaxis, xaxis])
+                    ax.plot(sdf[ic], color=linecolor, alpha=alpha)
+                    ax.set_ylim([0, np.nanmax(sdf)])
+                    ylims = ax.get_ylim()
+                    ax.plot([sdf.shape[1]-sdfPadding, sdf.shape[1]-sdfPadding], [ylims[0], ylims[1]], 'k--')
+                    formatFigure(fig, ax)
+            
+            # cache results
+            self.units[str(unit)]['loom' + saveTag] = {'trialConditions': trialConditions,
+                                                            'sdf' : sdf,
+                                                            'trials': trials}
+                    
     def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=False, saveTag=''):
          
         units, unitsYPos = self.getOrderedUnits(units) 
@@ -2427,9 +2513,7 @@ class probeData():
             rows[-1] += 1
     
     
-    def runAllAnalyses(self, units=None, protocolsToRun = None, splitRunning = False, useCache=False, plot=True):
-        if protocolsToRun is None:
-            protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard']
+    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard', 'loom'], splitRunning = False, useCache=False, plot=True):
 
         for pro in protocolsToRun:
             protocol = self.getProtocolIndex(pro)
@@ -2493,7 +2577,8 @@ class probeData():
                             self.analyzeCheckerboard(units, protocol=protocol, laser=laser, saveTag=laserTag+'_allTrials', plot=plot)
                     else:
                         self.analyzeCheckerboard(units, protocol=protocol, plot=plot)
-        
+                elif 'loom' in pro:
+                    self.analyzeLoom(units, protocol=protocol, plot=plot)
         if plot:
             units, _ = self.getOrderedUnits(units)
             if len(units)==1:
@@ -2612,26 +2697,31 @@ class probeData():
         
         v = self.visstimData[str(protocol)]
         
-        for param in ['trialStartFrame', 'stimStartFrames']:
-            if param in v:
-                trialStarts = v[param]
-        
-        if trialStarts is None:
-            print('Could not find trial starts: key must be either trialStartFrame or stimStartFrames')
-            return
-        
-        for param in ['trialNumFrames', 'boxDuration', 'stimTime', 'stimDur']:
-            if param in v:
-                if isinstance(v[param], int) or issubclass(type(v[param]),np.integer):
-                    trialDuration = v[param]
-                else:
-                    trialDuration = v[param][:len(trialStarts)].astype(np.int)
-                trialEnds = trialStarts + trialDuration
-                
-        lastFullTrial = np.where(trialEnds<v['frameSamples'].size)[0][-1]
-        trialStarts = trialStarts[:lastFullTrial+1]        
-        trialEnds = trialEnds[:lastFullTrial+1]
-        
+        if 'loom' in self.getProtocolLabel(protocol):
+            trialStarts = v['stimStartFrames']
+            trialFrameLengths = (np.diff(v['stimStartFrames']) - v['interTrialInterval'])
+            trialStarts = trialStarts[:-1]
+            trialEnds = v['stimStartFrames'][:-1] + trialFrameLengths
+        else:
+            for param in ['trialStartFrame', 'stimStartFrames']:
+                if param in v:
+                    trialStarts = v[param]
+            
+            if trialStarts is None:
+                print('Could not find trial starts: key must be either trialStartFrame or stimStartFrames')
+                return
+            
+            for param in ['trialNumFrames', 'boxDuration', 'stimTime', 'stimDur']:
+                if param in v:
+                    if isinstance(v[param], int) or issubclass(type(v[param]),np.integer):
+                        trialDuration = v[param]
+                    else:
+                        trialDuration = v[param][:len(trialStarts)].astype(np.int)
+                    trialEnds = trialStarts + trialDuration
+                    
+            lastFullTrial = np.where(trialEnds<v['frameSamples'].size)[0][-1]
+            trialStarts = trialStarts[:lastFullTrial+1]        
+            trialEnds = trialEnds[:lastFullTrial+1]
         if timeUnit=='samples':    
             return v['frameSamples'][trialStarts], v['frameSamples'][trialEnds]
         elif timeUnit=='frames':
@@ -3045,7 +3135,27 @@ class probeData():
                             cb = plt.colorbar(im, ax=axes)
                             cb.ax.tick_params(length=0,labelsize='x-small')
                             cb.set_ticks([sdfMin,sdfMax])   
-                 
+    def getWaveforms(self):
+        dataPath = os.path.dirname(os.path.dirname(self.kwdFileList[0]))
+        self.mapChannels()
+        
+        #find channel positions
+        imec_p2_positions = np.zeros((128,2))
+        imec_p2_positions[:,0][::2] = 18
+        imec_p2_positions[:,0][1::2] = 48
+        imec_p2_positions[:,1] = np.floor(np.linspace(0,128,128)/2) * 20;imec_p2_positions[:,1][-1]=1260.
+        
+        #get waveforms for all the units
+        waveforms = extractWaveforms.calculate_waveform(dataPath, clustersToAnalyze='good', numChannels=128, channelMap=self.channelMapping, returnWaveforms = True, save = False, saveFileDir = None, saveFileName='mean_waveforms.npy')
+
+        #add waveforms to units dict and update xpos and ypos as position of channel with min        
+        for u in self.units:        
+            self.units[u].update(waveforms[u])
+            minChannel = np.unravel_index(np.argmin(waveforms[u]['waveform']), waveforms[u]['waveform'].shape)[1]
+            self.units[u]['xpos'] = imec_p2_positions[minChannel, 0]
+            self.units[u]['ypos'] = imec_p2_positions[minChannel, 1]               
+
+
 # utility functions
 
 def getKwdInfo(dirPath=None):
