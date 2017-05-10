@@ -232,6 +232,11 @@ class VisStimControl():
         if self.laser=='Orange':
             self._digOutputs.WriteBit(1,1)
         else:
+            if self.laserRampFrames>0:
+                zeroOffset = self.blueLaserZeroOffset if self.laser=='Blue' else self.ledZeroOffset
+                if self._laserAnalogControl.lastOut>zeroOffset:
+                    rampSamples = round(self.laserRampFrames/self.frameRate*self._laserAnalogControl.sampRate)
+                    self._laserAnalogControl.Write(np.linspace(self._laserAnalogControl.lastOut,zeroOffset,rampSamples))
             self._laserAnalogControl.Write(np.array([0.0]))
 
 

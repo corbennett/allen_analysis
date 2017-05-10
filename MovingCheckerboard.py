@@ -264,7 +264,7 @@ class MovingCheckerboard(VisStimControl):
     def spaceLaserTrials(self,shuffledTrials):
         while True:
             laserOn = shuffledTrials[:, 6]>0
-            longLaserTrials = np.where(np.logical_and(laserOn, np.logical_or(shuffledTrials[:, 3]==10, np.logical_and(shuffledTrials[:, 3]==0, shuffledTrials[:, 0]==10))))[0]
+            longLaserTrials = np.where(np.logical_and(laserOn, np.logical_or(shuffledTrials[:, 3]<30, np.logical_and(shuffledTrials[:, 3]==0, shuffledTrials[:, 0]<30))))[0]
             if np.diff(longLaserTrials).min()>2:
                 break
             laserTrials = np.where(laserOn)[0]

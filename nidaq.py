@@ -130,7 +130,7 @@ class AnalogInput(Task):
 
 class AnalogOutput(Task):
     '''
-    create an AnalogInput object for a single channel
+    create an AnalogOutput object for a single channel
     for unknown reason output rate is 1600 samples/s
     '''
     
@@ -146,6 +146,7 @@ class AnalogOutput(Task):
         self.channel = channel
         self.voltageRange = voltageRange
         self.sampRate = 1600
+        self.lastOut = np.nan
 
         self.CreateAOVoltageChan(device+'/ao'+str(channel),"",voltageRange[0],voltageRange[1],DAQmx_Val_Volts,None)
 
@@ -153,6 +154,7 @@ class AnalogOutput(Task):
 
     def Write(self,values):
         '''Writes a numpy array of float64's to the analog output'''
+        self.lastOut = values[-1]
         self.WriteAnalogF64(len(values),0,-1,DAQmx_Val_GroupByChannel,values,None,None)
 
     def DoneCallback(self,status):

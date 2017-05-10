@@ -18,7 +18,7 @@ class makeSparseNoise(VisStimControl):
         VisStimControl.__init__(self)        
         self.boxSize = [5,10,20,1000]               #degrees: sizes >= 1000 will become full field flashes only shown once per cycle
         self.boxColors = [1, -1]
-        self.prestimtime = 60                       #number of gray refreshes show before boxes begin
+        self.prestimtime = 360                       #number of gray refreshes show before boxes begin
         self.interBoxInterval = 0                   #frequency to display boxes
         self.boxDuration = 6                        #number of frames to show each box
         self.trialBoxPosition = [0, 0]              # x and y
