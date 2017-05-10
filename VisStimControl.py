@@ -28,10 +28,10 @@ class VisStimControl():
         self.wheelSpeedGain = 1 # arbitrary scale factor
         self.rewardDur = 0.02 # duration in seconds of analog output pulse controlling reward size
         self.laser = None # 'Blue', 'Orange', 'LED', or None
-        self.laserPower = [0] # until calibrated: 0-1.5 V for blue laser, 0-100 mW for orange laser, or 0-5 V for LED
+        self.laserPower = [0] # 0-100 mW for orange laser, 0-1.5 V for blue laser, or 0-5 V for LED
         self.laserRandom = False
-        self.laserPreFrames = 30 # initLaser() sets laser pre and post frames to 0 if laser is None
-        self.laserPostFrames = 30
+        self.laserPreFrames = 60 # initLaser() sets laser pre and post frames to 0 if laser is None
+        self.laserPostFrames = 15
         self.laserRampFrames = 15
         self.blueLaserZeroOffset = 0.6
         self.ledZeroOffset = 0.25
