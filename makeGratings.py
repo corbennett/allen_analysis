@@ -106,7 +106,8 @@ class makeGratings(VisStimControl):
         self.stimulusHistory['sf'] *= self.pixelsPerDeg
         self.stimulusHistory['size'] /= self.pixelsPerDeg
         self.completeRun()
-        
+    
+    
     def set_params(self):
         if self._parameterCombos is None:
             self.stimulusParams = ['ori', 'tf', 'sf', 'contrast', 'phase', 'size', 'laserPower'] #the first six of these should be the grating parameters
@@ -129,7 +130,8 @@ class makeGratings(VisStimControl):
                     self._parameterCombos.append(trials)
         shuffledTrials = self.setTrialLaserPower(self._parameterCombos)
         return shuffledTrials
-        
+    
+    
     def set_grating(self, paramVector):
         gratingParams = ['ori', 'tf', 'sf', 'contrast', 'phase', 'size']
         for params in gratingParams:
@@ -151,6 +153,7 @@ class makeGratings(VisStimControl):
             self.contrast = [1]
         else:
             print 'Did not recognize requested experiment type'
-        
+
+       
 if __name__ == "__main__":
     pass

@@ -121,7 +121,7 @@ class AnalogInput(Task):
                 self.dataArray.extend(self.data.astype(np.float64).tolist())
             self.bufferCount+=1
         except Exception, e:
-            print 'Failed to read buffer #%i'%self.buffercount
+            print 'Failed to read buffer'
             
     def DoneCallback(self, status):
         print 'Status',status
