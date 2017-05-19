@@ -265,10 +265,17 @@ class MovingCheckerboard(VisStimControl):
         while True:
             laserOn = shuffledTrials[:, 6]>0
             longLaserTrials = np.where(np.logical_and(laserOn, np.logical_or(shuffledTrials[:, 3]<30, np.logical_and(shuffledTrials[:, 3]==0, shuffledTrials[:, 0]<30))))[0]
-            if np.diff(longLaserTrials).min()>2:
+            if np.diff(longLaserTrials).min()>1:
                 break
             laserTrials = np.where(laserOn)[0]
             shuffledTrials[laserTrials] = shuffledTrials[np.random.choice(laserTrials, laserTrials.size, replace=False)]
+            
+    def setLaserParams(self,laser,power):
+        self.laser = laser
+        self.laserPower = power
+        self.interTrialInterval = [1.5,1.5]
+        self.bckgndSpeed = [0,20,80]
+        self.patchSpeed = [0,20,80]
         
 
 if __name__=="__main__":
