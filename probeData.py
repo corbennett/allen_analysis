@@ -274,6 +274,16 @@ class probeData():
                 continue
         return aligned
     
+    def triggeredSDF(self, units, protocol, triggerPoints, win=[-0.5, 1.0], sdfSampInt = 0.001):
+        units, unitsYPos = self.getOrderedUnits(units)        
+        winSamples = np.array(win)*self.sampleRate
+        sdf=[]
+        for u in units:
+            spikes = self.units[u]['times'][str(protocol)] 
+            usdf, time = self.getSDF(spikes, triggerPoints + winSamples[0], np.diff(winSamples), avg=True)                  
+            sdf.append(usdf)
+        return np.array(sdf), time
+    
     def findStatToRunPoints(self, protocol, runThresh=1, statThresh=1, window=2.0, wheelSampleRate=60, refractoryPeriod=5):
         if 'running' not in self.behaviorData[str(protocol)]:
             print('Could not find running data for this protocol')
@@ -302,7 +312,7 @@ class probeData():
         self.behaviorData[str(protocol)]['statToRunPoints'] = srt
     
     def runTriggeredAverage(self, units=None, protocol=None, win=[-0.5, 1.0], runThresh=1, statThresh=1, refractoryPeriod=5, plot=True):
-        
+
         units, unitsYPos = self.getOrderedUnits(units)
         if protocol is None:
             protocol = range(len(self.kwdFileList))
@@ -648,7 +658,10 @@ class probeData():
                                                          'respLatency': respLatency[uindex],
                                                          'respNormArea': respNormArea[uindex],
                                                          'respHalfWidth': respHalfWidth[uindex],
-                                                         'trials': trials}
+                                                         'trials': trials,
+                                                         '_sdfOn': sdfOn,
+                                                         '_sdfOff': sdfOff,
+                                                         '_sdfTime': sdfTime}
             
             if plot:
                 # sdfs and rf map
@@ -1146,7 +1159,9 @@ class probeData():
                                           'spontRateStd': spontRateStd,
                                           'respMat': respMat,
                                           'f1f0Mat': f1f0Mat,
-                                          'trials': trials}
+                                          'trials': trials,
+                                          '_sdf': sdf,
+                                          '_sdfTime': sdfTime}
             if protocolType=='stf':
                 self.units[str(unit)][tag]['stfFitParams'] = stfFitParams[uindex]
                 self.units[str(unit)][tag]['stfFitError'] = stfFitError
@@ -1424,7 +1439,9 @@ class probeData():
                                                             'peakResp': peakResp,
                                                             'bestPatchRespInd': bestPatchRespInd,
                                                             'respMat': respMat,
-                                                            'trials': trials}
+                                                            'trials': trials,
+                                                            '_sdf': sdf,
+                                                            '_sdfTime': sdfTime}
             
             if plot:
                 ax = fig.add_subplot(gs[uInd,0:2])
@@ -2356,7 +2373,7 @@ class probeData():
             else:
                 a.set_yticks([])
     
-    def plotSDF1Axis(self, sdf, sdfTime, sdfMax=None, ax=None, lineColor=None):
+    def plotSDF1Axis(self, sdf, sdfTime, sdfMax=None, ax=None, lineColor=None, figureTitle = None):
         if len(sdf.shape)==2:
             sdf = sdf[:,None, :]
         if sdfMax is None:
@@ -2365,15 +2382,18 @@ class probeData():
         sdfXMax = sdfTime[-1]
         sdfYMax = sdfMax
         if ax is None:
-            fig = plt.figure(facecolor='w')        
+            if figureTitle is not None:
+                fig = plt.figure(figureTitle, facecolor='w')        
+            else:
+                fig = plt.figure(facecolor='w')        
             ax = fig.add_subplot(111)
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.spines['left'].set_visible(False)
             ax.spines['bottom'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize='x-small')
-#            ax.set_xticks([minLatency,minLatency+0.1])
-            ax.set_xticklabels(['','100 ms'])
+            ax.set_xticks([0, round(sdfXMax/5)])
+            ax.set_xticklabels(['0', str(int(round(sdfXMax/5))) + ' s'])
             ax.set_yticks([0,int(sdfMax)])
             ax.set_xlim([-sdfXMax*spacing,sdfXMax*(1+spacing)*sdf.shape[1]])
             ax.set_ylim([-sdfYMax*spacing,sdfYMax*(1+spacing)*sdf.shape[0]])
@@ -2955,54 +2975,83 @@ class probeData():
             
     
     def comparisonPlot(self, unit, tagsToPlot=['stat', 'run'], protocolsToPlot=['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard'], colors = ['k', 'r', 'b', 'g']):
+        ### Tags to plot should be in order so that the reference tag is listed first. The reference tag will establish which trial conditions to use (usually, best conditions for that tag)
         data = self.units[str(unit)]
         for pro in protocolsToPlot:
             if pro is 'sparseNoise':
-                for ir, resp in enumerate(['sdfOn', 'sdfOff']):
-                    fig = plt.figure(facecolor='w')
-                    gs = gridspec.GridSpec(1, 1+len(tagsToPlot))  
-                    axSize = fig.add_subplot(gs[0, 0])
+                for ir, resp in enumerate(['_sdfOn', '_sdfOff']):
+                    fig = plt.figure(str(unit)+ ['On', 'Off'][ir], facecolor='w')
+                    gs = gridspec.GridSpec(2, len(tagsToPlot))  
+                    
                     axCreated = False
+                    resps = np.array([np.nanmean(data['sparseNoise_' + tg][['onResp', 'offResp'][ir]], axis=0) for tg in tagsToPlot])
+                    sizeTuning = 'sizeTuningOn' in data['sparseNoise_' + tagsToPlot[0]]
+                    maxResp = np.nanmax(resps)
+                    minResp = np.nanmin(resps)
+                    rfAxes=[]
                     for it, tag in enumerate(tagsToPlot):
                         saveTag = '_' + tag
                         if (pro + saveTag) in data:
                             numTrials = len(data[pro + saveTag]['trials'])
                             sdf = data['sparseNoise' + saveTag][resp]    
                             try:
-                                sdfMax = max([np.nanmax(data[pro +'_'+tg]['sdf']) for tg in tagsToPlot]) 
-                                sdfMin = min([np.nanmin(data[pro +'_'+tg]['sdf']) for tg in tagsToPlot])
+                                sdfMax = max([np.nanmax(data[pro +'_'+tg][resp]) for tg in tagsToPlot]) 
+                                sdfMin = min([np.nanmin(data[pro +'_'+tg][resp]) for tg in tagsToPlot])
                             except:
-                                sdfMax = np.nanmax(data[pro +'_'+tag]['sdf'])
-                                sdfMin = np.nanmin(data[pro +'_'+tag]['sdf'])
-                            sdfTime = data['sparseNoise' + saveTag]['sdfTime']    
+                                sdfMax = np.nanmax(data[pro +'_'+tag][resp])
+                                sdfMin = np.nanmin(data[pro +'_'+tag][resp])
+                            sdfTime = data['sparseNoise' + saveTag]['_sdfTime']    
                             sdfMean = np.nanmean(sdf, axis=0)
                             ax = None
                             if it > 0 and axCreated:
                                 ax = plt.gca()
-                            self.plotSDF1Axis(sdfMean, sdfTime, sdfMax, ax=ax, lineColor=colors[it])
+                            self.plotSDF1Axis(sdfMean, sdfTime, sdfMax, ax=ax, lineColor=colors[it], figureTitle=str(unit)+resp)
                             axCreated = True
-                            axRF=fig.add_subplot(gs[0, 1+it])
-                            axRF.imshow(data['sparseNoise'+saveTag][['meanOnResp', 'meanOffResp'][ir]], interpolation='none', origin='lower', clim=[sdfMin, sdfMax])
-                            ax.set_title(str(unit)+' sparseNoise: '+tag + ': ' + str(numTrials) + ' trials')
-                            axSize.plot(data['sparseNoise'+saveTag][['sizeTuningOn', 'sizeTuningOff'][ir]], color=colors[it])
+                            axRF=fig.add_subplot(gs[0, it])
+                            im = axRF.imshow(np.nanmean(data['sparseNoise'+saveTag][['onResp', 'offResp'][ir]], axis=0), interpolation='none', origin='lower', clim=[minResp, maxResp])
+                            axRF.set_title(str(unit)+''+tag + ': ' + str(numTrials) + ' trials', fontdict={'size':10})
+                            axRF.tick_params(direction='out',top=False,right=False,labelsize='x-small')
+                            axRF.set_xticks([])
+                            axRF.set_yticks([])
+                            rfAxes.append(axRF)
+                            if it==len(tagsToPlot)-1:
+                                cb = plt.colorbar(im,ax=rfAxes,fraction=0.05,pad=0.04,shrink=0.5)
+                                cb.ax.tick_params(length=0,labelsize='x-small')
+                            
+                            if sizeTuning:
+                                axSize = fig.add_subplot(gs[1, :])
+                                sizeTuningSize = [5, 10, 20, 40]
+                                sizeTuningLabel = ['5', '10', '20', 'full']
+                                axSize.plot([5, 10, 20, 40], data['sparseNoise'+saveTag][['sizeTuningOn', 'sizeTuningOff'][ir]], color=colors[it])
+                                axSize.set_xticks(sizeTuningSize)
+                                axSize.set_xticklabels(sizeTuningLabel)
+                                axSize.set_ybound(lower=0)
+                                axSize.set_xlabel('Size, deg')
+                                axSize.set_ylabel('Spikes/s')
+                            
+                            
             if pro is 'gratings':
                 fig = plt.figure(facecolor='w')
                 gs = gridspec.GridSpec(1,len(tagsToPlot))  
                 axes = []
                 axCreated = False
+                resps = np.array([data['gratings_stf_' + tg]['respMat'] for tg in tagsToPlot])
+                centerPoints = [data['gratings_stf_' + tg]['spontRateMean'] if not np.isnan(data['gratings_stf_' + tg]['spontRateMean']) else np.nanmedian(data['gratings_stf_' + tg]['respMat']) for tg in tagsToPlot]
+                cLims = [np.nanmax(abs(rMat-centerPoints[r])) for r, rMat in enumerate(resps)]
                 for it, tag in enumerate(tagsToPlot):
                     saveTag = '_' + tag                    
                     if ('gratings_stf' + saveTag) in data:
                         numTrials = len(data['gratings_stf' + saveTag]['trials'])
-                        sdf = data['gratings_stf' + saveTag]['sdf']
+                        sdf = data['gratings_stf' + saveTag]['_sdf']
                         try:
-                            sdfMax = max([np.nanmax(data['gratings_stf'+'_'+tg]['sdf']) for tg in tagsToPlot]) 
-                            sdfMin = min([np.nanmin(data['gratings_stf'+'_'+tg]['sdf']) for tg in tagsToPlot])
+                            sdfMax = max([np.nanmax(data['gratings_stf'+'_'+tg]['_sdf']) for tg in tagsToPlot]) 
+                            sdfMin = min([np.nanmin(data['gratings_stf'+'_'+tg]['_sdf']) for tg in tagsToPlot])
                         except:
-                            sdfMax = np.nanmax(data['gratings_stf'+'_'+tag]['sdf'])
-                            sdfMin = np.nanmin(data['gratings_stf'+'_'+tag]['sdf'])
-                        sdfTime = data['gratings_stf' + saveTag]['sdfTime']    
-                        maxInd = np.unravel_index(np.nanargmax(sdf), sdf.shape)[2]                        
+                            sdfMax = np.nanmax(data['gratings_stf'+'_'+tag]['_sdf'])
+                            sdfMin = np.nanmin(data['gratings_stf'+'_'+tag]['_sdf'])
+                        sdfTime = data['gratings_stf' + saveTag]['_sdfTime']    
+                        if it==0:
+                            maxInd = np.unravel_index(np.nanargmax(sdf), sdf.shape)[2]                        
                         bestSDF = sdf[:,:,maxInd]
                         ax = None
                         if it > 0 and axCreated:
@@ -3011,12 +3060,13 @@ class probeData():
                         axCreated = True
                         respMat = data['gratings_stf' + saveTag]['respMat']
                         ax = fig.add_subplot(gs[0, it])
-                        im = ax.imshow(respMat[:, :, maxInd], clim=[sdfMin, sdfMax], cmap='bwr', interpolation='none', origin='lower')
-                        ax.set_title(str(unit)+' gratings stf: '+tag + ': ' + str(numTrials) + ' trials')
+                        im = ax.imshow(respMat[:, :, maxInd], clim=[centerPoints[it]-max(cLims), centerPoints[it]+max(cLims)], cmap='bwr', interpolation='none', origin='lower')
+                        ax.set_title(str(unit)+' gratings stf: '+tag + ': ' + str(numTrials) + ' trials', fontdict={'size':10})
                         axes.append(ax)
-                        cb = plt.colorbar(im, ax=axes)
-                        cb.ax.tick_params(length=0,labelsize='x-small')
-                        cb.set_ticks([sdfMin,sdfMax])
+                        if it==len(tagsToPlot)-1:
+                            cb = plt.colorbar(im,ax=axes,fraction=0.05,pad=0.04,shrink=0.5)
+                            cb.ax.tick_params(length=0,labelsize='x-small')                            
+
             if pro is 'gratings_ori':
                 fig = plt.figure(facecolor='w')
                 gs = gridspec.GridSpec(1,len(tagsToPlot))  
@@ -3029,16 +3079,17 @@ class probeData():
                     saveTag = '_' + tag
                     if (pro + saveTag) in data:
                         numTrials = len(data[pro + saveTag]['trials'])
-                        sdf = data['gratings_ori' + saveTag]['sdf']
+                        sdf = data['gratings_ori' + saveTag]['_sdf']
                         try:
-                            sdfMax = max([np.nanmax(data[pro +'_'+tg]['sdf']) for tg in tagsToPlot]) 
-                            sdfMin = min([np.nanmin(data[pro +'_'+tg]['sdf']) for tg in tagsToPlot])
+                            sdfMax = max([np.nanmax(data[pro +'_'+tg]['_sdf']) for tg in tagsToPlot]) 
+                            sdfMin = min([np.nanmin(data[pro +'_'+tg]['_sdf']) for tg in tagsToPlot])
                         except:
-                            sdfMax = np.nanmax(data[pro +'_'+tag]['sdf'])
-                            sdfMin = np.nanmin(data[pro +'_'+tag]['sdf'])
+                            sdfMax = np.nanmax(data[pro +'_'+tag]['_sdf'])
+                            sdfMin = np.nanmin(data[pro +'_'+tag]['_sdf'])
                        
-                        sdfTime = data['gratings_ori' + saveTag]['sdfTime']    
-                        maxInd = np.unravel_index(np.nanargmax(sdf), sdf.shape)
+                        sdfTime = data['gratings_ori' + saveTag]['_sdfTime']    
+                        if it==0:
+                            maxInd = np.unravel_index(np.nanargmax(sdf), sdf.shape)
                         bestSDF = sdf[maxInd[0], maxInd[1], :, :]
                         ax = None
                         if it > 0 and axCreated:
@@ -3054,7 +3105,7 @@ class probeData():
                         rho = np.append(bestResp, bestResp[0])
                         axp.plot(theta, rho, color=colors[it])
                         axp.set_rmax(np.nanmax(bestResp)*1.05)
-                        axp.set_title(str(unit)+ pro +tag + ': ' + str(numTrials) + ' trials')
+                        axp.set_title(str(unit)+ pro +tag + ': ' + str(numTrials) + ' trials', fontdict={'size':10})
                 
                 fig = plt.figure(facecolor='w')
                 ax = fig.add_subplot(111)
@@ -3076,9 +3127,9 @@ class probeData():
                         numTrials = len(data[pro + saveTag]['trials'])                        
                         sdf = data['flash' + saveTag]['meanResp']
                         try:
-                            sdfMax = max([np.nanmax(data[pro +'_'+tg]['sdf']) for tg in tagsToPlot]) 
+                            sdfMax = max([np.nanmax(data[pro +'_'+tg]['_sdf']) for tg in tagsToPlot]) 
                         except:
-                            sdfMax = np.nanmax(data[pro +'_'+tag]['sdf'])
+                            sdfMax = np.nanmax(data[pro +'_'+tag]['_sdf'])
                         sdfTime = np.arange(sdf.shape[1])/1000.0
                         sdfDict[tag] = sdf
                         ax = None
@@ -3103,19 +3154,25 @@ class probeData():
                 gs = gridspec.GridSpec(1,len(tagsToPlot))  
                 axes = []
                 axCreated = False
+                patchSpeed = data['checkerboard_' + tagsToPlot[0]]['patchSpeed']
+                bckgndSpeed = data['checkerboard_' + tagsToPlot[0]]['bckgndSpeed']
+                respMats = [data['checkerboard' + tg]['respMat'] for tg in ['_control', '_laser']]
+                centerPoints = [rMat[patchSpeed==0,bckgndSpeed==0][0] if not np.isnan(rMat[patchSpeed==0,bckgndSpeed==0][0]) else np.nanmedian(rMat) for rMat in respMats]
+                cLims = [np.nanmax(abs(rMat-centerPoints[r])) for r, rMat in enumerate(respMats)]
                 for it, tag in enumerate(tagsToPlot):
                     saveTag = '_' + tag
                     if (pro + saveTag) in data:
                         numTrials = len(data[pro + saveTag]['trials'])       
-                        sdf = data['checkerboard' + saveTag]['sdf']    
+                        sdf = data['checkerboard' + saveTag]['_sdf']    
                         try:
-                            sdfMax = max([np.nanmax(data[pro +'_'+tg]['sdf']) for tg in tagsToPlot]) 
-                            sdfMin = min([np.nanmin(data[pro +'_'+tg]['sdf']) for tg in tagsToPlot])
+                            sdfMax = max([np.nanmax(data[pro +'_'+tg]['_sdf']) for tg in tagsToPlot]) 
+                            sdfMin = min([np.nanmin(data[pro +'_'+tg]['_sdf']) for tg in tagsToPlot])
                         except:
-                            sdfMax = np.nanmax(data[pro +'_'+tag]['sdf'])
-                            sdfMin = np.nanmin(data[pro +'_'+tag]['sdf'])
-                        sdfTime = data['checkerboard' + saveTag]['sdfTime']    
-                        maxInd = data['checkerboard' + saveTag]['bestPatchRespInd']    
+                            sdfMax = np.nanmax(data[pro +'_'+tag]['_sdf'])
+                            sdfMin = np.nanmin(data[pro +'_'+tag]['_sdf'])
+                        sdfTime = data['checkerboard' + saveTag]['_sdfTime']    
+                        if it==0:
+                            maxInd = data['checkerboard' + saveTag]['bestPatchRespInd']    
                         bestSDF = sdf[:,:,maxInd[1], maxInd[2]]
                         ax = None
                         if it > 0 and axCreated:
@@ -3123,18 +3180,23 @@ class probeData():
                         self.plotSDF1Axis(bestSDF, sdfTime, sdfMax, ax=ax, lineColor=colors[it])
                         axCreated = True
                         respMat = data['checkerboard' + saveTag]['respMat']
-                        patchSpeed = data['checkerboard' + saveTag]['patchSpeed']
-                        bckgndSpeed = data['checkerboard' + saveTag]['bckgndSpeed']
                         ax = fig.add_subplot(gs[0, it])
-                        centerPoint = respMat[patchSpeed==0,bckgndSpeed==0][0] if not np.isnan(respMat[patchSpeed==0,bckgndSpeed==0][0]) else np.nanmedian(respMat)
-                        cLim = np.nanmax(abs(respMat-centerPoint))
-                        im = ax.imshow(respMat,cmap='bwr',clim=(centerPoint-cLim,centerPoint+cLim),interpolation='none',origin='lower')
-                        ax.set_title(str(unit)+' checkerboard: '+tag + ': ' + str(numTrials) + ' trials')
+                        im = ax.imshow(respMat,cmap='bwr',clim=(centerPoints[it]-max(cLims),centerPoints[it]+ max(cLims)),interpolation='none',origin='lower')
+                        ax.set_title(str(unit)+' checkerboard: '+tag + ': ' + str(numTrials) + ' trials', fontdict={'size':10})
+                        ax.set_xticks(range(bckgndSpeed.size))
+                        ax.set_xticklabels(bckgndSpeed)
+                        ax.set_yticks(range(patchSpeed.size))
+                        ax.set_yticklabels(patchSpeed)
+                        ax.set_xlabel('Background Speed')
+                        if it==0:
+                            ax.set_ylabel('Patch Speed')
                         axes.append(ax)
                         if it==len(tagsToPlot)-1:
-                            cb = plt.colorbar(im, ax=axes)
+                            cb = plt.colorbar(im,ax=axes,fraction=0.05,pad=0.04,shrink=0.5)
+#                            cb = plt.colorbar(im, ax=axes)
                             cb.ax.tick_params(length=0,labelsize='x-small')
-                            cb.set_ticks([sdfMin,sdfMax])   
+
+                            
     def getWaveforms(self):
         dataPath = os.path.dirname(os.path.dirname(self.kwdFileList[0]))
         self.mapChannels()
@@ -3155,7 +3217,50 @@ class probeData():
             self.units[u]['xpos'] = imec_p2_positions[minChannel, 0]
             self.units[u]['ypos'] = imec_p2_positions[minChannel, 1]               
 
+    
+    def findAnalogPulses(self, channel, protocol, threshold=1000):
+        data = self._d[protocol]['data'][:, channel]
+        dataThresh = data>threshold
+        
+        pulseOn = np.where(dataThresh[1:]>dataThresh[:-1])[0]
+        goodPoints = np.where(pulseOn[1:] - pulseOn[:-1] > 1000)[0]
+        goodPoints += 1
+        goodPoints = np.insert(goodPoints, 0, 0)
+        pulseStarts = pulseOn[goodPoints]
+        
+        dataThresh_rev = dataThresh[::-1]
+        pulseOff = np.where(dataThresh_rev[1:]>dataThresh_rev[:-1])[0]
+        goodPoints = np.where(pulseOff[1:] - pulseOff[:-1] > 100000)[0]
+        goodPoints += 1
+        goodPoints = np.insert(goodPoints, 0, 0)
+        pulseEnds = (dataThresh.size - pulseOff[goodPoints])[::-1]
 
+        pulseAmp = np.array([np.mean(data[pulseEnds[u]-100:pulseEnds[u]]) for u, _ in enumerate(pulseStarts)])*self._d[protocol]['gains'][channel]
+        
+        return pulseStarts, pulseEnds, pulseAmp
+
+
+    def findLaserTrials(self, protocol):
+        if isinstance(protocol, str):
+            protocol = self.getProtocolIndex(protocol)
+        
+        v = self.visstimData[str(protocol)]
+        trialLaser = None
+        for p in ['laserPowerHistory', 'stimulusHistory_laserPower', 'trialLaserPower']:
+            if p in v:
+                if p is 'stimHistory':
+                    trialLaser = v[p][6]
+                else:
+                    trialLaser = v[p]
+        
+        if trialLaser is None:
+            print 'Could not find laser trials'
+            return
+            
+        laserTrials = np.where(trialLaser>0)[0]
+        controlTrials = np.setdiff1d(np.arange(len(trialLaser)), laserTrials)
+        return laserTrials, controlTrials
+        
 # utility functions
 
 def getKwdInfo(dirPath=None):
@@ -3222,7 +3327,7 @@ def fitRF(x,y,data,initialParams,maxOffGrid):
     try:
         fitParams,fitCov = scipy.optimize.curve_fit(gauss2D,(x,y),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except Exception as e:
-        print('fit failed because of '+str(type(e)))
+#        print('fit failed because of '+str(type(e)))
         return None,None
     if not all([lowerBounds[i]+1<fitParams[i]<upperBounds[i]-1 for i in (0,1)]):
         fitParams = fitError = None # if fit center on edge of boundaries
@@ -3253,7 +3358,7 @@ def fitStf(sf,tf,data,initialParams):
     try:
         fitParams,fitCov = scipy.optimize.curve_fit(stfLogGauss2D,(sf,tf),data.flatten(),p0=initialParams,bounds=(lowerBounds,upperBounds))
     except Exception as e:
-        print('fit failed because of '+str(type(e)))
+#        print('fit failed because of '+str(type(e)))
         return None,None
     fitData = stfLogGauss2D((sf,tf),*fitParams).reshape(tf.size,sf.size)
     fitError = np.sqrt(np.mean(np.square(data-fitData)))/data.max() # normalized root mean squared error
@@ -3320,7 +3425,7 @@ def nanMaskToMatch(dataToMask, dataToMatch):
     return masked
     
     
-def formatFigure(fig, ax, title=None, xLabel=None, yLabel=None, blackBackground=False, saveName=None):
+def formatFigure(fig, ax, title=None, xLabel=None, yLabel=None, xTickLabels=None, yTickLabels=None, blackBackground=False, saveName=None):
     fig.set_facecolor('w')
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
