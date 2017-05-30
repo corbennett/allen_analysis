@@ -273,7 +273,7 @@ class MovingCheckerboard(VisStimControl):
     def setLaserParams(self,laser,power):
         self.laser = laser
         self.laserPower = power
-        self.interTrialInterval = [1.5,1.5]
+        self.interTrialInterval = [2,2]
         self.bckgndSpeed = [0,20,80]
         self.patchSpeed = [0,20,80]
         

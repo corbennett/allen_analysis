@@ -91,6 +91,19 @@ class VisStimControl():
         
     def prepareRun(self):
         self.startTime = time.strftime('%Y%m%d_%H%M%S')
+        
+        self.prepareWindow()
+
+        self.diodeBox = visual.Rect(self._win,units='pix', width=self.pixelsPerDeg*self.diodeBoxSize, height=self.pixelsPerDeg*self.diodeBoxSize, lineColor=0,
+                                    fillColor=1, pos=(self.pixelsPerDeg*self.diodeBoxPosition[0], self.pixelsPerDeg*self.diodeBoxPosition[1]))
+        
+        self.numpyRandomSeed = random.randint(0,2**32)
+        self._numpyRandom = np.random.RandomState(self.numpyRandomSeed)
+        
+        self.startNidaqDevice()
+        self.initLaser()
+        
+    def prepareWindow(self):
         self._mon = monitors.Monitor('monitor1',width=self.monWidth,distance=self.monDistance,gamma=self.monGamma)
         self._mon.setSizePix(self.monPix)
         self._mon.saveMon()
@@ -102,15 +115,6 @@ class VisStimControl():
 #                                               flipHorizontal = flipScreenHorz)
         self._win.viewPos = [self.horizontalOffset, self.verticalOffset]
         self._win.setRecordFrameIntervals(self._saveFrameIntervals)
-
-        self.diodeBox = visual.Rect(self._win,units='pix', width=self.pixelsPerDeg*self.diodeBoxSize, height=self.pixelsPerDeg*self.diodeBoxSize, lineColor=0,
-                                    fillColor=1, pos=(self.pixelsPerDeg*self.diodeBoxPosition[0], self.pixelsPerDeg*self.diodeBoxPosition[1]))
-        
-        self.numpyRandomSeed = random.randint(0,2**32)
-        self._numpyRandom = np.random.RandomState(self.numpyRandomSeed)
-        
-        self.startNidaqDevice()
-        self.initLaser()
                                                
     def completeRun(self):
         self._win.close()
