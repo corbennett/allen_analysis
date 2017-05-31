@@ -3,7 +3,7 @@ clear all
 addpath('/Users/administrator/Documents/MATLAB/KiloSort')
 
 % data paths
-experimentID = '12222016_277371';
+experimentID = '05262017_313659';
 root        = fullfile('/Volumes/data_local_1/corbett/',experimentID);
 fname       = [experimentID,'.dat'];
 fnameTW     = 'temp_wh.dat'; % will be created. residual of whitened data (not fitting in RAM).
@@ -15,7 +15,7 @@ fnameTW     = 'temp_wh.dat'; % will be created. residual of whitened data (not f
 % CHANGE THIS:
 numChans = 128;
 %removeChans = [1,19,64,97];
-removeChans = [3,20,35,67];
+removeChans = [1,2,3,20,35,67];
 
 %ops.chanMap = 1:numChans;
 %ops.chanMap = [16,112,111,14,110,15,109,12,108,13,107,10,106,11,105,8,104,9,103,6,102,7,101,4,100,5,99,2,98,3,97,96,1,95,62,94,63,93,60,92,61,91,58,90,59,89,56,88,57,87,55,86,54,85,53,84,52,83,51,82,50,81,49,80,48,47,78,46,79,45,76,44,77,43,75,42,74,41,73,40,72,39,71,38,70,37,69,36,68,35,67,34,66,33,65,32,64,31,127,30,126,29,125,28,124,27,123,26,122,25,121,24,120,23,119,22,118,21,117,20,116,19,115,18,114,17,113,128];
