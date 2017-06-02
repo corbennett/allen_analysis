@@ -38,82 +38,73 @@ class loom(VisStimControl):
             if type(param) is not list:
                 param = [param]
         
-        nframes=0
         #show pre stim gray
-        while nframes < self.prestimtime:
+        for _ in range(self.prestimtime):
             self._win.flip()
-            nframes += 1
         
         self.lvHistory = []
         self.posHistory = []
         self.colorHistory = []
+        self.laserPowerHistory = []
         
         #initialize stim      
-        numConditions = len(self.lvratio) * len(self.colors) * len(self.xpos) * len(self.ypos)
+        numConditions = len(self.lvratio) * len(self.colors) * len(self.xpos) * len(self.ypos) * len(self.laserPower)
+        laserPwr = self.laserPower if self.laserRandom else [self.laserPower[0]]
+        paramVect = list(itertools.product(self.lvratio, self.colors, self.xpos, self.ypos, laserPwr))
+        if len(self.laserPower)>1 and not self.laserRandom:
+            paramVect = [paramVect]
+            for pwr in self.laserPower[1:]:
+                trials = [list(params) for params in paramVect[0]]
+                for params in trials:
+                    params[-1] = pwr
+                paramVect.append(trials)
         numTrials=0
-        paramVect = list(itertools.product(self.lvratio, self.colors, self.xpos, self.ypos))
         numCycles = 0
-        stim = visual.Circle(self._win,units='pix')
         nframes=0
+        stim = visual.Circle(self._win,units='pix')
         breakFlag=False
         while not breakFlag:
             if numTrials%numConditions==0:
                 print('Starting loop: ' + str(numCycles+1))
                 numCycles += 1
-                paramVect = np.random.permutation(paramVect)
-            trialFrames = 0
-            trialLV = paramVect[numTrials%numConditions][0]
-            trialColor = paramVect[numTrials%numConditions][1]
-            trialX = paramVect[numTrials%numConditions][2]*self.pixelsPerDeg
-            trialY = paramVect[numTrials%numConditions][3]*self.pixelsPerDeg
-
+                shuffledTrials = self.setTrialLaserPower(paramVect)
             numTrials += 1
+            trialFrames = 0
             
+            trialInd = numTrials%numConditions
+            trialLV = shuffledTrials[trialInd][0]
+            trialColor = shuffledTrials[trialInd][1]
+            trialX = shuffledTrials[trialInd][2]*self.pixelsPerDeg
+            trialY = shuffledTrials[trialInd][3]*self.pixelsPerDeg
+            trialLaserPwr = shuffledTrials[trialInd][4]
+
             self.lvHistory.append(trialLV)
             self.posHistory.append([trialX, trialY])
             self.colorHistory.append(trialColor)
-            self.stimStartFrames.append(nframes)
+            self.laserPowerHistory.append(trialLaserPwr)
 
             stim.fillColor = trialColor
             stim.lineColor = trialColor
-
             stim.pos = [trialX, trialY]
             stim.radius=0
             stimRadiusVector = self.calculateLoomRadius(trialLV)
-            #Run Loom
-            for rad in stimRadiusVector:
-                stim.radius = rad
-                stim.draw()
+            
+            # Run trial
+            self.setLaserOn(trialLaserPwr)
+            while trialFrames < self.laserPreFrames + stimRadiusVector.size + self.pauseFrames + self.laserPostFrames + self.interTrialInterval:
+                if trialFrames == self.laserPreFrames:
+                    self.stimStartFrames.append(nframes)
+                if self.laserPreFrames <= trialFrames < self.laserPreFrames + stimRadiusVector.size + self.pauseFrames:
+                    if trialFrames < self.laserPreFrames + stimRadiusVector.size:
+                        stim.radius = stimRadiusVector[trialFrames-self.laserPreFrames]
+                    elif trialFrames == self.laserPreFrames + stimRadiusVector.size:
+                        stim.radius = self.maxRadius*self.pixelsPerDeg
+                    stim.draw()
+                if trialFrames == self.laserPreFrames + stimRadiusVector.size + self.pauseFrames + self.laserPostFrames:
+                    self.setLaserOff()
                 self.visStimFlip()
                 trialFrames += 1
                 nframes += 1
-                
-                if len(event.getKeys())>0:
-                    breakFlag = True                                        
-                    event.clearEvents()
-                    break
-            
-            #Pause Loom at end position
-            trialFrames = 0
-            stim.radius = self.maxRadius*self.pixelsPerDeg
-            while trialFrames <= self.pauseFrames and not breakFlag:                
-                stim.draw()
-                self.visStimFlip()
-                trialFrames += 1
-                nframes += 1
-            
-                if len(event.getKeys())>0:
-                    breakFlag = True                                        
-                    event.clearEvents()
-                    break
-            
-            #Intertrial interval
-            trialFrames = 0
-            while trialFrames <= self.interTrialInterval and not breakFlag:
-                self.visStimFlip()
-                trialFrames += 1
-                nframes += 1
-            
                 if len(event.getKeys())>0:
                     breakFlag = True                                        
                     event.clearEvents()
@@ -127,3 +118,8 @@ class loom(VisStimControl):
         start = np.where(halfTheta>=self.startRadius)[0][0]
         end = np.where(halfTheta<=self.maxRadius)[0][-1]
         return halfTheta[start:end]*self.pixelsPerDeg
+        
+    def setLaserParams(self,laser,power):
+        self.laser = laser
+        self.laserPower = power
+        self.colors = [-1]

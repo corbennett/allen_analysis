@@ -263,6 +263,8 @@ class LaserControl():
             self.nidaqAnalogOut.ClearTask()
         
     def mainWinCloseEvent(self,event):
+        if self.visControl is not None:
+            self.visControl._win.close()
         self.closeDevice()
         event.accept()
         
