@@ -563,7 +563,7 @@ class probeData():
             # estimate spontRate using random trials and interval 0:minLatency
             nTrialTypes = np.unique(posHistory[~np.isnan(posHistory)]).size*boxSize.size*2
             nTrials = int(np.count_nonzero(boxSizeHistory<100)/nTrialTypes)
-            nreps = 1000
+            nreps = 200
             spontPeakDist = np.zeros(nreps)
             spontCountDist = np.zeros(nreps)
             for ind in range(nreps):
@@ -1091,7 +1091,7 @@ class probeData():
                 if usePeakResp:
                     spontRateDist = self.getSDFNoise(spikes,trialStartSamples[grayTrials],max(trialEndSamples[grayTrials]-trialStartSamples[grayTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
                 else:
-                    nreps = 1000
+                    nreps = 100
                     spontRateDist = np.zeros(nreps)
                     grayTrialInd = np.where(grayTrials)[0]
                     for ind in range(nreps):
@@ -1121,7 +1121,7 @@ class probeData():
                             fitParams,rmse = fitStf(sf,tf,resp,initialParams)
                             if fitParams is not None:
                                 # get confidence intervals for sf0, tf0, and speedTuningIndex
-                                nreps = 1000
+                                nreps = 100
                                 trialResampledFitParams = np.full((nreps,)+fitParams.shape,np.nan)
                                 for ind in range(nreps):
                                     resp[:] = 0
@@ -1419,7 +1419,7 @@ class probeData():
                 if usePeakResp:
                     spontRateDist = self.getSDFNoise(spikes,trialStartSamples[spontTrials],max(trialEndSamples[spontTrials]-trialStartSamples[spontTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
                 else:
-                    nreps = 1000
+                    nreps = 100
                     spontRateDist = np.zeros(nreps)
                     spontTrialInd = np.where(spontTrials)[0]
                     for ind,_ in range(nreps):
@@ -1540,11 +1540,9 @@ class probeData():
         for lv in v['lvratio']:        
             halfTheta = np.arctan(lv/time)[::-1] * (180./np.pi)
             start = np.where(halfTheta>=v['startRadius'])[0][0]
-            plt.plot(halfTheta)
             timeToCollision.append(360000 - start)
             
         sdfPadding = round(0.4/sdfSampInt)
-        
         
         for uindex, unit in enumerate(units):
             spikes = self.units[str(unit)]['times'][str(protocol)]
@@ -1554,20 +1552,27 @@ class probeData():
 
             for ic, c in enumerate(trialConditions):
                 condTrials = np.array([i for i,t in enumerate(trialParams) if all(t == c)])
-                thissdf, sdfTime = self.getSDF(spikes, trialEnds[condTrials] - np.max(trialSampleLengths[condTrials]), np.max(trialSampleLengths[condTrials]), sigma=sdfSigma)
-                collision = timeToCollision[np.where(np.unique(trialLV)==c[0])[0]]
-                thissdf = thissdf[:collision+sdfPadding]
-                sdf[ic, -thissdf.size:] = thissdf
-                peakTimeFromCollision[ic] = sdf.shape[1] - np.nanargmax(sdf[ic]) - sdfPadding
-                peakResp[ic] = np.nanmax(sdf[ic])
+                if condTrials.size>0:
+                    thissdf, sdfTime = self.getSDF(spikes, trialEnds[condTrials] - np.max(trialSampleLengths[condTrials]), np.max(trialSampleLengths[condTrials]), sigma=sdfSigma)
+                    collision = timeToCollision[np.where(np.unique(trialLV)==c[0])[0]]
+                    thissdf = thissdf[:collision+sdfPadding]
+                    sdf[ic, -thissdf.size:] = thissdf
+                    peakTimeFromCollision[ic] = sdf.shape[1] - np.nanargmax(sdf[ic]) - sdfPadding
+                    peakResp[ic] = np.nanmax(sdf[ic])
                 
-            #get spont rate (defined as the first second of activity during the longest trial condition)   
+            #get spont rate (defined as the first second of activity during the longest trial condition)
+            nreps = 100
+            spontRateDist = np.zeros(nreps)
             spontRateMean = None
             spontRateStd = None
             if len(longTrials)>0:
-                longsdf, sdfTime = self.getSDF(spikes, trialEnds[longTrials] - np.max(trialSampleLengths[longTrials]), np.max(trialSampleLengths[longTrials]), sigma=sdfSigma)
-                spontRateMean = np.nanmean(longsdf[:1000])
-                spontRateStd = np.nanstd(longsdf[:1000])  
+                trialReps = trials.size/trialParams.shape[0]
+                for ind in range(nreps):
+                    shuffledLongTrials = np.random.choice(longTrials,trialReps)
+                    longsdf, sdfTime = self.getSDF(spikes, trialEnds[shuffledLongTrials] - np.max(trialSampleLengths[shuffledLongTrials]), np.max(trialSampleLengths[shuffledLongTrials]), sigma=sdfSigma)
+                    spontRateDist[ind] = np.nanmean(np.nanmax(longsdf[:1000]))
+                spontRateMean = spontRateDist.mean()
+                spontRateStd = spontRateDist.std()
                 
             bestCondition = np.argmax(peakResp)
             bestLVs = [i for i,t in enumerate(trialConditions) if all(t[1:] == trialConditions[bestCondition][1:])]
