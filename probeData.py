@@ -274,14 +274,18 @@ class probeData():
                 continue
         return aligned
     
-    def triggeredSDF(self, units, protocol, triggerPoints, win=[-0.5, 1.0], sdfSampInt = 0.001):
+    def triggeredSDF(self, units, protocol, triggerPoints, win=[-0.5, 1.0], sdfSampInt = 0.001, appendToUnitDict=False):
         units, unitsYPos = self.getOrderedUnits(units)        
         winSamples = np.array(win)*self.sampleRate
         sdf=[]
         for u in units:
             spikes = self.units[u]['times'][str(protocol)] 
-            usdf, time = self.getSDF(spikes, triggerPoints + winSamples[0], np.diff(winSamples), avg=True)                  
+            usdf, time = self.getSDF(spikes, triggerPoints + winSamples[0], np.diff(winSamples), sampInt=sdfSampInt, avg=True)                  
             sdf.append(usdf)
+            
+            if appendToUnitDict:
+                self.units[u][self.getProtocolLabel(protocol)] = {'_sdf': usdf, '_sdfTime': time}
+                
         return np.array(sdf), time
     
     def findStatToRunPoints(self, protocol, runThresh=1, statThresh=1, window=2.0, wheelSampleRate=60, refractoryPeriod=5):
@@ -985,6 +989,8 @@ class probeData():
             trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
         else:
             trials = np.array(trials)
+            numFullTrials = self.visstimData[str(protocol)]['stimStartFrames'].size-1
+            trials = trials[trials<numFullTrials]
         
         if len(trials) == 0:            
             return
@@ -1323,7 +1329,7 @@ class probeData():
         
         trialStartFrame = p['trialStartFrame']
         trialNumFrames = p['trialNumFrames'].astype(int)
-        trialEndFrame = trialStartFrame+trialNumFrames
+        trialEndFrame = trialStartFrame+trialNumFrames[:trialStartFrame.size]
         lastFullTrial = np.where(trialEndFrame<p['frameSamples'].size)[0][-1]
         if trials is None:
             trials = np.arange(lastFullTrial+1)
@@ -1498,19 +1504,22 @@ class probeData():
             if protocol is None:
                 print 'Could not find loom protocol'
                 return
+        
+        v = self.visstimData[str(protocol)]
         if trials is None:
-            trials = np.arange(self.visstimData[str(protocol)]['stimStartFrames'].size-1)
+            trials = np.arange(v['stimStartFrames'].size-1)
         else:
             trials = np.array(trials)
+            numFullTrials = v['stimStartFrames'].size - 1
+            trials = trials[trials<numFullTrials]
         
         if len(trials) == 0:            
             return
-        v = self.visstimData[str(protocol)]
+        
         trialStarts = v['frameSamples'][v['stimStartFrames'][trials]]
         trialFrameLengths = (np.diff(v['stimStartFrames']) - v['interTrialInterval'])[trials]
         trialEnds = v['frameSamples'][v['stimStartFrames'][trials] + trialFrameLengths]
         trialSampleLengths = trialEnds - trialStarts
-        
         
         trialPos = np.copy(v['posHistory'][trials])/v['pixelsPerDeg']
         trialLV = v['lvHistory'][trials]
@@ -1518,7 +1527,10 @@ class probeData():
         trialParams = np.stack((trialLV, trialPos[:, 0], trialPos[:, 1], trialColor)).T        
 #        trialParams = np.round(trialParams).astype(int)
         trialConditions = np.array(list(itertools.product(np.unique(trialLV), np.unique(trialPos[:, 0]), np.unique(trialPos[:, 1]), np.unique(trialColor))))
+        numLVs = np.unique(trialLV).size
         
+        longTrials = np.where(trialLV>40)[0]
+            
         sdfSamples = trialSampleLengths.max() + 10
         sdfSampInt = 0.001
 
@@ -1536,24 +1548,44 @@ class probeData():
         
         for uindex, unit in enumerate(units):
             spikes = self.units[str(unit)]['times'][str(protocol)]
-            sdf = np.full((trialConditions.shape[0],round(sdfSamples/self.sampleRate/sdfSampInt)),np.nan) 
+            sdf = np.full((trialConditions.shape[0],round(sdfSamples/self.sampleRate/sdfSampInt)),np.nan)
+            peakTimeFromCollision = np.full(trialConditions.shape[0], np.nan)
+            peakResp = np.full(trialConditions.shape[0], np.nan)
+
             for ic, c in enumerate(trialConditions):
                 condTrials = np.array([i for i,t in enumerate(trialParams) if all(t == c)])
                 thissdf, sdfTime = self.getSDF(spikes, trialEnds[condTrials] - np.max(trialSampleLengths[condTrials]), np.max(trialSampleLengths[condTrials]), sigma=sdfSigma)
                 collision = timeToCollision[np.where(np.unique(trialLV)==c[0])[0]]
                 thissdf = thissdf[:collision+sdfPadding]
                 sdf[ic, -thissdf.size:] = thissdf
+                peakTimeFromCollision[ic] = sdf.shape[1] - np.nanargmax(sdf[ic]) - sdfPadding
+                peakResp[ic] = np.nanmax(sdf[ic])
+                
+            #get spont rate (defined as the first second of activity during the longest trial condition)   
+            spontRateMean = None
+            spontRateStd = None
+            if len(longTrials)>0:
+                longsdf, sdfTime = self.getSDF(spikes, trialEnds[longTrials] - np.max(trialSampleLengths[longTrials]), np.max(trialSampleLengths[longTrials]), sigma=sdfSigma)
+                spontRateMean = np.nanmean(longsdf[:1000])
+                spontRateStd = np.nanstd(longsdf[:1000])  
+                
+            bestCondition = np.argmax(peakResp)
+            bestLVs = [i for i,t in enumerate(trialConditions) if all(t[1:] == trialConditions[bestCondition][1:])]
+            bestCondPeakResps = peakResp[bestLVs]
+            bestCondPeakTimes = peakTimeFromCollision[bestLVs]
+                
+#            #get mean responses for each LV value at best parameters
             
-            #get mean responses for each LV value at best parameters
-            numLVs = np.unique(trialLV).size
-            peakTimeFromCollision = np.full(numLVs, np.nan)
-            bestCond = np.copy(trialConditions[np.unravel_index(np.nanargmax(sdf), sdf.shape)[0]])
-            lvCurves = []
-            for ilv, lv in enumerate(np.unique(trialLV)):
-                bestCond[0] = lv
-                condition = np.array([i for i,t in enumerate(trialConditions) if all(t == bestCond)])
-                lvCurves.append(sdf[condition].T)
-                peakTimeFromCollision[ilv] = sdf.shape[1] - np.nanargmax(sdf[condition]) - sdfPadding
+#            peakTimeFromCollision = np.full(numLVs, np.nan)
+#            peakResp = np.full(numLVs, np.nan)
+#            bestCond = np.copy(trialConditions[np.unravel_index(np.nanargmax(sdf), sdf.shape)[0]])
+#            lvCurves = []
+#            for ilv, lv in enumerate(np.unique(trialLV)):
+#                bestCond[0] = lv
+#                condition = np.array([i for i,t in enumerate(trialConditions) if all(t == bestCond)])
+#                lvCurves.append(sdf[condition].T)
+#                peakTimeFromCollision[ilv] = sdf.shape[1] - np.nanargmax(sdf[condition]) - sdfPadding
+#                peakResp = np.nanmax(sdf[condition])
             
             if plot:
                 alphas = np.linspace(0.2, 1, numLVs)
@@ -1574,9 +1606,17 @@ class probeData():
             
             # cache results
             self.units[str(unit)]['loom' + saveTag] = {'trialConditions': trialConditions,
-                                                            'sdf' : sdf,
-                                                            'trials': trials}
-                    
+                                                            '_sdf' : sdf,
+                                                            '_sdfTime': sdfTime,
+                                                            'trials': trials,
+                                                            'spontRateMean': spontRateMean,
+                                                            'spontRateStd': spontRateStd,
+                                                            'peakTimeFromCollision': peakTimeFromCollision,
+                                                            'peakResp': peakResp,
+                                                            'bestConditionPeaks': bestCondPeakResps,
+                                                            'bestConditionPeakTimes': bestCondPeakTimes}
+                                                            
+            
     def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=False, saveTag=''):
          
         units, unitsYPos = self.getOrderedUnits(units) 
@@ -2533,7 +2573,7 @@ class probeData():
             rows[-1] += 1
     
     
-    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard', 'loom'], splitRunning = False, useCache=False, plot=True):
+    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard', 'loom'], splitRunning = False, splitLaser=False, useCache=False, plot=True):
 
         for pro in protocolsToRun:
             protocol = self.getProtocolIndex(pro)
@@ -2544,28 +2584,61 @@ class probeData():
                 laserTag = '_laserOff'
                 if 'gratings'==pro:
                     if splitRunning:
-                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)   
-                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
-                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=runTrials, saveTag=laserTag+'_run', plot=plot)
-                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', saveTag=laserTag+'_allTrials', plot=plot)
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)  
+                        laserTrials, controlTrials = self.findLaserTrials(protocol)
+                        laserCondition = [controlTrials, laserTrials]
+                        hasLaser = True if any([c in self.visstimData[str(protocol)] for c in ['laserPowerHistory', 'stimulusHistory_laserPower', 'trialLaserPower']]) else False
+                        analyzeLaserTrials = (False,True) if hasLaser and np.any(self.visstimData[str(protocol)]['laserPower']>0) else (False,)
+                        for il, laser in enumerate(analyzeLaserTrials):
+                            laserTag = '_laserOn' if laser else '_laserOff'
+                            sTrials = np.intersect1d(statTrials, laserCondition[il])
+                            rTrials = np.intersect1d(runTrials, laserCondition[il])
+                            aTrials = laserCondition[il]
+                                
+                            self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=sTrials, saveTag=laserTag+'_stat', plot=plot)
+                            self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=rTrials, saveTag=laserTag+'_run', plot=plot)
+                            self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', trials=aTrials, saveTag=laserTag+'_allTrials', plot=plot)
+                   
                     else:
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='stf', plot=plot)
     
                 elif 'gratings_ori'==pro:
                     if splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)  
-                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
-                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=runTrials, saveTag=laserTag+'_run', plot=plot)
-                        self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', saveTag=laserTag+'_allTrials', plot=plot)
+                        laserTrials, controlTrials = self.findLaserTrials(protocol)
+                        laserCondition = [controlTrials, laserTrials]
+                        hasLaser = True if any([c in self.visstimData[str(protocol)] for c in ['laserPowerHistory', 'stimulusHistory_laserPower', 'trialLaserPower']]) else False
+                        analyzeLaserTrials = (False,True) if hasLaser and np.any(self.visstimData[str(protocol)]['laserPower']>0) else (False,)
+                        for il, laser in enumerate(analyzeLaserTrials):
+                            laserTag = '_laserOn' if laser else '_laserOff'
+                            sTrials = np.intersect1d(statTrials, laserCondition[il])
+                            rTrials = np.intersect1d(runTrials, laserCondition[il])
+                            aTrials = laserCondition[il]
+                                
+                            self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=sTrials, saveTag=laserTag+'_stat', plot=plot)
+                            self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=rTrials, saveTag=laserTag+'_run', plot=plot)
+                            self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', trials=aTrials, saveTag=laserTag+'_allTrials', plot=plot)
+                    
                     else:
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', plot=plot)
     
                 elif 'sparseNoise' in pro:
                     if splitRunning:
-                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                 
-                        self.findRF(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
-                        self.findRF(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag=laserTag+'_run', plot=plot)
-                        self.findRF(units, protocol=protocol, useCache=useCache, saveTag=laserTag+'_allTrials',plot=plot)
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                        laserTrials, controlTrials = self.findLaserTrials(protocol)
+                        laserCondition = [controlTrials, laserTrials]
+                        hasLaser = True if any([c in self.visstimData[str(protocol)] for c in ['laserPowerHistory', 'stimulusHistory_laserPower', 'trialLaserPower']]) else False
+                        analyzeLaserTrials = (False,True) if hasLaser and np.any(self.visstimData[str(protocol)]['laserPower']>0) else (False,)
+                        for il, laser in enumerate(analyzeLaserTrials):
+                            laserTag = '_laserOn' if laser else '_laserOff'
+                            sTrials = np.intersect1d(statTrials, laserCondition[il])
+                            rTrials = np.intersect1d(runTrials, laserCondition[il])
+                            aTrials = laserCondition[il]
+                                
+                            self.findRF(units, protocol=protocol, trials=sTrials, saveTag=laserTag+'_stat', plot=plot)
+                            self.findRF(units, protocol=protocol, trials=rTrials, saveTag=laserTag+'_run', plot=plot)
+                            self.findRF(units, protocol=protocol, trials=aTrials, saveTag=laserTag+'_allTrials', plot=plot)
+                            
                     else:                    
                         self.findRF(units, protocol=protocol, useCache=useCache, plot=plot)
                         
@@ -2595,10 +2668,27 @@ class probeData():
                             self.analyzeCheckerboard(units, protocol=protocol, trials=statTrials, laser=laser, saveTag=laserTag+'_stat', plot=plot)
                             self.analyzeCheckerboard(units, protocol=protocol, trials=runTrials, laser=laser, saveTag=laserTag+'_run', plot=plot)
                             self.analyzeCheckerboard(units, protocol=protocol, laser=laser, saveTag=laserTag+'_allTrials', plot=plot)
+                    
                     else:
                         self.analyzeCheckerboard(units, protocol=protocol, plot=plot)
                 elif 'loom' in pro:
-                    self.analyzeLoom(units, protocol=protocol, plot=plot)
+                    if splitRunning:
+                        statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
+                        laserTrials, controlTrials = self.findLaserTrials(protocol)
+                        laserCondition = [controlTrials, laserTrials]
+                        hasLaser = True if any([c in self.visstimData[str(protocol)] for c in ['laserPowerHistory', 'stimulusHistory_laserPower', 'trialLaserPower']]) else False
+                        analyzeLaserTrials = (False,True) if hasLaser and np.any(self.visstimData[str(protocol)]['laserPower']>0) else (False,)
+                        for il, laser in enumerate(analyzeLaserTrials):
+                            laserTag = '_laserOn' if laser else '_laserOff'
+                            sTrials = np.intersect1d(statTrials, laserCondition[il])
+                            rTrials = np.intersect1d(runTrials, laserCondition[il])
+                            aTrials = laserCondition[il]
+                                
+                            self.analyzeLoom(units, protocol=protocol, trials=sTrials, saveTag=laserTag+'_stat', plot=plot)
+                            self.analyzeLoom(units, protocol=protocol, trials=rTrials, saveTag=laserTag+'_run', plot=plot)
+                            self.analyzeLoom(units, protocol=protocol, trials=aTrials, saveTag=laserTag+'_allTrials', plot=plot)
+                    else:
+                        self.analyzeLoom(units, protocol=protocol, plot=plot)
         if plot:
             units, _ = self.getOrderedUnits(units)
             if len(units)==1:
@@ -2947,7 +3037,7 @@ class probeData():
             else:
                 if label in criterion:
                     units.append(unit)
-        return units
+        return self.getOrderedUnits(units)
         
         
     def findCCFCoords(self, tipPos=None, entryPos=None, tipProbePos=-1300):
@@ -3235,9 +3325,11 @@ class probeData():
         goodPoints = np.insert(goodPoints, 0, 0)
         pulseEnds = (dataThresh.size - pulseOff[goodPoints])[::-1]
 
-        pulseAmp = np.array([np.mean(data[pulseEnds[u]-100:pulseEnds[u]]) for u, _ in enumerate(pulseStarts)])*self._d[protocol]['gains'][channel]
+        pulseAmps = np.array([np.mean(data[pulseStarts[u]:pulseEnds[u]]) for u, _ in enumerate(pulseStarts)])*self._d[protocol]['gains'][channel]
         
-        return pulseStarts, pulseEnds, pulseAmp
+        self.behaviorData[str(protocol)][str(channel) + '_pulses'] = [pulseStarts, pulseEnds, pulseAmps]
+        
+        return pulseStarts, pulseEnds, pulseAmps
 
 
     def findLaserTrials(self, protocol):
@@ -3252,10 +3344,6 @@ class probeData():
                     trialLaser = v[p][6]
                 else:
                     trialLaser = v[p]
-        
-        if trialLaser is None:
-            print 'Could not find laser trials'
-            return
             
         laserTrials = np.where(trialLaser>0)[0]
         controlTrials = np.setdiff1d(np.arange(len(trialLaser)), laserTrials)
