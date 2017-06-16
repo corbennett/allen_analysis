@@ -121,7 +121,7 @@ class popProbeData():
         # the value for each parameter is a len(units) list
         laserLabels = ('laserOff','laserOn')
         runLabels = ('allTrials','stat','run')
-        protocols = ('sparseNoise','gratings','gratings_ori','checkerboard')
+        protocols = ('sparseNoise','gratings','gratings_ori','checkerboard','loom')
         data = {laserLabel: {runLabel: {protocol: {} for protocol in protocols} for runLabel in runLabels} for laserLabel in laserLabels}
         for exp in exps:
             p = self.getProbeDataObj(exp)

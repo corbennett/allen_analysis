@@ -3346,7 +3346,8 @@ class probeData():
                     trialLaser = v[p]
             
         laserTrials = np.where(trialLaser>0)[0]
-        controlTrials = np.setdiff1d(np.arange(len(trialLaser)), laserTrials)
+        key = 'trialStartFrame' if protocol=='checkerboard' else 'stimStartFrames'
+        controlTrials = np.setdiff1d(np.arange(v[key].size), laserTrials)
         return laserTrials, controlTrials
         
 # utility functions
