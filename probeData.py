@@ -2584,6 +2584,8 @@ class probeData():
             protocol = self.getProtocolIndex(pro)
             if protocol is None:
                 print(pro+ ' not found')
+            elif 'loom' in pro and 'lvHistory' not in self.visstimData[str(protocol)]:
+                continue
             else:
                 trialStarts, trialEnds = self.getTrialStartsEnds(protocol)
                 laserTag = '_laserOff'

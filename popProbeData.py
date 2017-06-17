@@ -126,8 +126,7 @@ class popProbeData():
         for exp in exps:
             p = self.getProbeDataObj(exp)
             expDate,anmID = p.getExperimentInfo()
-            units = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
-            units,ypos = p.getOrderedUnits(units)
+            units,ypos = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
             for u in units:
                 experimentDate.append(expDate)
                 animalID.append(anmID)
@@ -1603,10 +1602,6 @@ class popProbeData():
         maxR = np.nanmax([np.nanmax(sR), np.nanmax(rR)])
         ax.plot([0, maxR], [0, maxR], 'r--')            
         
-        #Find running modulation index
-        sR = np.array(sR)
-        rR = np.array(rR)
-        runMod = (rR - sR)/(rR+sR)
     
     def trialMatch(self, pObj, protocol, paramsToMatch, cond1Trials, cond2Trials):
         
@@ -1722,7 +1717,7 @@ class popProbeData():
                 runModIndex.append((maxresp - minresp)/(maxresp+minresp))
                 
                 
-    def analyzeWaveforms(self, plot=True):
+    def analyzeWaveforms(self):
         
         templates = []
         for i,exp in enumerate(self.experimentFiles):
@@ -1730,13 +1725,33 @@ class popProbeData():
             p = self.getProbeDataObj(exp)
             units = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
             units, _ = p.getOrderedUnits(units)
-            temps = [p.units[u]['template'] for u in units]
+            temps = [p.getSpikeTemplate(u, plot=False) for u in units]
             templates.extend(temps)
         
         tempArray = np.array(templates)
-        peakToTrough = findPeakToTrough(tempArray, plot=plot)
+        maxs = np.max(np.abs(tempArray), axis=1)
+        tempArray /= maxs[:, None]
+        peakPosition = np.argmax(np.abs(tempArray),axis=1)
+        tempShifted = [tempArray[i, ppo - peakPosition.min() : ppo + tempArray.shape[1] - peakPosition.max()] for i, ppo in enumerate(peakPosition)]
+        tempShifted = np.array(tempShifted)
         
-        return peakToTrough
+        peakToTrough = np.zeros(tempShifted.shape[0])       
+        for i,t in enumerate(tempShifted):
+            peakInd = np.argmax(np.absolute(t))
+            peakToTrough[i] = (np.argmin(t[peakInd:]) if t[peakInd]>0 else np.argmax(t[peakInd:]))/30.0
+            
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        ax.hist(peakToTrough,np.arange(0,1.2,0.05),color='k')
+        ax.plot([0.35]*2,[0,180],'k--')
+        for side in ('top','right'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(which='both',direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlabel('Spike peak-to-trough (ms)',fontsize=20)
+        ax.set_ylabel('# Units',fontsize=20)
+        plt.tight_layout()
+        
+        return tempShifted, peakToTrough
 
 def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):
     #waveform array should be units x samples x channels
