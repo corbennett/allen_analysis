@@ -1527,9 +1527,9 @@ class probeData():
         trialParams = np.stack((trialLV, trialPos[:, 0], trialPos[:, 1], trialColor)).T        
 #        trialParams = np.round(trialParams).astype(int)
         trialConditions = np.array(list(itertools.product(np.unique(trialLV), np.unique(trialPos[:, 0]), np.unique(trialPos[:, 1]), np.unique(trialColor))))
-        numLVs = np.unique(trialLV).size
+        lvRatio = np.unique(trialLV)
         
-        longTrials = np.where(trialLV>40)[0]
+        longTrials = np.where(trialLV==lvRatio.max())[0]
             
         sdfSamples = trialSampleLengths.max() + 10
         sdfSampInt = 0.001
@@ -1560,16 +1560,17 @@ class probeData():
                     peakTimeFromCollision[ic] = sdf.shape[1] - np.nanargmax(sdf[ic]) - sdfPadding
                     peakResp[ic] = np.nanmax(sdf[ic])
                 
-            #get spont rate (defined as the first second of activity during the longest trial condition)
+            # get spont rate (defined as the first second of activity during the longest trial condition)
             nreps = 100
             spontRateDist = np.zeros(nreps)
             spontRateMean = None
             spontRateStd = None
             if len(longTrials)>0:
-                trialReps = trials.size/trialParams.shape[0]
+                trialReps = trials.size//trialConditions.shape[0]
+                nsamps = np.max(trialSampleLengths[longTrials])
                 for ind in range(nreps):
                     shuffledLongTrials = np.random.choice(longTrials,trialReps)
-                    longsdf, sdfTime = self.getSDF(spikes, trialEnds[shuffledLongTrials] - np.max(trialSampleLengths[shuffledLongTrials]), np.max(trialSampleLengths[shuffledLongTrials]), sigma=sdfSigma)
+                    longsdf, sdfTime = self.getSDF(spikes, trialEnds[shuffledLongTrials]-nsamps, nsamps, sigma=sdfSigma)
                     spontRateDist[ind] = np.nanmean(np.nanmax(longsdf[:1000]))
                 spontRateMean = spontRateDist.mean()
                 spontRateStd = spontRateDist.std()
@@ -1593,7 +1594,7 @@ class probeData():
 #                peakResp = np.nanmax(sdf[condition])
             
             if plot:
-                alphas = np.linspace(0.2, 1, numLVs)
+                alphas = np.linspace(0.2, 1, lvRatio.size)
                 fig = plt.figure()
                 gs = gridspec.GridSpec(v['ypos'].size, v['xpos'].size)
                 colors = ['b', 'r']
@@ -1611,15 +1612,15 @@ class probeData():
             
             # cache results
             self.units[str(unit)]['loom' + saveTag] = {'trialConditions': trialConditions,
-                                                            '_sdf' : sdf,
-                                                            '_sdfTime': sdfTime,
-                                                            'trials': trials,
-                                                            'spontRateMean': spontRateMean,
-                                                            'spontRateStd': spontRateStd,
-                                                            'peakTimeFromCollision': peakTimeFromCollision,
-                                                            'peakResp': peakResp,
-                                                            'bestConditionPeaks': bestCondPeakResps,
-                                                            'bestConditionPeakTimes': bestCondPeakTimes}
+                                                        '_sdf' : sdf,
+                                                        '_sdfTime': sdfTime,
+                                                        'trials': trials,
+                                                        'spontRateMean': spontRateMean,
+                                                        'spontRateStd': spontRateStd,
+                                                        'peakTimeFromCollision': peakTimeFromCollision,
+                                                        'peakResp': peakResp,
+                                                        'bestConditionPeaks': bestCondPeakResps,
+                                                        'bestConditionPeakTimes': bestCondPeakTimes}
                                                             
             
     def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=False, saveTag=''):

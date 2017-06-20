@@ -1010,7 +1010,7 @@ class popProbeData():
         
         # get data from units with spikes during checkerboard protocol
         # ignore days with laser trials
-        hasCheckerboard = (data.respMat.notnull()) & (self.data.laserOn.run.checkerboard.respMat.isnull()) 
+        hasCheckerboard = (data.respMat.notnull()) & (self.data.laserOn.allTrials.checkerboard.respMat.isnull()) 
         respMat = np.stack(data.respMat[hasCheckerboard])
         hasSpikes = respMat.any(axis=2).any(axis=1)
         respMat = respMat[hasSpikes]
@@ -1229,8 +1229,98 @@ class popProbeData():
         ax.set_xlabel('Background Speed (deg/s)',fontsize=20)
         ax.set_ylabel('Patch Speed (deg/s)',fontsize=20)
         plt.tight_layout()
-                
+        
+        
+    def analyzeLoom(self):
+        inSCAxons = self.getSCAxons()
+        
+        data = self.data.laserOff.allTrials.loom
+        
+        lvRatio = np.array([10,20,40,80])
+        
+        hasLoom = data.peakResp.notnull()
+        
+        trialConditions = data.trialConditions[hasLoom]
+        
+        peakResp = np.stack(data.peakResp[hasLoom])
+        spontRateMean = data.spontRateMean[hasLoom]
+        spontRateStd = data.spontRateStd[hasLoom]
+        respZ = (peakResp-spontRateMean[:,None])/spontRateStd[:,None]
+        hasResp = (respZ>5).any(axis=1)
+        uindex = np.where(hasLoom)[0][hasResp]
+        
+        peakTimes = np.stack(data.bestConditionPeakTimes[uindex])
+        
+        # compare max loom resp in/out SC axons and to checkerboard
+        maxCheckerResp = np.max(np.max(np.stack(self.data.laserOff.allTrials.checkerboard.respMat[hasLoom]),axis=2),axis=1)
+        maxLoomResp = np.max(peakResp,axis=1)
+        
+        maxLoomZ = np.max(respZ,axis=1)
+        
+        inSCInd = inSCAxons[np.where(hasLoom)[0]]
+        for ind,label in zip((inSCInd,~inSCInd),('SC Axons','Not SC Axons')):
+            plt.figure(facecolor='w')
+            ax = plt.subplot(1,1,1)
+            axmax = 1.05*maxLoomZ.max()
+            ax.hist(maxLoomZ[ind],bins=np.arange(0,axmax,10),range=[0,axmax],color='k')
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlabel('Max Loom Response (spikes/s)',fontsize=20)
+            ax.set_ylabel('Number of Cells',fontsize=20)
+            ax.set_title(label,fontsize=20)
+            plt.tight_layout()
             
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            axmax = 1.05*max(maxCheckerResp.max(),maxLoomResp.max())
+            ax.set_xlim([0,axmax])
+            ax.set_ylim([0,axmax])
+            ax.plot([0,axmax],[0,axmax],'k-')
+            ax.plot(maxCheckerResp[ind],maxLoomResp[ind],'ko')
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlabel('Max Checkerboard (spikes/s)',fontsize=20)
+            ax.set_ylabel('Max Loom (spikes/s)',fontsize=20)
+            ax.set_title(label,fontsize=20)
+            ax.set_aspect('equal')
+            plt.tight_layout()
+        
+        # peak time vs lvRatio and squareroot lvRatio
+        for x,label in zip((lvRatio,np.sqrt(lvRatio)),('Size/Speed','sqrt(Size/Speed)')):
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            ax.plot(x,peakTimes.T,'k-')
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlabel(label,fontsize=20)
+            ax.set_ylabel('Peak Response Time (ms)',fontsize=20)
+            plt.tight_layout()
+        
+        # histograms of r-squared of linear fit
+        # linFit = (slope, intercept, r-value, p-value, stderror)
+        linFitLV = np.zeros((uindex.size,5))
+        linFitSqrtLV = linFitLV.copy()
+        for ind,pt in enumerate(peakTimes):
+            linFitLV[ind] = scipy.stats.linregress(lvRatio,pt)
+            linFitSqrtLV[ind] = scipy.stats.linregress(np.sqrt(lvRatio),pt)
+        
+        for ind,title in zip((inSCAxons[uindex],~inSCAxons[uindex]),('SC Axons','Not SC Axons')):
+            for r,label in zip((linFitLV[ind,2],linFitSqrtLV[ind,2]),('Size/Speed','sqrt(Size/Speed)')):
+                plt.figure(facecolor='w')
+                ax = plt.subplot(1,1,1)
+                ax.hist(r**2,color='k')
+                for side in ('right','top'):
+                    ax.spines[side].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+                ax.set_xlabel('R^2 (Peak Time vs '+label+')',fontsize=20)
+                ax.set_ylabel('Number of Cells',fontsize=20)
+                ax.set_title(title,fontsize=20)
+                plt.tight_layout()
+        
+
     def plotSaccadeRate(self):
         protocolLabels = ('spontaneous','sparseNoise','gratings','checkerboard')
         saccadeRate = np.full((len(self.experimentFiles),len(protocolLabels)),np.nan)
