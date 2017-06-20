@@ -1243,49 +1243,32 @@ class popProbeData():
         trialConditions = data.trialConditions[hasLoom]
         
         peakResp = np.stack(data.peakResp[hasLoom])
-        spontRateMean = data.spontRateMean[hasLoom]
-        spontRateStd = data.spontRateStd[hasLoom]
+        spontRateMean = np.array(data.spontRateMean[hasLoom])
+        spontRateStd = np.array(data.spontRateStd[hasLoom])
         respZ = (peakResp-spontRateMean[:,None])/spontRateStd[:,None]
         hasResp = (respZ>5).any(axis=1)
         uindex = np.where(hasLoom)[0][hasResp]
         
         peakTimes = np.stack(data.bestConditionPeakTimes[uindex])
         
-        # compare max loom resp in/out SC axons and to checkerboard
-        maxCheckerResp = np.max(np.max(np.stack(self.data.laserOff.allTrials.checkerboard.respMat[hasLoom]),axis=2),axis=1)
+        # compare max loom peak resp and z score in/out SC axons
         maxLoomResp = np.max(peakResp,axis=1)
-        
         maxLoomZ = np.max(respZ,axis=1)
         
         inSCInd = inSCAxons[np.where(hasLoom)[0]]
-        for ind,label in zip((inSCInd,~inSCInd),('SC Axons','Not SC Axons')):
-            plt.figure(facecolor='w')
-            ax = plt.subplot(1,1,1)
-            axmax = 1.05*maxLoomZ.max()
-            ax.hist(maxLoomZ[ind],bins=np.arange(0,axmax,10),range=[0,axmax],color='k')
-            for side in ('right','top'):
-                ax.spines[side].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-            ax.set_xlabel('Max Loom Response (spikes/s)',fontsize=20)
-            ax.set_ylabel('Number of Cells',fontsize=20)
-            ax.set_title(label,fontsize=20)
-            plt.tight_layout()
-            
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
-            axmax = 1.05*max(maxCheckerResp.max(),maxLoomResp.max())
-            ax.set_xlim([0,axmax])
-            ax.set_ylim([0,axmax])
-            ax.plot([0,axmax],[0,axmax],'k-')
-            ax.plot(maxCheckerResp[ind],maxLoomResp[ind],'ko')
-            for side in ('right','top'):
-                ax.spines[side].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-            ax.set_xlabel('Max Checkerboard (spikes/s)',fontsize=20)
-            ax.set_ylabel('Max Loom (spikes/s)',fontsize=20)
-            ax.set_title(label,fontsize=20)
-            ax.set_aspect('equal')
-            plt.tight_layout()
+        for resp,binSize,xlab in zip((maxLoomResp,maxLoomZ),(5,2),('spikes/s','z score')):
+            axmax = 1.05*resp.max()
+            for ind,title in zip((inSCInd,~inSCInd),('SC Axons','Not SC Axons')):
+                plt.figure(facecolor='w')
+                ax = plt.subplot(1,1,1)
+                ax.hist(resp[ind],bins=np.arange(0,axmax,binSize),range=[0,axmax],color='k')
+                for side in ('right','top'):
+                    ax.spines[side].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+                ax.set_xlabel('Max Loom Response ('+xlab+')',fontsize=20)
+                ax.set_ylabel('Number of Cells',fontsize=20)
+                ax.set_title(title,fontsize=20)
+                plt.tight_layout()
         
         # peak time vs lvRatio and squareroot lvRatio
         for x,label in zip((lvRatio,np.sqrt(lvRatio)),('Size/Speed','sqrt(Size/Speed)')):
@@ -1299,7 +1282,7 @@ class popProbeData():
             ax.set_ylabel('Peak Response Time (ms)',fontsize=20)
             plt.tight_layout()
         
-        # histograms of r-squared of linear fit
+        # histogram of r-value of linear fit
         # linFit = (slope, intercept, r-value, p-value, stderror)
         linFitLV = np.zeros((uindex.size,5))
         linFitSqrtLV = linFitLV.copy()
@@ -1307,11 +1290,11 @@ class popProbeData():
             linFitLV[ind] = scipy.stats.linregress(lvRatio,pt)
             linFitSqrtLV[ind] = scipy.stats.linregress(np.sqrt(lvRatio),pt)
         
-        for ind,title in zip((inSCAxons[uindex],~inSCAxons[uindex]),('SC Axons','Not SC Axons')):
-            for r,label in zip((linFitLV[ind,2],linFitSqrtLV[ind,2]),('Size/Speed','sqrt(Size/Speed)')):
+        for r,label in zip((linFitLV[:,2],linFitSqrtLV[:,2]),('Size/Speed','sqrt(Size/Speed)')):
+            for ind,title in zip((inSCAxons[uindex],~inSCAxons[uindex]),('SC Axons','Not SC Axons')):
                 plt.figure(facecolor='w')
                 ax = plt.subplot(1,1,1)
-                ax.hist(r**2,color='k')
+                ax.hist(r[ind],color='k')
                 for side in ('right','top'):
                     ax.spines[side].set_visible(False)
                 ax.tick_params(direction='out',top=False,right=False,labelsize=18)
@@ -1319,6 +1302,33 @@ class popProbeData():
                 ax.set_ylabel('Number of Cells',fontsize=20)
                 ax.set_title(title,fontsize=20)
                 plt.tight_layout()
+                
+        # r vs slope
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        ax.plot(linFitLV[:,0],linFitLV[:,2],'ko')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlabel('Slope',fontsize=20)
+        ax.set_ylabel('r',fontsize=20)
+        plt.tight_layout()
+        
+        # plot fit for each cell        
+        for pt,fit,inSC in zip(peakTimes,linFitLV,inSCAxons[uindex]):
+            plt.figure(facecolor='w')
+            ax = plt.subplot(1,1,1)
+            ax.plot(lvRatio,lvRatio*fit[0]+fit[1],'k-')
+            ax.plot(lvRatio,pt,'ko')
+            ax.set_xlim([0,90])
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlabel('Size/Speed',fontsize=20)
+            ax.set_ylabel('Peak Time (ms)',fontsize=20)
+            title = 'SC' if inSC else 'not SC'
+            ax.set_title(title,fontsize=20)
+            plt.tight_layout()
         
 
     def plotSaccadeRate(self):
