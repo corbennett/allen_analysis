@@ -55,7 +55,7 @@ class popProbeData():
             print('Analyzing experiment '+str(ind+1)+' of '+str(len(exps)))
             p = self.getProbeDataObj(exp)
             self.getUnitLabels(p)
-            p.runAllAnalyses(splitRunning=True,protocolsToRun=protocols,plot=False)
+            p.runAllAnalyses(protocolsToRun=protocols,splitRunning=True,plot=False)
             if save:
                 p.saveHDF5(exp)
         
@@ -178,15 +178,20 @@ class popProbeData():
             return
         self.data.to_hdf(filePath,'table')
         
-        
+    
+    def getCCFCoords(self):
+        x,y,z = [np.array(self.data.index.get_level_values('ccf'+ax)) for ax in ('X','Y','Z')]    
+        return x,y,z
+    
+    
     def getSCAxons(self):
-        ccfX = np.array(self.data.index.get_level_values('ccfX'))    
-        ccfZ = np.array(self.data.index.get_level_values('ccfZ'))
-        return np.logical_and(ccfX<=170*25,ccfZ>=300*25)
+        x,y,z = self.getCCFCoords()
+        return np.logical_and(x<=170*25,z>=300*25)
     
                 
     def analyzeRF(self):
-
+        
+        ccfX,ccfY,ccfZ = self.getCCFCoords()
         inSCAxons = self.getSCAxons()
         
         data = self.data.laserOff.allTrials.sparseNoise        
@@ -853,7 +858,7 @@ class popProbeData():
             respMat[ind] = resp[:,:,bestOriInd]
             f1f0Mat[ind] = f1f0[:,:,bestOriInd]
         
-        for scInd in (inSCAxons,~inSCAxons):
+        for scInd,title in zip((np.ones(inSCAxons.size,dtype=bool),inSCAxons,~inSCAxons),('all','SC','not SC')):
             ind = scInd[np.where(hasGratings)[0]]
             meanNormRespMat = np.nanmean(respMat[ind]/np.nanmax(np.nanmax(respMat[ind],axis=2),axis=1)[:,None,None],axis=0)
             fig = plt.figure(facecolor='w')
@@ -868,6 +873,7 @@ class popProbeData():
             ax.set_yticks(np.arange(tf.size))
             ax.set_xlabel('Cycles/deg',fontsize=20)
             ax.set_ylabel('Cycles/s',fontsize=20)
+            ax.set_title(title,fontsize=20)
             plt.tight_layout()
         
         fig = plt.figure(facecolor='w')
@@ -882,6 +888,7 @@ class popProbeData():
         ax.set_yticks(np.arange(tf.size))
         ax.set_xlabel('Cycles/deg',fontsize=20)
         ax.set_ylabel('Cycles/s',fontsize=20)
+        ax.set_title('F1/F0',fontsize=20)
         plt.tight_layout()
         
         # plot center SF and TF and speed tuning index

@@ -2579,8 +2579,9 @@ class probeData():
             rows[-1] += 1
     
     
-    def runAllAnalyses(self, units=None, protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard', 'loom'], splitRunning = False, splitLaser=False, useCache=False, plot=True):
-
+    def runAllAnalyses(self, units=None, protocolsToRun=None, splitRunning=False, useCache=False, plot=True):
+        if protocolsToRun is None:
+            protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard', 'loom']
         for pro in protocolsToRun:
             protocol = self.getProtocolIndex(pro)
             if protocol is None:
