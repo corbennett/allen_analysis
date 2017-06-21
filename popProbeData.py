@@ -1294,12 +1294,14 @@ class popProbeData():
             for ind,title in zip((inSCAxons[uindex],~inSCAxons[uindex]),('SC Axons','Not SC Axons')):
                 plt.figure(facecolor='w')
                 ax = plt.subplot(1,1,1)
-                ax.hist(r[ind],color='k')
+                h,bins = np.histogram(r[ind],bins=np.arange(-1,1.05,0.1))
+                ax.bar(bins[:-1],h/ind.sum(),width=0.1,color='k')
+                ax.set_ylim([0,0.6])
                 for side in ('right','top'):
                     ax.spines[side].set_visible(False)
                 ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-                ax.set_xlabel('R^2 (Peak Time vs '+label+')',fontsize=20)
-                ax.set_ylabel('Number of Cells',fontsize=20)
+                ax.set_xlabel('r (Peak Time vs '+label+')',fontsize=20)
+                ax.set_ylabel('Fraction of Cells',fontsize=20)
                 ax.set_title(title,fontsize=20)
                 plt.tight_layout()
                 
@@ -1327,7 +1329,7 @@ class popProbeData():
             ax.set_xlabel('Size/Speed',fontsize=20)
             ax.set_ylabel('Peak Time (ms)',fontsize=20)
             title = 'SC' if inSC else 'not SC'
-            ax.set_title(title,fontsize=20)
+            ax.set_title('r = '+str(fit[2])+', '+title,fontsize=20)
             plt.tight_layout()
         
 
