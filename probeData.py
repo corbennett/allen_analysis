@@ -1140,14 +1140,15 @@ class probeData():
                                     if f is not None:
                                         trialResampledFitParams[ind] = f
                                 trialResampledFitParams = trialResampledFitParams[~np.isnan(trialResampledFitParams[:,0])]
-                                ci = np.percentile(trialResampledFitParams,[2.5,97.5],axis=0)
-                                ci[:,:2] = np.log2(ci[:,:2])
-                                ci = np.diff(ci,axis=0).squeeze()
-                                if np.all(ci[:2]<3) and ci[4]<1:
-                                    stfFitParams[uindex] = fitParams
-                                    stfFitError = rmse
-                                    stfFitOri = ori[oriInd]
-                                    break
+                                if trialResampledFitParams.shape[0]>0:
+                                    ci = np.percentile(trialResampledFitParams,[2.5,97.5],axis=0)
+                                    ci[:,:2] = np.log2(ci[:,:2])
+                                    ci = np.diff(ci,axis=0).squeeze()
+                                    if np.all(ci[:2]<3) and ci[4]<1:
+                                        stfFitParams[uindex] = fitParams
+                                        stfFitError = rmse
+                                        stfFitOri = ori[oriInd]
+                                        break
             elif protocolType=='ori':
                 # calculate DSI and OSI for sf/tf that elicited max resp
                 if tfHasResp.size>0 and sfHasResp.size>0:
