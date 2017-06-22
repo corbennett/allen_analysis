@@ -1066,8 +1066,8 @@ class popProbeData():
         ax.plot([-1,1],[0,0],color='0.6')
         ax.plot([0,0],[-1,1],color='0.6')
         ax.plot(patchIndex,varIndex,'ko')
-        ax.set_xlim((-0.75,0.75))
-        ax.set_ylim((-0.75,0.75))
+        ax.set_xlim((-1,1))
+        ax.set_ylim((-1,1))
         ax.set_xlabel('Patch vs Background Response')
         ax.set_ylabel('Patch vs Background Speed Variance')
         
@@ -1188,7 +1188,7 @@ class popProbeData():
         for r in (respMat, respMatNorm, respMatBaseSub, respMatBaseSubNorm):
             r = r.reshape((r.shape[0],r[0].size))
             k = 3
-            clustID,_ = clust.ward(r,nClusters=k,plotDendrogram=True)
+            clustID,_ = clust.ward(r,nClusters=k,plot=True)
             fig = plt.figure(facecolor='w')
             for i in np.unique(clustID):
                 ax = fig.add_subplot(round(k**0.5),math.ceil(k**0.5),i)
@@ -1199,7 +1199,7 @@ class popProbeData():
             r = r.reshape((r.shape[0],r[0].size))
             pcaData,_,_ = clust.pca(r)
             k = 6
-            clustID,_ = clust.ward(r[:,:6],nClusters=k,plotDendrogram=True)
+            clustID,_ = clust.ward(r[:,:6],nClusters=k,plot=True)
             fig = plt.figure(facecolor='w')
             for i in np.unique(clustID):
                 ax = fig.add_subplot(round(k**0.5),math.ceil(k**0.5),i)
