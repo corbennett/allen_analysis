@@ -1502,9 +1502,9 @@ class probeData():
         units, unitsYPos = self.getOrderedUnits(units)
         if protocol is None:
             protocol = self.getProtocolIndex('loom')        
-            if protocol is None:
-                print 'Could not find loom protocol'
-                return
+#            if protocol is None:
+#                print 'Could not find loom protocol'
+#                return
         
         v = self.visstimData[str(protocol)]
         if trials is None:
@@ -1514,8 +1514,8 @@ class probeData():
             numFullTrials = v['stimStartFrames'].size - 1
             trials = trials[trials<numFullTrials]
         
-        if len(trials) == 0:            
-            return
+#        if len(trials) == 0:            
+#            return
         
         trialStarts = v['frameSamples'][v['stimStartFrames'][trials]]
         trialFrameLengths = (np.diff(v['stimStartFrames']) - v['interTrialInterval'])[trials]
@@ -1601,7 +1601,7 @@ class probeData():
                 colors = ['b', 'r']
                 for ic, c in enumerate(trialConditions):
                     xaxis = int(np.where(np.unique(trialPos[:, 0]) == c[1])[0])
-                    yaxis = int(np.where(np.unique(trialPos)[::-1] == c[2])[0])
+                    yaxis = int(np.where(np.unique(trialPos[:, 1]) == c[2])[0])
                     linecolor = colors[np.where(np.unique(trialColor) == c[3])[0]]
                     alpha = alphas[np.where(np.unique(trialLV) == c[0])[0]]
                     ax = fig.add_subplot(gs[yaxis, xaxis])
