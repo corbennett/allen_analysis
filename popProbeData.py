@@ -1268,14 +1268,12 @@ class popProbeData():
         hasRespInd = np.where(hasLoom)[0][hasResp]
         hasNoRespInd = np.where(hasLoom)[0][~hasResp]
         
-        peakTimes = np.stack(data.bestConditionPeakTimes[hasRespInd])
-        
-        # compare max loom peak resp and z score in/out SC axons
-        maxLoomResp = np.max(peakResp,axis=1)-spontRateMean
+        maxLoomResp = np.max(peakResp,axis=1)
         maxLoomZ = np.max(respZ,axis=1)
         
+        # compare max loom peak resp and z score in/out SC axons
         inSCInd = inSCAxons[np.where(hasLoom)[0]]
-        for resp,binSize,xlab in zip((maxLoomResp,maxLoomZ),(5,2),('spikes/s','z score')):
+        for resp,binSize,xlab in zip((maxLoomResp-spontRateMean,maxLoomZ),(5,2),('spikes/s','z score')):
             axmax = 1.05*resp.max()
             for ind,title in zip((inSCInd,~inSCInd),('SC Axons','Not SC Axons')):
                 plt.figure(facecolor='w')
@@ -1289,20 +1287,9 @@ class popProbeData():
                 ax.set_title(title,fontsize=20)
                 plt.tight_layout()
         
-        # peak time vs lvRatio and squareroot lvRatio
-        for x,label in zip((lvRatio,np.sqrt(lvRatio)),('Size/Speed','sqrt(Size/Speed)')):
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
-            ax.plot(x,peakTimes.T,'k-')
-            for side in ('right','top'):
-                ax.spines[side].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-            ax.set_xlabel(label,fontsize=20)
-            ax.set_ylabel('Peak Response Time (ms)',fontsize=20)
-            plt.tight_layout()
-        
         # histogram of r-value of linear fit
         # linFit = (slope, intercept, r-value, p-value, stderror)
+        peakTimes = np.stack(data.bestConditionPeakTimes[hasRespInd])
         linFitLV = np.zeros((hasRespInd.size,5))
         linFitSqrtLV = linFitLV.copy()
         for ind,pt in enumerate(peakTimes):
@@ -1332,6 +1319,8 @@ class popProbeData():
         inLP,rng = self.getInLP(padding=padding)
         ccfCoords = self.getCCFCoords()
         isGoodFit = linFitLV[:,2]>=0.95
+        goodFitInd = hasRespInd[isGoodFit]
+        notGoodFitInd = np.union1d(hasNoRespInd,hasRespInd[~isGoodFit])
         for a in range(3):
             ind = [0,1,2]
             ind.remove(a)
@@ -1344,17 +1333,68 @@ class popProbeData():
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
             ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
-            i = np.union1d(hasNoRespInd,hasRespInd[~isGoodFit])
-            jit = np.random.uniform(-jitter,jitter+1,(2,i.size))
-            ax.plot(x[i]+jit[0],y[i]+jit[1],'o',mfc='0.5',mec='none')
-            i = hasRespInd[isGoodFit]
-            jit = np.random.uniform(-jitter,jitter+1,(2,i.size))
-            ax.plot(x[i]+jit[0],y[i]+jit[1],'o',mfc='r',mec='none')
-            ax.axis('equal')
+            jit = np.random.uniform(-jitter,jitter+1,(2,notGoodFitInd.size))
+            ax.plot(x[notGoodFitInd]+jit[0],y[notGoodFitInd]+jit[1],'o',mfc='0.5',mec='none')
+            jit = np.random.uniform(-jitter,jitter+1,(2,goodFitInd.size))
+            ax.plot(x[goodFitInd]+jit[0],y[goodFitInd]+jit[1],'o',mfc='r',mec='none')
+            ax.set_aspect('equal')
             ax.axis('off')
             ax.set_xlim([cx.min()-padding,cx.max()+padding])
             ax.set_ylim([cy.max()+padding,cy.min()-padding])
             plt.tight_layout()
+            
+        # compare max loom and checkerboard resp
+        patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
+        checkerData = self.data.laserOff.allTrials.checkerboard
+        hasCheckerboard = (checkerData.respMat.notnull()) & (self.data.laserOn.allTrials.checkerboard.respMat.isnull())
+        uindex = np.where(hasCheckerboard & hasLoom)[0]
+        respMat = np.stack(checkerData.respMat[uindex])
+        spontRateMean = checkerData.spontRateMean[uindex]
+        spontRateStd = checkerData.spontRateStd[uindex]
+        respZ = (respMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
+        maxPatchResp = respMat[:,patchSpeed!=0,bckgndSpeed==0].max(axis=1)
+        maxBckgndResp = respMat[:,patchSpeed==0,bckgndSpeed!=0].max(axis=1)
+        patchIndex = (maxPatchResp-maxBckgndResp)/(maxPatchResp+maxBckgndResp)
+        
+        axmax = 1.05*max(maxBckgndResp.max(),maxPatchResp.max(),maxLoomResp.max())
+        for c,xlab in zip((maxBckgndResp,maxPatchResp),('Background','Patch')):
+            plt.figure(facecolor='w')
+            ax = plt.subplot(1,1,1)
+            ax.plot([0,axmax],[0,axmax],'k--')
+            i = np.in1d(uindex,notGoodFitInd)
+            ax.plot(c[i],maxLoomResp[i],'o',mfc='0.5',mec='none')
+            i = np.in1d(uindex,goodFitInd)
+            ax.plot(c[i],maxLoomResp[i],'o',mfc='r',mec='none')
+            ax.set_xlim([0,axmax])
+            ax.set_ylim([0,axmax])
+            ax.set_aspect('equal')
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlabel('Max '+xlab+' Response (spikes/s)',fontsize=20)
+            ax.set_ylabel('Max Loom Response (spikes/s)',fontsize=20)
+            plt.tight_layout()
+            
+        patchIndexGoodFit = patchIndex[np.in1d(uindex,goodFitInd) & inSCInd]
+        patchIndexNotGoodFit = patchIndex[np.in1d(uindex,notGoodFitInd) & inSCInd]
+        
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        cumProbPatchIndexGoodFit = [np.count_nonzero(patchIndexGoodFit<=i)/patchIndexGoodFit.size for i in np.sort(patchIndexGoodFit)]
+        cumProbPatchIndexNotGoodFit = [np.count_nonzero(patchIndexNotGoodFit<=i)/patchIndexNotGoodFit.size for i in np.sort(patchIndexNotGoodFit)]
+        ax.plot([0,0],[0,1],'k--')
+        ax.plot(np.sort(patchIndexNotGoodFit),cumProbPatchIndexNotGoodFit,'0.5',linewidth=3)
+        ax.plot(np.sort(patchIndexGoodFit),cumProbPatchIndexGoodFit,'r',linewidth=3)
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlim([-0.85,0.85])
+        ax.set_ylim([0,1.01])
+        ax.set_xticks([-0.5,0,0.5])
+        ax.set_yticks([0,0.5,1])
+        ax.set_xlabel('Patch-Background Index',fontsize=20)
+        ax.set_ylabel('Cumulative Probability',fontsize=20)
+        plt.tight_layout()
                 
         # r vs slope
         plt.figure(facecolor='w')
