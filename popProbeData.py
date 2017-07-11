@@ -23,6 +23,7 @@ class popProbeData():
         self.experimentFiles = None
         self.excelFile = None
         self.data = None
+        self.annotationDataFile = None
     
     
     def getExperimentFiles(self,append=False):
@@ -180,18 +181,39 @@ class popProbeData():
         
     
     def getCCFCoords(self):
-        x,y,z = [np.array(self.data.index.get_level_values('ccf'+ax)) for ax in ('X','Y','Z')]    
-        return x,y,z
+        y,x,z = [np.array(self.data.index.get_level_values('ccf'+ax)) for ax in ('Y','X','Z')]    
+        return y,x,z
     
     
-    def getSCAxons(self):
-        x,y,z = self.getCCFCoords()
-        return np.logical_and(x<=170*25,z>=300*25)
+    def getSCAxons(self,fromFile=False):
+        y,x,z = self.getCCFCoords()
+        if fromFile:
+            filePath = fileIO.getFile()
+            inSCVol = np.load(filePath)
+            inSCAxons = np.array([inSCVol[i//25,j//25,k//25] for i,j,k in zip(y,x,z)])
+        else:
+            inSCAxons = (x<=170*25) & (z>=300*25)
+        return inSCAxons
+        
+        
+    def getInLP(self,padding=None):
+        if self.annotationDataFile is None:
+            self.annotationDataFile = fileIO.getFile('Choose annotation data file')
+        annotationData,_ = nrrd.read(self.annotationDataFile)
+        annotationData = annotationData.transpose((1,2,0))
+        inLP = annotationData==218
+        inLP[:,inLP.shape[1]//2:,:] = False
+        if padding is not None:
+            rng = [[a.min()-padding,a.max()+padding] for a in np.where(inLP)]
+            inLP = inLP[[slice(r[0],r[1]) for r in rng]]
+        else:
+            rng = [[0,s] for s in inLP.shape]
+        return inLP,rng
     
                 
     def analyzeRF(self):
         
-        ccfX,ccfY,ccfZ = self.getCCFCoords()
+        ccfY,ccfX,ccfZ = self.getCCFCoords()
         inSCAxons = self.getSCAxons()
         
         data = self.data.laserOff.allTrials.sparseNoise        
@@ -643,30 +665,12 @@ class popProbeData():
         plt.tight_layout()
                 
     
-    def makeRFVolume(self, padding=10, sigma=1, annotationDataFile=None, weighted=False):
-        if annotationDataFile is None:
-            annotationDataFile = fileIO.getFile() 
+    def makeRFVolume(self, padding=10, sigma=1, weighted=False):
         
-        annotationData,_ = nrrd.read(annotationDataFile)
-        annotationData = annotationData.transpose((1,2,0))
-        
-        inLPbinary = annotationData==218
-        inLPbinary[:,inLPbinary.shape[1]//2:,:] = False
-        inLP = np.where(inLPbinary)
-        
-        #find left hemisphere region for xRange
-#        maxProj = np.max(inLPbinary, axis=2).astype(int)                
-#        cnts,_ = cv2.findContours(maxProj.copy(order='C').astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-#        leftSide = np.argmin([np.min(u[:, :, 0]) for u in cnts])
-        
-#        xRange = [np.min(cnts[leftSide][:, :, 0]) - padding, np.max(cnts[leftSide][:, :, 0]) + padding]
-        
-        yRange = [np.min(inLP[0])-padding, np.max(inLP[0])+padding]
-        xRange = [np.min(inLP[1])-padding, np.max(inLP[1])+padding]
-        zRange = [np.min(inLP[2])-padding, np.max(inLP[2])+padding]
-        
-        LPmask = inLPbinary[yRange[0]:yRange[1], xRange[0]:xRange[1], zRange[0]:zRange[1]].astype(np.float)
+        inLP,rng = self.getInLP(padding=padding)
+        LPmask = inLP.astype(float)
         LPmask[LPmask==0] = np.nan
+        yRange,xRange,zRange = rng
         
         CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)
         
@@ -692,15 +696,22 @@ class popProbeData():
                         
         # plot recording positions
         for a in range(3):
-            anyCounts = 255-counts.any(axis=a).astype(np.uint8)*255
-            anyCounts = np.stack([anyCounts]*3,axis=-1)
+            anyCounts = counts.any(axis=a).astype(np.uint8)
+            y,x = np.where(anyCounts)
             _,contours,_ = cv2.findContours(LPmask.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(anyCounts,contours,-1,(127,)*3)
+            cx,cy = np.squeeze(contours).T
             if a==0:
-                anyCounts = anyCounts.transpose(1,0,2)
-            fig = plt.figure()
-            ax = plt.subplot(1,1,1)
-            ax.imshow(anyCounts)
+                x,y = y,x
+                cx,cy = cy,cx
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
+            ax.plot(x,y,'ko')
+            ax.axis('equal')
+            ax.axis('off')
+            ax.set_xlim([cx.min()-padding,cx.max()+padding])
+            ax.set_ylim([cy.max()+padding,cy.min()-padding])
+            plt.tight_layout()
                 
         if not weighted:
             elev /= counts
@@ -1245,7 +1256,7 @@ class popProbeData():
         
         lvRatio = np.array([10,20,40,80])
         
-        hasLoom = data.peakResp.notnull()
+        hasLoom = np.array(data.peakResp.notnull())
         
         trialConditions = data.trialConditions[hasLoom]
         
@@ -1253,13 +1264,14 @@ class popProbeData():
         spontRateMean = np.array(data.spontRateMean[hasLoom])
         spontRateStd = np.array(data.spontRateStd[hasLoom])
         respZ = (peakResp-spontRateMean[:,None])/spontRateStd[:,None]
-        hasResp = (respZ>5).any(axis=1)
-        uindex = np.where(hasLoom)[0][hasResp]
+        hasResp = (respZ>6).any(axis=1)
+        hasRespInd = np.where(hasLoom)[0][hasResp]
+        hasNoRespInd = np.where(hasLoom)[0][~hasResp]
         
-        peakTimes = np.stack(data.bestConditionPeakTimes[uindex])
+        peakTimes = np.stack(data.bestConditionPeakTimes[hasRespInd])
         
         # compare max loom peak resp and z score in/out SC axons
-        maxLoomResp = np.max(peakResp,axis=1)
+        maxLoomResp = np.max(peakResp,axis=1)-spontRateMean
         maxLoomZ = np.max(respZ,axis=1)
         
         inSCInd = inSCAxons[np.where(hasLoom)[0]]
@@ -1291,19 +1303,21 @@ class popProbeData():
         
         # histogram of r-value of linear fit
         # linFit = (slope, intercept, r-value, p-value, stderror)
-        linFitLV = np.zeros((uindex.size,5))
+        linFitLV = np.zeros((hasRespInd.size,5))
         linFitSqrtLV = linFitLV.copy()
         for ind,pt in enumerate(peakTimes):
             linFitLV[ind] = scipy.stats.linregress(lvRatio,pt)
             linFitSqrtLV[ind] = scipy.stats.linregress(np.sqrt(lvRatio),pt)
         
+        binWidth = 0.05
         for r,label in zip((linFitLV[:,2],linFitSqrtLV[:,2]),('Size/Speed','sqrt(Size/Speed)')):
-            for ind,title in zip((inSCAxons[uindex],~inSCAxons[uindex]),('SC Axons','Not SC Axons')):
+            for ind,title in zip((inSCAxons[hasRespInd],~inSCAxons[hasRespInd]),('SC Axons','Not SC Axons')):
                 plt.figure(facecolor='w')
                 ax = plt.subplot(1,1,1)
-                h,bins = np.histogram(r[ind],bins=np.arange(-1,1.05,0.1))
-                ax.bar(bins[:-1],h/ind.sum(),width=0.1,color='k')
-                ax.set_ylim([0,0.6])
+                h,bins = np.histogram(r[ind],bins=np.arange(-1,1+binWidth/2,binWidth))
+                ax.bar(bins[:-1],h/ind.sum(),width=binWidth,color='k')
+                ax.set_xlim([-1,1])
+                ax.set_ylim([0,0.55])
                 for side in ('right','top'):
                     ax.spines[side].set_visible(False)
                 ax.tick_params(direction='out',top=False,right=False,labelsize=18)
@@ -1311,6 +1325,36 @@ class popProbeData():
                 ax.set_ylabel('Fraction of Cells',fontsize=20)
                 ax.set_title(title,fontsize=20)
                 plt.tight_layout()
+                
+        # plot r values vs location in LP
+        padding = 10
+        jitter = 3
+        inLP,rng = self.getInLP(padding=padding)
+        ccfCoords = self.getCCFCoords()
+        isGoodFit = linFitLV[:,2]>=0.95
+        for a in range(3):
+            ind = [0,1,2]
+            ind.remove(a)
+            y,x = [ccfCoords[i]/25-rng[i][0] for i in ind]
+            _,contours,_ = cv2.findContours(inLP.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            cx,cy = np.squeeze(contours).T
+            if a==0:
+                x,y = y,x
+                cx,cy = cy,cx
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
+            i = np.union1d(hasNoRespInd,hasRespInd[~isGoodFit])
+            jit = np.random.uniform(-jitter,jitter+1,(2,i.size))
+            ax.plot(x[i]+jit[0],y[i]+jit[1],'o',mfc='0.5',mec='none')
+            i = hasRespInd[isGoodFit]
+            jit = np.random.uniform(-jitter,jitter+1,(2,i.size))
+            ax.plot(x[i]+jit[0],y[i]+jit[1],'o',mfc='r',mec='none')
+            ax.axis('equal')
+            ax.axis('off')
+            ax.set_xlim([cx.min()-padding,cx.max()+padding])
+            ax.set_ylim([cy.max()+padding,cy.min()-padding])
+            plt.tight_layout()
                 
         # r vs slope
         plt.figure(facecolor='w')
