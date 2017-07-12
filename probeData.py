@@ -1542,6 +1542,7 @@ class probeData():
             halfTheta = np.arctan(lv/time)[::-1] * (180./np.pi)
             start = np.where(halfTheta>=v['startRadius'])[0][0]
             timeToCollision.append(360000 - start)
+            plt.plot(halfTheta[360000-9168:])
             
         sdfPadding = round(0.4/sdfSampInt)
         
@@ -1554,7 +1555,7 @@ class probeData():
             for ic, c in enumerate(trialConditions):
                 condTrials = np.array([i for i,t in enumerate(trialParams) if all(t == c)])
                 if condTrials.size>0:
-                    thissdf, sdfTime = self.getSDF(spikes, trialEnds[condTrials] - np.max(trialSampleLengths[condTrials]), np.max(trialSampleLengths[condTrials]), sigma=sdfSigma)
+                    thissdf, sdfTime = self.getSDF(spikes, trialEnds[condTrials] - np.median(trialSampleLengths[condTrials]), np.median(trialSampleLengths[condTrials]), sigma=sdfSigma)
                     collision = timeToCollision[np.where(np.unique(trialLV)==c[0])[0]]
                     thissdf = thissdf[:collision+sdfPadding]
                     sdf[ic, -thissdf.size:] = thissdf
@@ -1601,7 +1602,7 @@ class probeData():
                 colors = ['b', 'r']
                 for ic, c in enumerate(trialConditions):
                     xaxis = int(np.where(np.unique(trialPos[:, 0]) == c[1])[0])
-                    yaxis = int(np.where(np.unique(trialPos[:, 1]) == c[2])[0])
+                    yaxis = abs(int(np.where(np.unique(trialPos[:, 1]) == c[2])[0])-1)
                     linecolor = colors[np.where(np.unique(trialColor) == c[3])[0]]
                     alpha = alphas[np.where(np.unique(trialLV) == c[0])[0]]
                     ax = fig.add_subplot(gs[yaxis, xaxis])
@@ -3006,7 +3007,7 @@ class probeData():
         expName = ntpath.basename(ntpath.dirname(ntpath.dirname(self.kwdFileList[0])))
         if isinstance(expName,bytes):
             expName = expName.decode('utf8')
-        date,animalID = expName.split('_')
+        date,animalID = expName.split('_')[:2]
         return date,animalID
 
 
