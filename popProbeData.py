@@ -707,7 +707,7 @@ class popProbeData():
             ax = fig.add_subplot(1,1,1)
             ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
             ax.plot(x,y,'ko')
-            ax.axis('equal')
+            ax.set_aspect('equal')
             ax.axis('off')
             ax.set_xlim([cx.min()-padding,cx.max()+padding])
             ax.set_ylim([cy.max()+padding,cy.min()-padding])
@@ -749,9 +749,9 @@ class popProbeData():
                             RGB = cm.jet(thisVox)
                             for i in (0,1,2):
                                 colorMaps[im][y, x, z, i] = RGB[i]
-                            
-        fullShape = annotationData.shape+(3,)
-        del(annotationData,inLP,inLPbinary,LPmask,elev,azi,elev_s,azi_s,counts,mask)
+              
+        fullShape = self.getInLP()[0].shape+(3,)
+        del(inLP,LPmask,elev,azi,elev_s,azi_s,counts,mask)
                             
         fullMap = [np.full(fullShape,np.nan) for _ in (0,1)]
         for i in (0,1):
