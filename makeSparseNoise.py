@@ -25,8 +25,8 @@ class makeSparseNoise(VisStimControl):
         self.trialBoxColor = 1        
         self.gridBoundaries = [-20, -30, 120, 90]   #Screen coordinates define presentation window (degrees): x1 y1 for lower left, x2 y2 for upper right corner
         self.gridSpacing = 10                       #Spacing between grid nodes (degrees)
-        self.laserBlockTrials = 30                  # number of consecutive trials at a given laser power
-        self.postLaserBlockFrames = 60              # frames to wait after laser off
+        self.laserBlockTrials = 25                  # number of consecutive trials at a given laser power
+        self.postLaserBlockFrames = 240             # frames to wait after laser off
         
      
     def run(self):

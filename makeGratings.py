@@ -158,7 +158,7 @@ class makeGratings(VisStimControl):
     def setLaserParams(self,laser,power):
         self.laser = laser
         self.laserPower = power
-        self.postTime = 75
+        self.postTime = 180
 
        
 if __name__ == "__main__":
