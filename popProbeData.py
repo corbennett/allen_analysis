@@ -11,10 +11,12 @@ import cv2, datetime, math, nrrd, os, re, itertools
 import numpy as np
 import pandas as pd
 import scipy.stats
+from scipy.spatial.distance import euclidean
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib.patches import Ellipse
 from matplotlib import cm
+from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
 
 
 class popProbeData():
@@ -101,7 +103,7 @@ class popProbeData():
             self.analyzeExperiments(exps)
             
         # dataFrame rows
-        rowNames = ('experimentDate','animalID','unitID','unitLabel','ccfX','ccfY','ccfZ')
+        rowNames = ('experimentDate','animalID','unitID','unitLabel','ccfX','ccfY','ccfZ', 'region')
         experimentDate = []
         animalID = []
         unitID = []
@@ -109,6 +111,7 @@ class popProbeData():
         ccfX = []
         ccfY = []
         ccfZ = []
+        region = []
         
         # dataFrame columns
         columnNames = ('laserState','runState','paramType','paramName')
@@ -124,6 +127,7 @@ class popProbeData():
         runLabels = ('allTrials','stat','run')
         protocols = ('sparseNoise','gratings','gratings_ori','checkerboard','loom')
         data = {laserLabel: {runLabel: {protocol: {} for protocol in protocols} for runLabel in runLabels} for laserLabel in laserLabels}
+        data['laserOff']['allTrials']['waveform']= {'waveform':[]}
         for exp in exps:
             p = self.getProbeDataObj(exp)
             expDate,anmID = p.getExperimentInfo()
@@ -135,9 +139,19 @@ class popProbeData():
                 unitLabel.append(p.units[u]['label'])
                 for i,c in enumerate((ccfX,ccfY,ccfZ)):
                     c.append(p.units[u]['CCFCoords'][i])
+                
+                region.append(self.findRegions(p.units[u]['CCFCoords']))
+                if 'waveform' in p.units[u]:
+                    w = p.units[u]['waveform']
+                    maxChan = np.unravel_index(np.argmin(w), w.shape)[1]
+                    w = w[:, maxChan]
+                else:
+                    w = np.full(82, np.nan)
+                data['laserOff']['allTrials']['waveform']['waveform'].append(w)
                 for laserLabel in laserLabels:
                     for runLabel in runLabels:
                         for protocol in protocols:
+
                             tag = 'gratings_stf' if protocol=='gratings' else protocol
                             tag += '_'+laserLabel+'_'+runLabel
                             if tag not in p.units[u]:
@@ -152,9 +166,10 @@ class popProbeData():
                                         paramName.append(prm)
                                         data[laserLabel][runLabel][protocol][prm] = [np.nan for _ in range(len(unitID)-1)]
                                     data[laserLabel][runLabel][protocol][prm].append(val)
+                            
         
         # build dataframe
-        rows = pd.MultiIndex.from_arrays([experimentDate,animalID,unitID,unitLabel,ccfX,ccfY,ccfZ],names=rowNames)
+        rows = pd.MultiIndex.from_arrays([experimentDate,animalID,unitID,unitLabel,ccfX,ccfY,ccfZ, region],names=rowNames)
         cols = pd.MultiIndex.from_arrays([laserState,runState,paramType,paramName],names=columnNames)
         dframe = pd.DataFrame(index=rows,columns=cols)
         for laserLabel in data:
@@ -180,8 +195,12 @@ class popProbeData():
         self.data.to_hdf(filePath,'table')
         
     
-    def getCCFCoords(self):
-        y,x,z = [np.array(self.data.index.get_level_values('ccf'+ax)) for ax in ('Y','X','Z')]    
+    def getCCFCoords(self, cells=None):
+        if cells is None:
+            y,x,z = [np.array(self.data.index.get_level_values('ccf'+ax)) for ax in ('Y','X','Z')]    
+        else:
+            data = self.data[cells]
+            y,x,z = [np.array(data.index.get_level_values('ccf'+ax)) for ax in ('Y','X','Z')]
         return y,x,z
     
     
@@ -213,14 +232,19 @@ class popProbeData():
                 
     def analyzeRF(self):
         
-        ccfY,ccfX,ccfZ = self.getCCFCoords()
         inSCAxons = self.getSCAxons()
         
-        data = self.data.laserOff.allTrials.sparseNoise        
+        region = 'LP'
+        cellRegions = self.data.index.get_level_values('region')
+        cellsInRegion = cellRegions==region
         
-        isOnOff = self.data.index.get_level_values('unitLabel')=='on off'
-        isOn = self.data.index.get_level_values('unitLabel')=='on'
-        isOff = self.data.index.get_level_values('unitLabel')=='off'  
+        inSCAxons = inSCAxons[cellsInRegion]
+        ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
+        data = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]        
+        
+        isOnOff = data.index.get_level_values('unitLabel')=='on off'
+        isOn = data.index.get_level_values('unitLabel')=='on'
+        isOff = data.index.get_level_values('unitLabel')=='off'  
         noRF = np.logical_not(isOnOff | isOn | isOff) 
         
         onVsOff = data.onVsOff
@@ -231,10 +255,10 @@ class popProbeData():
         respLatency[isOn | noRF,1] = np.nan
         latencyCombined = np.nanmean(respLatency,axis=1)
         
-        onFit = np.full((self.data.shape[0],7),np.nan)
+        onFit = np.full((data.shape[0],7),np.nan)
         offFit = onFit.copy()
-        sizeUsed = np.full(self.data.shape[0],np.nan)
-        for u in range(self.data.shape[0]):
+        sizeUsed = np.full(data.shape[0],np.nan)
+        for u in range(data.shape[0]):
             for size in (10,5,20):
                 sizeInd = data.boxSize[u]==size
                 if sizeInd.any():
@@ -313,7 +337,7 @@ class popProbeData():
         ax.set_ylabel('Number of Cells',fontsize='x-large')
         plt.tight_layout()
         
-        # plot RF area and aspect ration in and out of SC axons
+        # plot RF area and aspect ratio in and out of SC axons
         for rfa in (rfArea[inSCAxons],rfArea[~inSCAxons]):
             plt.figure(facecolor='w')
             ax = plt.subplot(1,1,1)
@@ -376,16 +400,17 @@ class popProbeData():
         plt.tight_layout()
         
         # plot on and off resp latency
-        for i,clr in zip((0,1),('r','b')):
-            plt.figure(facecolor='w')
-            ax = plt.subplot(1,1,1)
-            ax.hist(respLatency[~np.isnan(respLatency[:,i]),i],bins=np.arange(0,160,10),color=clr)
-            ax.spines['right'].set_visible(False)
-            ax.spines['top'].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-            ax.set_xlabel('Response Latency (ms)',fontsize='x-large')
-            ax.set_ylabel('Number of Cells',fontsize='x-large')
-            plt.tight_layout()
+        for rL in [respLatency[inSCAxons], respLatency[~inSCAxons]]:
+            for i,clr in zip((0,1),('r','b')):
+                plt.figure(facecolor='w')
+                ax = plt.subplot(1,1,1)
+                ax.hist(rL[~np.isnan(rL[:,i]),i],bins=np.arange(0,160,10),color=clr)
+                ax.spines['right'].set_visible(False)
+                ax.spines['top'].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+                ax.set_xlabel('Response Latency (ms)',fontsize='x-large')
+                ax.set_ylabel('Number of Cells',fontsize='x-large')
+                plt.tight_layout()
         
         # plot on and off rf area
         for rfA,clr in zip((onArea,offArea),('r','b')):
@@ -450,25 +475,23 @@ class popProbeData():
         # size tuning plots: run vs stat comparison
         sizeTuningSize = [5,10,20,50]
         sizeTuningLabel = [5,10,20,'full']
-        allSizesInd = [u for u, _ in enumerate(data.sizeTuningOff) if data.sizeTuningOff[u].size > 3]
-        sizeTuningOn = np.stack(data.sizeTuningOn[allSizesInd])[isOn[allSizesInd] | isOnOff[allSizesInd]]
-        sizeTuningOff = np.stack(data.sizeTuningOff[allSizesInd])[isOff[allSizesInd] | isOnOff[allSizesInd]]
         goodUnits = []
-        self.data.index.get_level_values('unitLabel')
+        runData = self.data.laserOff.run.sparseNoise[cellsInRegion]
+        statData = self.data.laserOff.stat.sparseNoise[cellsInRegion]
         for sub,tuning in zip(['on', 'off'], ['sizeTuningOn', 'sizeTuningOff']):
             good = []
             for u in xrange(data.shape[0]):
-                st_r = self.data.laserOff.run.sparseNoise[tuning][u]
-                st_s = self.data.laserOff.stat.sparseNoise[tuning][u]
+                st_r = np.array(runData[tuning][u])
+                st_s = np.array(statData[tuning][u])
                 
                 if st_r.size > 3 and st_s.size > 3:
                     if ~any(np.isnan(st_r)) and ~any(np.isnan(st_s)):
-                        label = self.data.index.get_level_values('unitLabel')[u]
+                        label = data.index.get_level_values('unitLabel')[u]
                         if sub in label:                
                             good.append(u)
             goodUnits.append(good)
             
-        for stateData,state in zip([self.data.laserOff.stat.sparseNoise, self.data.laserOff.run.sparseNoise], ['stat', 'run']):
+        for stateData,state in zip([statData, runData], ['stat', 'run']):
             sizeTuningOn = np.stack(stateData.sizeTuningOn[goodUnits[0]])
             sizeTuningOff = np.stack(stateData.sizeTuningOff[goodUnits[1]])
             
@@ -544,7 +567,7 @@ class popProbeData():
         plt.tight_layout()
         
         # plot rf center vs probe position
-        expDate = self.data.index.get_level_values('experimentDate')
+        expDate = data.index.get_level_values('experimentDate')
         for exp in expDate.unique():
             ind = expDate==exp
             depth = ccfY[ind]
@@ -665,48 +688,106 @@ class popProbeData():
         plt.tight_layout()
                 
     
-    def makeRFVolume(self, padding=10, sigma=1, weighted=False):
+    def makeRFVolume(self, padding=10, sigma=4, weighted=False):
+        
+        region = 'LP'
+        cellRegions = self.data.index.get_level_values('region')
+        cellsInRegion = cellRegions==region
+        if region is None:
+            cellsInRegion = np.ones(len(self.data)).astype('bool')
         
         inLP,rng = self.getInLP(padding=padding)
         LPmask = inLP.astype(float)
         LPmask[LPmask==0] = np.nan
         yRange,xRange,zRange = rng
         
-        CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)
+        CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)[cellsInRegion]
         
         counts = np.zeros([np.diff(yRange), np.diff(xRange), np.diff(zRange)])
         elev = np.zeros_like(counts)
         azi = np.zeros_like(counts)
-        data = self.data.laserOff.allTrials.sparseNoise
-        for fitType, sub in zip(['onFit', 'offFit'], ['on', 'off']):
+        data = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]
+        expDate = data.index.get_level_values('experimentDate')
+        isOnOff = data.index.get_level_values('unitLabel')=='on off'
+        isOn = data.index.get_level_values('unitLabel')=='on'
+        isOff = data.index.get_level_values('unitLabel')=='off'  
+        noRF = np.logical_not(isOnOff | isOn | isOff) 
+        onFit = np.full((data.shape[0],7),np.nan)
+        offFit = onFit.copy()
+        sizeUsed = np.full(data.shape[0],np.nan)
+        for u in range(data.shape[0]):
+            for size in (10,5,20):
+                sizeInd = data.boxSize[u]==size
+                if sizeInd.any():
+                    onFit[u] = data.onFit[u][sizeInd] 
+                    offFit[u] = data.offFit[u][sizeInd]
+                    if not np.all(np.isnan(onFit[u])) or not np.all(np.isnan(offFit[u])):
+                        sizeUsed[u] = size
+                        break
+        sizeUsed[noRF] = np.nan
+        onFit[isOff | noRF,:] = np.nan
+        offFit[isOn | noRF,:] = np.nan
+        
+#        for uindex, coords in enumerate(CCFCoords):
+#            if any(np.isnan(coords)):
+#                continue
+#            else:
+#                label = data.index.get_level_values('unitLabel')[uindex]
+#                if label == 'on':
+#                    fit = onFit[uindex]
+#                elif label == 'off':
+#                    fit = offFit[uindex]
+#                elif label == 'on off':
+#                    fit = (onFit[uindex] + offFit[uindex])/2
+#                else:
+#                    continue
+#                
+#                if not any(np.isnan(fit[:2])):
+#                    ccf = coords/25
+#                    ccf = ccf.astype(int)
+#                    ccf -= np.array([xRange[0], yRange[0], zRange[0]])
+#                    
+#                    counts[ccf[1], ccf[0], ccf[2]]+=1
+#                    x,y = fit[:2]
+#                    elev[ccf[1], ccf[0], ccf[2]] += y
+#                    azi[ccf[1], ccf[0], ccf[2]] += x        
+        
+        
+        for fitType, sub in zip([onFit, offFit], ['on', 'off']):
             for uindex, coords in enumerate(CCFCoords):
                 if any(np.isnan(coords)):
                     continue
                 else:
-                    label = self.data.index.get_level_values('unitLabel')[uindex]
+                    label = data.index.get_level_values('unitLabel')[uindex]
                     if sub in label:
                         ccf = coords/25
                         ccf = ccf.astype(int)
                         ccf -= np.array([xRange[0], yRange[0], zRange[0]])
                         
                         counts[ccf[1], ccf[0], ccf[2]]+=1
-                        x,y = data[fitType][uindex][data.boxSize[uindex]==10][0][:2]
+                        x,y = fitType[uindex][:2]
                         elev[ccf[1], ccf[0], ccf[2]] += y
                         azi[ccf[1], ccf[0], ccf[2]] += x
+                        if expDate[uindex]=='04132017':
+                            print uindex, x,y
                         
         # plot recording positions
+        ccfCoords = self.getCCFCoords(cellsInRegion)
         for a in range(3):
-            anyCounts = counts.any(axis=a).astype(np.uint8)
-            y,x = np.where(anyCounts)
-            _,contours,_ = cv2.findContours(LPmask.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+#            anyCounts = counts.any(axis=a).astype(np.uint8)
+#            y,x = np.where(anyCounts)
+            ind = [0,1,2]
+            ind.remove(a)
+            y,x = [ccfCoords[i]/25-rng[i][0] for i in ind]
+            contours,_ = cv2.findContours(LPmask.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
             cx,cy = np.squeeze(contours).T
             if a==0:
                 x,y = y,x
                 cx,cy = cy,cx
-            fig = plt.figure(facecolor='w')
+            fig = plt.figure(str(a), facecolor='w')
             ax = fig.add_subplot(1,1,1)
             ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
-            ax.plot(x,y,'ko')
+            ax.plot(x,y,'ro')
             ax.set_aspect('equal')
             ax.axis('off')
             ax.set_xlim([cx.min()-padding,cx.max()+padding])
@@ -844,10 +925,16 @@ class popProbeData():
         
         inSCAxons = self.getSCAxons()
         
+        region = 'LP'
+        cellRegions = self.data.index.get_level_values('region')
+        cellsInRegion = cellRegions==region
+        
+        inSCAxons = inSCAxons[cellsInRegion]
+        ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
+        data = self.data.laserOff.allTrials.gratings[cellsInRegion]        
+        
         sf = np.array([0.01,0.02,0.04,0.08,0.16,0.32])
         tf = np.array([0.5,1,2,4,8])
-        
-        data = self.data.laserOff.run.gratings
         
         hasGratings = data.respMat.notnull()
         
@@ -977,10 +1064,18 @@ class popProbeData():
     
     
     def analyzeOri(self):
+        inSCAxons = self.getSCAxons()
+        
+        region = 'VPM'
+        cellRegions = self.data.index.get_level_values('region')
+        cellsInRegion = cellRegions==region
+        
+        inSCAxons = inSCAxons[cellsInRegion]
+        ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
+        data = self.data.laserOff.allTrials.gratings_ori[cellsInRegion]    
         
         ori = np.arange(0,360,45)
         
-        data = self.data.laserOff.run.gratings_ori
         
         hasGratings = data.respMat.notnull()
         
@@ -1019,16 +1114,22 @@ class popProbeData():
     
     
     def analyzeCheckerboard(self):
-        
         inSCAxons = self.getSCAxons()
         
-        data = self.data.laserOff.allTrials.checkerboard
+        region = 'LP'
+        cellRegions = self.data.index.get_level_values('region')
+        cellsInRegion = cellRegions==region
+        
+        inSCAxons = inSCAxons[cellsInRegion]
+        ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
+        data = self.data.laserOff.stat.checkerboard[cellsInRegion]    
+        
         
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
         
         # get data from units with spikes during checkerboard protocol
         # ignore days with laser trials
-        hasCheckerboard = (data.respMat.notnull()) & (self.data.laserOn.allTrials.checkerboard.respMat.isnull()) 
+        hasCheckerboard = (data.respMat.notnull()) & (self.data.laserOn.stat.checkerboard.respMat.isnull()[cellsInRegion]) 
         respMat = np.stack(data.respMat[hasCheckerboard])
         hasSpikes = respMat.any(axis=2).any(axis=1)
         respMat = respMat[hasSpikes]
@@ -1042,11 +1143,13 @@ class popProbeData():
         respMat = respMat[hasResp]
         uindex = uindex[hasResp]
         
-        # fill in NaNs where no running trials
-        statRespMat = np.stack(self.data.laserOff.stat.checkerboard.respMat[uindex])
-        y,x,z = np.where(np.isnan(respMat))
-        for i,j,k in zip(y,x,z):
-            respMat[i,j,k] = statRespMat[i,j,k]
+        inSCAxonsIndex = inSCAxons[uindex]        
+        
+#        # fill in NaNs where no running trials
+#        statRespMat = np.stack(self.data.laserOff.stat.checkerboard.respMat[uindex])
+#        y,x,z = np.where(np.isnan(respMat))
+#        for i,j,k in zip(y,x,z):
+#            respMat[i,j,k] = statRespMat[i,j,k]
        
 # find distance between RF and patch
 #        onVsOff = np.array(self.data.sparseNoise.onVsOff[uindex])
@@ -1149,22 +1252,42 @@ class popProbeData():
         respMatBaseSub = respMat-respMat[:,patchSpeed==0,bckgndSpeed==0][:,:,None]
         respMatBaseSubNorm = respMatBaseSub/(maxResp-minResp)[:,None,None]
         
-        fig = plt.figure(facecolor='w')
-        gs = gridspec.GridSpec(3,4)
-        for j,(r,title) in enumerate(zip((respMat,respMatNorm,respMatBaseSub,respMatBaseSubNorm),('resp','norm','base sub','base sub norm'))):
-            ax = fig.add_subplot(gs[0,j])
-            rmean = r.mean(axis=0)
-            ax.imshow(rmean,cmap='gray',interpolation='none',origin='lower')
-            ax.set_title(title)
-            
-            ax = fig.add_subplot(gs[1,j])
-            rstd = r.std(axis=0)
-            ax.imshow(rstd,cmap='gray',interpolation='none',origin='lower')
-            ax.set_title(title)
-            
-            ax = fig.add_subplot(gs[2,j])
-            plt.hist(r.ravel())
+        # plot mean response in and out of SC axons        
+        for resp in [respMatNorm[inSCAxonsIndex], respMatNorm[~inSCAxonsIndex]]:
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            r = np.nanmean(resp, axis=0)
+            cLim = np.max(r)
+            im = ax.imshow(r,clim=(0,cLim),cmap='bwr',interpolation='none',origin='lower')
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xticks(np.arange(bckgndSpeed.size))
+            ax.set_xticklabels(bckgndSpeed,fontsize=18)
+            ax.set_yticks(np.arange(patchSpeed.size))
+            ax.set_yticklabels(patchSpeed,fontsize=18)
+            ax.set_xlabel('Background Speed (deg/s)',fontsize=20)
+            ax.set_ylabel('Patch Speed (deg/s)',fontsize=20)
+            plt.tight_layout()
+            plt.colorbar(im)
         
+        for ind, label in zip([inSCAxonsIndex, ~inSCAxonsIndex], ['In SC', 'Out of SC']):
+            fig = plt.figure(label, facecolor='w')
+            gs = gridspec.GridSpec(3,4)
+            for j,(r,title) in enumerate(zip((respMat,respMatNorm,respMatBaseSub,respMatBaseSubNorm),('resp','norm','base sub','base sub norm'))):
+                ax = fig.add_subplot(gs[0,j])
+                rmean = np.nanmean(r[ind], axis=0)
+                ax.imshow(rmean,cmap='gray',interpolation='none',origin='lower')
+                ax.set_title(title)
+                
+                ax = fig.add_subplot(gs[1,j])
+                rstd = np.nanstd(r[ind], axis=0)
+                ax.imshow(rstd,cmap='gray',interpolation='none',origin='lower')
+                ax.set_title(title)
+                
+#                ax = fig.add_subplot(gs[2,j])
+#                plt.hist(r[ind].ravel())
+            
         # plot pc weightings
         for r in (respMat, respMatNorm, respMatBaseSub, respMatBaseSubNorm):
             r = r.reshape((r.shape[0],r[0].size))
@@ -1250,15 +1373,21 @@ class popProbeData():
         
         
     def analyzeLoom(self):
+        
         inSCAxons = self.getSCAxons()
         
-        data = self.data.laserOff.allTrials.loom
+        region = 'PO'
+        cellRegions = self.data.index.get_level_values('region')
+        cellsInRegion = cellRegions==region
+        
+        inSCAxons = inSCAxons[cellsInRegion]
+        ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
+        data = self.data.laserOff.allTrials.loom[cellsInRegion]            
         
         lvRatio = np.array([10,20,40,80])
         
         hasLoom = np.array(data.peakResp.notnull())
         
-        trialConditions = data.trialConditions[hasLoom]
         
         peakResp = np.stack(data.peakResp[hasLoom])
         spontRateMean = np.array(data.spontRateMean[hasLoom])
@@ -1286,6 +1415,20 @@ class popProbeData():
                 ax.set_ylabel('Number of Cells',fontsize=20)
                 ax.set_title(title,fontsize=20)
                 plt.tight_layout()
+        
+        # plot cumulative distribution for inSC and outSC max responses        
+        fig, ax = plt.subplots()
+        for ind, color in zip((inSCInd, ~inSCInd), ('k', 'g')):
+            axmax = 1.05*maxLoomZ.max()
+            h, b = np.histogram(maxLoomZ[ind], bins=np.arange(0, 30, 2))
+            h = h/np.sum(h)
+            ax.plot(b, np.append(np.cumsum(h), 1), color)
+            ax.set_xlim([0, 31])
+            ax.set_ylim([0, 1.1])
+        probeData.formatFigure(fig, ax, 'Max Loom response', xLabel='z-score', yLabel='Cumulative fraction')
+        ax.text(22, 0.2, 'Out of SC axons', {'color':'g'})
+        ax.text(22, 0.1, 'In SC axons', {'color':'k'})    
+        
         
         # histogram of r-value of linear fit
         # linFit = (slope, intercept, r-value, p-value, stderror)
@@ -1317,7 +1460,7 @@ class popProbeData():
         padding = 10
         jitter = 3
         inLP,rng = self.getInLP(padding=padding)
-        ccfCoords = self.getCCFCoords()
+        ccfCoords = self.getCCFCoords(cellsInRegion)
         isGoodFit = linFitLV[:,2]>=0.95
         goodFitInd = hasRespInd[isGoodFit]
         notGoodFitInd = np.union1d(hasNoRespInd,hasRespInd[~isGoodFit])
@@ -1325,7 +1468,7 @@ class popProbeData():
             ind = [0,1,2]
             ind.remove(a)
             y,x = [ccfCoords[i]/25-rng[i][0] for i in ind]
-            _,contours,_ = cv2.findContours(inLP.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            contours,_ = cv2.findContours(inLP.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
             cx,cy = np.squeeze(contours).T
             if a==0:
                 x,y = y,x
@@ -1345,8 +1488,8 @@ class popProbeData():
             
         # compare max loom and checkerboard resp
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
-        checkerData = self.data.laserOff.allTrials.checkerboard
-        hasCheckerboard = (checkerData.respMat.notnull()) & (self.data.laserOn.allTrials.checkerboard.respMat.isnull())
+        checkerData = self.data.laserOff.allTrials.checkerboard[cellsInRegion]
+        hasCheckerboard = (checkerData.respMat.notnull()) & (self.data.laserOn.allTrials.checkerboard.respMat.isnull()[cellsInRegion])
         uindex = np.where(hasCheckerboard & hasLoom)[0]
         respMat = np.stack(checkerData.respMat[uindex])
         spontRateMean = checkerData.spontRateMean[uindex]
@@ -1795,7 +1938,43 @@ class popProbeData():
         maxR = np.nanmax([np.nanmax(sR), np.nanmax(rR)])
         ax.plot([0, maxR], [0, maxR], 'r--')            
         
-    
+    def analyzeRunningCheckerboard(self, laser=False):
+        sR = []
+        rR = []
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        laserCond = 'laserOn' if laser else 'laserOff'
+        for exp in self.experimentFiles:
+            p = self.getProbeDataObj(exp)
+            units, _ = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
+            pind = p.getProtocolIndex('checkerboard')
+            if 'checkerboard_laserOff_run' in p.units[units[0]] and 'checkerboard_laserOff_stat' in p.units[units[0]]:
+                
+                rTrials = p.units[units[0]]['checkerboard_laserOn_run']['trials'] if laser else p.units[units[0]]['checkerboard_laserOff_run']['trials']
+                sTrials = p.units[units[0]]['checkerboard_laserOn_stat']['trials'] if laser else p.units[units[0]]['checkerboard_laserOff_stat']['trials']
+                
+                paramsToMatch = ['trialPatchPos', 'trialBckgndDir', 'trialBckgndSpeed', 'trialPatchDir', 'trialPatchSpeed']
+                
+                sMatchedTrials, rMatchedTrials = self.trialMatch(p, 'checkerboard', paramsToMatch, sTrials, rTrials)
+                
+                sMatchedTrials = np.array(sMatchedTrials)
+                rMatchedTrials = np.array(rMatchedTrials)
+
+                p.analyzeCheckerboard(trials=sMatchedTrials, saveTag='_runningAnalysis_stat_' + laserCond, laser=laser,plot=False)
+                p.analyzeCheckerboard(trials=rMatchedTrials, saveTag='_runningAnalysis_run_' + laserCond, laser=laser, plot=False)
+                for u in units:
+#                    sResponse = np.nanmax(p.units[u]['checkerboard_runningAnalysis_stat_' + laserCond]['respMat'])
+#                    rResponse = np.nanmax(p.units[u]['checkerboard_runningAnalysis_run_' + laserCond]['respMat'])
+                    sResponse = p.units[u]['checkerboard_runningAnalysis_stat_' + laserCond]['respMat']
+                    rResponse = p.units[u]['checkerboard_runningAnalysis_run_' + laserCond]['respMat']
+                    sR.append(sResponse)
+                    rR.append(rResponse)
+        
+        ax.plot(sR, rR, 'ko', alpha=0.5)
+        maxR = np.nanmax([np.nanmax(sR), np.nanmax(rR)])
+        ax.plot([0, maxR], [0, maxR], 'r--')     
+        
+        
     def trialMatch(self, pObj, protocol, paramsToMatch, cond1Trials, cond2Trials):
         
         pind = pObj.getProtocolIndex(protocol)
@@ -1945,21 +2124,69 @@ class popProbeData():
         plt.tight_layout()
         
         return tempShifted, peakToTrough
-
-def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):
-    #waveform array should be units x samples x channels
-    maxChan = [np.unravel_index(np.argmin(t), t.shape)[1] for t in waveformArray]
-    tempArray = [waveformArray[i, :, maxChan[i]] for i in xrange(waveformArray.shape[0])]
     
-    peakToTrough = np.zeros(len(tempArray))       
-    for i,t in enumerate(tempArray):
-        peakInd = np.argmax(np.absolute(t))
-        peakToTrough[i] = (np.argmin(t[peakInd:]) if t[peakInd]>0 else np.argmax(t[peakInd:]))/(sampleRate/1000.0)
-     
+    def findRegions(self, ccfCoords, annotationData=None, tolerance=100):
+        mcc = MouseConnectivityCache(manifest_file='connectivity/mouse_connectivity_manifest.json')
+        struct_df = mcc.get_structures()
+        
+        if annotationData is None:
+            if self.annotationDataFile is None:
+                self.annotationDataFile = fileIO.getFile('Choose annotation data file')
+            annotationData,_ = nrrd.read(self.annotationDataFile)
+            annotationData = annotationData.transpose((1,2,0))
+        
+        ccf = np.copy(ccfCoords)
+        ccf /= 25
+        ccf = np.round(ccf).astype(int)
+        regionID = annotationData[ccf[1], ccf[0], ccf[2]]
+        if regionID!=218:
+
+            #check to see if unit is within 'tolerance' microns of LP        
+            tolerance /= 25
+            inLP, _ = self.getInLP()
+            mask = np.zeros(inLP.shape)
+            rng = [[a-tolerance-1,a+tolerance+1] for a in [ccf[1], ccf[0], ccf[2]]]
+            mask[[slice(r[0],r[1]) for r in rng]] = 1
+            inLP *= mask.astype('bool')
+#            LPregion = np.array(np.where(annotationData==218)).T
+            if np.sum(inLP)>0:            
+                LPregion = np.array(np.where(inLP)).T
+                distances = np.sum((LPregion - [ccf[1], ccf[0], ccf[2]])**2, axis=1)**0.5
+                if distances.min() <= tolerance:
+                    regionID=218
+                
+#            for (y, x, z) in LPregion:
+#                if euclidean([y,x,z],[ccf[1], ccf[0], ccf[2]])<=tolerance:
+#                    regionID=218
+#                    break
+        
+        return struct_df[struct_df['id']==regionID]['acronym'].tolist()[0]
+        
+#        def getUnitsByWaveform(self, cellType = 'FS'):
+                
+        
+def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):
+    #waveform array should be units x samples
+    if waveformArray.ndim==1:
+        waveformArray=waveformArray[None,:]
+    
+        
+    peakToTrough = np.zeros(len(waveformArray))       
+    for iw, w in enumerate(waveformArray):
+#        peakInd = np.argmax(np.absolute(w))
+#        peakToTrough[iw] = (np.argmin(w[peakInd:]) if w[peakInd]>0 else np.argmax(w[peakInd:]))/(sampleRate/1000.0)
+        if any(np.isnan(w)):
+            peakToTrough[iw] = np.nan
+        else:
+            peakInd = np.argmin(w)
+            peakToTrough[iw] = np.argmax(w[peakInd:])/(sampleRate/1000.0)       
+        
+        
+        
     if plot:
         plt.figure(facecolor='w')
         ax = plt.subplot(1,1,1)
-        ax.hist(peakToTrough,np.arange(0,1.2,0.05),color='k')
+        ax.hist(peakToTrough[~np.isnan(peakToTrough)],np.arange(0,1.2,0.05),color='k')
         ax.plot([0.35]*2,[0,180],'k--')
         for side in ('top','right'):
             ax.spines[side].set_visible(False)
@@ -1969,6 +2196,8 @@ def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):
         plt.tight_layout()
      
     return peakToTrough
-     
+
+
+
 if __name__=="__main__":
     pass
