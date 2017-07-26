@@ -688,13 +688,13 @@ class popProbeData():
         plt.tight_layout()
                 
     
-    def makeRFVolume(self, padding=10, sigma=4, weighted=False):
+    def makeRFVolume(self, padding=10, sigma=3, region=None, weighted=False):
         
-        region = 'LP'
-        cellRegions = self.data.index.get_level_values('region')
-        cellsInRegion = cellRegions==region
         if region is None:
             cellsInRegion = np.ones(len(self.data)).astype('bool')
+        else:
+            cellRegions = self.data.index.get_level_values('region')
+            cellsInRegion = cellRegions==region
         
         inLP,rng = self.getInLP(padding=padding)
         LPmask = inLP.astype(float)
@@ -703,7 +703,7 @@ class popProbeData():
         
         CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)[cellsInRegion]
         
-        counts = np.zeros([np.diff(yRange), np.diff(xRange), np.diff(zRange)])
+        counts = np.zeros([r[1]-r[0] for r in rng])
         elev = np.zeros_like(counts)
         azi = np.zeros_like(counts)
         data = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]
@@ -768,8 +768,6 @@ class popProbeData():
                         x,y = fitType[uindex][:2]
                         elev[ccf[1], ccf[0], ccf[2]] += y
                         azi[ccf[1], ccf[0], ccf[2]] += x
-                        if expDate[uindex]=='04132017':
-                            print uindex, x,y
                         
         # plot recording positions
         ccfCoords = self.getCCFCoords(cellsInRegion)
@@ -779,7 +777,8 @@ class popProbeData():
             ind = [0,1,2]
             ind.remove(a)
             y,x = [ccfCoords[i]/25-rng[i][0] for i in ind]
-            contours,_ = cv2.findContours(LPmask.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            contours = cv2.findContours(LPmask.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            contours = contours[0] if len(contours)<3 else contours[1]
             cx,cy = np.squeeze(contours).T
             if a==0:
                 x,y = y,x
@@ -831,12 +830,11 @@ class popProbeData():
                             for i in (0,1,2):
                                 colorMaps[im][y, x, z, i] = RGB[i]
               
-        fullShape = self.getInLP()[0].shape+(3,)
-        del(inLP,LPmask,elev,azi,elev_s,azi_s,counts,mask)
-                            
-        fullMap = [np.full(fullShape,np.nan) for _ in (0,1)]
+        fullShape = self.getInLP()[0].shape+(4,)
+        fullMap = [np.zeros(fullShape,dtype=np.uint8) for _ in (0,1)]
         for i in (0,1):
-            fullMap[i][yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMaps[i]
+            fullMap[i][yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],:3] = colorMaps[i]*255
+            fullMap[i][yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],3][~np.isnan(colorMaps[i][:,:,:,0])] = 255
 
         return fullMap, elev_s, azi_s
     
