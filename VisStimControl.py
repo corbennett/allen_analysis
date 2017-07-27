@@ -238,6 +238,8 @@ class VisStimControl():
                     self._laserAnalogControl.Write(np.array([float(power)]))
         
     def setLaserOff(self):
+        if self.laser is None:
+            return
         if self.laser=='Orange':
             self._digOutputs.WriteBit(1,1)
         else:
