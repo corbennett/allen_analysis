@@ -198,16 +198,16 @@ class MovingCheckerboard(VisStimControl):
                             patchImagePos = copy.copy(patchPos)
                             patchImage = patch
                             if patchPos[0]<self.imageSize[0]/2:
-                                patchImage = patch[:,self.imageSize[0]/2-patchPos[0]:]
+                                patchImage = patch[:,int(self.imageSize[0]/2-patchPos[0]):]
                                 patchImagePos[0] = self.imageSize[0]/2
                             if patchPos[1]<0:
                                 patchImage = patch[-patchPos[1]:,:]
                                 patchImagePos[1] = 0
                             if patchPos[0]+patch.shape[1]>self.imageSize[0]:
-                                patchImage = patch[:,:self.imageSize[0]-patchPos[0]]                  
+                                patchImage = patch[:,:int(self.imageSize[0]-patchPos[0])]                  
                             if patchPos[1]+patch.shape[0]>self.imageSize[1]:
                                 patchImage = patch[:self.imageSize[1]-patchPos[1],:]
-                            checkerboardImage[patchImagePos[1]:patchImagePos[1]+patchImage.shape[0],patchImagePos[0]:patchImagePos[0]+patchImage.shape[1]] = patchImage
+                            checkerboardImage[int(patchImagePos[1]):int(patchImagePos[1]+patchImage.shape[0]),int(patchImagePos[0]):int(patchImagePos[0]+patchImage.shape[1])] = patchImage
                     if trialFrame==self.laserPreFrames+self.trialNumFrames[-1]-1:
                         if self.trialBckgndDir[-1]==0:
                             leftOffset = bckgndOffset
@@ -243,16 +243,19 @@ class MovingCheckerboard(VisStimControl):
         
     def makeCheckerboard(self,shape):
         # shape is nSquares height x nSquares width
+        shape = [int(s) for s in shape]
         checkerboard = self._numpyRandom.randint(0,2,shape).astype(np.uint8)*255
         checkerboard = np.repeat(checkerboard,self._squareSizePix,0)
         checkerboard = np.repeat(checkerboard,self._squareSizePix,1)
         return checkerboard
         
     def shiftBckgnd(self,img,mov,newSqOffset):
+        mov = int(mov)
+        newSqOffset = int(newSqOffset)
         # shift right
         img[:,mov:] = img[:,:-mov]
         # fill in lagging edge
-        img[:,newSqOffset:mov] = np.tile(img[:,mov:mov+1],(1,mov-newSqOffset))
+        img[:,newSqOffset:mov] = img[:,mov][:,None]
         # add new squares
         if newSqOffset>0:
             newSquares = self.makeCheckerboard((math.ceil(img.shape[0]/self._squareSizePix),newSqOffset//self._squareSizePix+1))
