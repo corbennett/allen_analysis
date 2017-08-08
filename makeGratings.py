@@ -153,12 +153,6 @@ class makeGratings(VisStimControl):
             self.contrast = [1]
         else:
             print 'Did not recognize requested experiment type'
-            
-            
-    def setLaserParams(self,laser,power):
-        self.laser = laser
-        self.laserPower = power
-        self.postTime = 180
 
        
 if __name__ == "__main__":

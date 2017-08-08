@@ -118,8 +118,6 @@ class loom(VisStimControl):
         start = np.where(halfTheta>=self.startRadius)[0][0]
         end = np.where(halfTheta<=self.maxRadius)[0][-1]
         return halfTheta[start:end]*self.pixelsPerDeg
-        
-    def setLaserParams(self,laser,power):
-        self.laser = laser
-        self.laserPower = power
-        self.colors = [-1]
+
+if __name__ == "__main__":
+    pass

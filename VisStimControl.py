@@ -143,8 +143,8 @@ class VisStimControl():
         self._laser2AnalogControl.StartTask()
         
         # digital inputs (port 0)
-#        self._digInputs = nidaq.DigitalInputs(device='Dev1',port=0)
-#        self._digInputs.StartTask()
+        self._digInputs = nidaq.DigitalInputs(device='Dev1',port=0)
+        self._digInputs.StartTask()
         
         # digital outputs (port 1)
         # line 0: psychopy acquisition signal
@@ -154,7 +154,7 @@ class VisStimControl():
         self._digOutputs.Write(self._digOutputs.lastOut)
     
     def stopNidaqDevice(self):
-        for task in ['_rotEncoderInput','_laserAnalogControl','_rewardOut','_digInputs','_digOutputs']:
+        for task in ['_rotEncoderInput','_laserAnalogControl','_laser2AnalogControl','_digInputs','_digOutputs']:
             getattr(self,task).StopTask()
             getattr(self,task).ClearTask()
         
@@ -255,7 +255,23 @@ class VisStimControl():
             self._laserAnalogControl.Write(np.array([0.0]))
             if self.laser2 is not None:
                 self._laser2AnalogControl.Write(np.array([0.0]))
-
+                
+    def setLaserParams(self,laser,power,split=False):
+        self.laser = laser
+        self.laserPower = power
+        if split:
+            self.laser2 = 'Blue LED'
+            self.laser2Power = 3.2
+        protocol = self.__module__
+        if protocol=='makeGratings':
+            self.postTime = 180
+        elif protocol=='MovingCheckerboard':
+            self.interTrialInterval = [4,4]
+            self.bckgndSpeed = [0,20,80]
+            self.patchSpeed = [0,20,80]
+        elif protocol=='loom':
+            self.interTrialInterval = 240
+            self.colors = [-1]
 
 def saveParameters(fileOut,paramDict,dictName=None):
     for key,val in paramDict.items():

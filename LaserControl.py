@@ -49,6 +49,16 @@ class LaserControl():
         self.deviceMenu.addItems(self.devices)
         self.deviceMenu.currentIndexChanged.connect(self.deviceMenuCallback)
         
+        self.analogOut0Button = QtGui.QRadioButton('0')
+        self.analogOut0Button.setChecked(True)
+        self.analogOut1Button = QtGui.QRadioButton('1')
+        self.analogOutGroupLayout = QtGui.QHBoxLayout()
+        for button in (self.analogOut0Button,self.analogOut1Button):
+            button.clicked.connect(self.analogOutButtonCallback)
+            self.analogOutGroupLayout.addWidget(button)
+        self.analogOutGroupBox = QtGui.QGroupBox('Analog Out Channel')
+        self.analogOutGroupBox.setLayout(self.analogOutGroupLayout)
+        
         self.powerControl = QtGui.QDoubleSpinBox()
         self.powerControl.setPrefix('Power:  ')
         self.powerControl.valueChanged.connect(self.powerControlCallback)
@@ -109,7 +119,8 @@ class LaserControl():
         self.mainLayout = QtGui.QGridLayout()
         self.mainWidget.setLayout(self.mainLayout)
         setLayoutGridSpacing(self.mainLayout,winHeight,winWidth,5,3)
-        self.mainLayout.addWidget(self.deviceMenu,0,1,1,1)
+        self.mainLayout.addWidget(self.deviceMenu,0,0,1,1)
+        self.mainLayout.addWidget(self.analogOutGroupBox,0,1,1,1)
         self.mainLayout.addWidget(self.grayScreenCheckbox,0,2,1,1)
         self.mainLayout.setAlignment(self.grayScreenCheckbox,QtCore.Qt.AlignHCenter)
         self.mainLayout.addWidget(self.powerControl,1,0,1,1)
@@ -125,6 +136,7 @@ class LaserControl():
         self.mainWin.show()
         
     def deviceMenuCallback(self,ind):
+        self.closeDevice()
         self.selectedDevice = self.devices[ind]
         if self.selectedDevice!='LED': 
             self.serialPort = serial.Serial()
@@ -137,6 +149,7 @@ class LaserControl():
             if self.selectedDevice=='Blue Laser':
                 self.serialPort.write('em\r sdmes 0\r sames 1\r') # analog modulation mode
         if self.selectedDevice=='Orange Laser':
+            self.analogOutGroupBox.setEnabled(False)
             self.controlType = 'digital'
             self.nidaqDigitalOut = nidaq.DigitalOutputs(device='Dev1',port=1,initialState='high')
             self.nidaqDigitalOut.StartTask()
@@ -150,23 +163,34 @@ class LaserControl():
             self.zeroOffsetControl.setEnabled(False)
             self.rampDurControl.setEnabled(False)
         else:
+            self.analogOutGroupBox.setEnabled(True)
             self.controlType = 'analog'
-            self.nidaqAnalogOut = nidaq.AnalogOutput(device='Dev1',channel=0,voltageRange=(0,5))
-            self.nidaqAnalogOut.StartTask()
-            self.nidaqAnalogOut.Write(np.array([0.0]))
             self.powerControl.setSuffix(' V')
             self.powerControl.setDecimals(2)
             self.powerControl.setSingleStep(0.05)
             if self.selectedDevice=='LED':
+                self.analogOut1Button.setChecked(True)
                 self.powerControl.setRange(0,5)
                 self.powerControl.setValue(2)
                 self.zeroOffsetControl.setValue(0.25)
             else:
+                self.analogOut0Button.setChecked(True)
                 self.powerControl.setRange(0,1.3)
                 self.powerControl.setValue(1)
                 self.zeroOffsetControl.setValue(0.6)
             self.zeroOffsetControl.setEnabled(True)
             self.rampDurControl.setEnabled(True)
+            self.initAnalogOut()
+            
+    def analogOutButtonCallback(self):
+        self.initAnalogOut()
+        
+    def initAnalogOut(self):
+        self.closeAnalogOut()
+        ch = 0 if self.analogOut0Button.isChecked() else 1
+        self.nidaqAnalogOut = nidaq.AnalogOutput(device='Dev1',channel=ch,voltageRange=(0,5))
+        self.nidaqAnalogOut.StartTask()
+        self.nidaqAnalogOut.Write(np.array([0.0]))
         
     def powerControlCallback(self,val):
         if self.controlType=='digital':
@@ -237,12 +261,6 @@ class LaserControl():
             else:
                 self.nidaqAnalogOut.Write(np.array([0.0]))
                 
-# pulseSamples = round(self.nidaqAnalogOut.sampRate*self.pulseDurControl.value())
-# intervalSamples = round(self.nidaqAnalogOut.sampRate*self.pulseIntervalControl.value())
-# pulseTrain = np.zeros((self.pulseNumControl.value(),pulseSamples+intervalSamples))
-# pulseTrain[:,:pulseSamples] = self.powerControl.value()
-# self.nidaqAnalogOut.Write(pulseTrain.ravel()[:-intervalSamples+1])
-                
     def grayScreenCheckboxCallback(self):
         if self.visControl is None:
             self.visControl = VisStimControl.VisStimControl()
@@ -255,12 +273,18 @@ class LaserControl():
     def closeDevice(self):
         if self.serialPort is not None:
             self.serialPort.close()
+            self.serialPort = None
         if self.nidaqDigitalOut is not None:
             self.nidaqDigitalOut.StopTask()
             self.nidaqDigitalOut.ClearTask()
+            self.nidaqDigitalOut = None
+        self.closeAnalogOut()
+        
+    def closeAnalogOut(self):
         if self.nidaqAnalogOut is not None:
             self.nidaqAnalogOut.StopTask()
             self.nidaqAnalogOut.ClearTask()
+            self.nidaqAnalogOut = None
         
     def mainWinCloseEvent(self,event):
         if self.visControl is not None:

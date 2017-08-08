@@ -152,11 +152,6 @@ class makeSparseNoise(VisStimControl):
         else:
             random.shuffle(self._parameterCombos)
             return self._parameterCombos
-            
-            
-    def setLaserParams(self,laser,power):
-        self.laser = laser
-        self.laserPower = power
  
         
 if __name__ == "__main__":
