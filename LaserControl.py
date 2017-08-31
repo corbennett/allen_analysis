@@ -33,6 +33,7 @@ class LaserControl():
         self.nidaqAnalogOut = None
         self.nidaqSecondaryAnalogOut = None
         self.visControl = None
+        self.dualPower = [0.86,2.3]
         
         winWidth = 500
         winHeight = 300
@@ -180,7 +181,7 @@ class LaserControl():
             self.controlType = 'analog'
             self.powerControl.setSuffix(' V')
             self.powerControl.setDecimals(2)
-            self.powerControl.setSingleStep(0.05)
+            self.powerControl.setSingleStep(0.01)
             if self.selectedDevice=='LED':
                 self.analogOut1Button.setChecked(True)
                 self.powerControl.setRange(0,5)
@@ -209,8 +210,8 @@ class LaserControl():
             self.nidaqSecondaryAnalogOut = nidaq.AnalogOutput(device='Dev1',channel=1,voltageRange=(0,5))
             self.nidaqSecondaryAnalogOut.StartTask()
             self.nidaqSecondaryAnalogOut.Write(np.array([0.0]))
-            self.powerControl.setValue(0.91)
-            self.secondaryPowerControl.setValue(3.2)
+            self.powerControl.setValue(self.dualPower[0])
+            self.secondaryPowerControl.setValue(self.dualPower[1])
             self.secondaryPowerControl.setEnabled(True)
         else:
             self.secondaryPowerControl.setEnabled(False)
@@ -314,6 +315,7 @@ class LaserControl():
             self.serialPort.close()
             self.serialPort = None
         if self.nidaqDigitalOut is not None:
+            self.nidaqDigitalOut.WriteBit(self.nidaqDigitalOutCh,1)
             self.nidaqDigitalOut.StopTask()
             self.nidaqDigitalOut.ClearTask()
             self.nidaqDigitalOut = None
@@ -321,10 +323,12 @@ class LaserControl():
         
     def closeAnalogOut(self):
         if self.nidaqAnalogOut is not None:
+            self.nidaqAnalogOut.Write(np.array([0.0]))
             self.nidaqAnalogOut.StopTask()
             self.nidaqAnalogOut.ClearTask()
             self.nidaqAnalogOut = None
         if self.nidaqSecondaryAnalogOut is not None:
+            self.nidaqSecondaryAnalogOut.Write(np.array([0.0]))
             self.nidaqSecondaryAnalogOut.StopTask()
             self.nidaqSecondaryAnalogOut.ClearTask()
             self.nidaqSecondaryAnalogOut = None
