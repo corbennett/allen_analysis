@@ -40,7 +40,14 @@ class popProbeData():
         expDates,_ = self.getExperimentInfo()
         self.experimentFiles = [z[0] for z in sorted(zip(filePaths,[datetime.datetime.strptime(date,'%m%d%Y') for date in expDates]),key=lambda i: i[1])]
         
-        
+    
+    def getExcelFile(self):
+        filePath = fileIO.getFile(caption='Choose excel file with unit labels',fileType='*.xlsx')
+        if filePath=='':
+            return
+        self.excelFile = filePath
+    
+    
     def getExperimentInfo(self):
         expDate =[]
         anmID = []
@@ -71,10 +78,7 @@ class popProbeData():
         
     def getUnitLabels(self,probeDataObj=None,save=False):
         if self.excelFile is None:
-            filePath = fileIO.getFile(caption='Choose excel file with unit labels',fileType='*.xlsx')
-            if filePath=='':
-                return
-            self.excelFile = filePath
+            self.getExcelFile()
         if probeDataObj is None:
             for exp in self.experimentFiles:
                 p = self.getProbeDataObj(exp)
@@ -85,7 +89,7 @@ class popProbeData():
             probeDataObj.readExcelFile(fileName=self.excelFile)
     
     
-    def makeDataFrame(self,analyzeExperiments=False):
+    def makeDataFrame(self,analyzeExperiments=False,findRegion=True):
         # determine which experiments to append to dataframe
         if self.experimentFiles is None:
             self.getExperimentFiles()
@@ -103,15 +107,17 @@ class popProbeData():
             self.analyzeExperiments(exps)
             
         # dataFrame rows
-        rowNames = ('experimentDate','animalID','unitID','unitLabel','ccfX','ccfY','ccfZ', 'region')
+        rowNames = ('experimentDate','animalID','genotype','unitID','unitLabel','ccfX','ccfY','ccfZ', 'region','photoTag')
         experimentDate = []
         animalID = []
+        genotype = []
         unitID = []
         unitLabel = []
         ccfX = []
         ccfY = []
         ccfZ = []
         region = []
+        photoTag = []
         
         # dataFrame columns
         columnNames = ('laserState','runState','paramType','paramName')
@@ -135,12 +141,18 @@ class popProbeData():
             for u in units:
                 experimentDate.append(expDate)
                 animalID.append(anmID)
+                genotype.append(p.genotype)
                 unitID.append(u)
                 unitLabel.append(p.units[u]['label'])
+                photoTag.append(p.units[u]['laserResp'])
                 for i,c in enumerate((ccfX,ccfY,ccfZ)):
                     c.append(p.units[u]['CCFCoords'][i])
                 
-                region.append(self.findRegions(p.units[u]['CCFCoords']))
+                if findRegion:
+                    region.append(self.findRegions(p.units[u]['CCFCoords']))
+                else:
+                    region.append(np.nan)
+                
                 if 'waveform' in p.units[u]:
                     w = p.units[u]['waveform']
                     maxChan = np.unravel_index(np.argmin(w), w.shape)[1]
@@ -148,10 +160,10 @@ class popProbeData():
                 else:
                     w = np.full(82, np.nan)
                 data['laserOff']['allTrials']['waveform']['waveform'].append(w)
+                
                 for laserLabel in laserLabels:
                     for runLabel in runLabels:
                         for protocol in protocols:
-
                             tag = 'gratings_stf' if protocol=='gratings' else protocol
                             tag += '_'+laserLabel+'_'+runLabel
                             if tag not in p.units[u]:
@@ -169,7 +181,7 @@ class popProbeData():
                             
         
         # build dataframe
-        rows = pd.MultiIndex.from_arrays([experimentDate,animalID,unitID,unitLabel,ccfX,ccfY,ccfZ, region],names=rowNames)
+        rows = pd.MultiIndex.from_arrays([experimentDate,animalID,genotype,unitID,unitLabel,ccfX,ccfY,ccfZ,region,photoTag],names=rowNames)
         cols = pd.MultiIndex.from_arrays([laserState,runState,paramType,paramName],names=columnNames)
         dframe = pd.DataFrame(index=rows,columns=cols)
         for laserLabel in data:
@@ -228,8 +240,32 @@ class popProbeData():
         else:
             rng = [[0,s] for s in inLP.shape]
         return inLP,rng
+        
+        
+    def getIsPhotoTagged(self):
+        i = np.array(self.data.index.get_level_values('photoTag').tolist())
+        i[np.isnan(i)] = 0
+        isPhotoTagged = i.astype(bool)
+        return isPhotoTagged
     
-                
+    
+    def plotLaserRaster(self):
+        # plots spontaneous laser response
+        # fig number is the dataframe index for each unit plotted
+        if self.experimentFiles is None:
+            self.getExperimentFiles()
+        if self.excelFile is None:
+            self.getExcelFile()
+        figNumStart = 0
+        for exp in self.experimentFiles:
+            p = self.getProbeDataObj(exp)
+            expDate,animalID = p.getExperimentInfo()
+            table = pd.read_excel(self.excelFile,sheetname=expDate+'_'+animalID)
+            if table.Genotype[0]=='Ntsr1 Cre x Ai32':
+                p.plotLaserRaster(figNum=figNumStart,nonMU=True)
+            figNumStart += np.sum((self.data.index.get_level_values('experimentDate')==expDate) & (self.data.index.get_level_values('animalID')==animalID))
+    
+            
     def analyzeRF(self):
         
         inSCAxons = self.getSCAxons()
@@ -2143,7 +2179,7 @@ class popProbeData():
             tolerance /= 25
             inLP, _ = self.getInLP()
             mask = np.zeros(inLP.shape)
-            rng = [[a-tolerance-1,a+tolerance+1] for a in [ccf[1], ccf[0], ccf[2]]]
+            rng = [[int(a-tolerance-1),int(a+tolerance+1)] for a in [ccf[1], ccf[0], ccf[2]]]
             mask[[slice(r[0],r[1]) for r in rng]] = 1
             inLP *= mask.astype('bool')
 #            LPregion = np.array(np.where(annotationData==218)).T
@@ -2168,7 +2204,6 @@ def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):
     if waveformArray.ndim==1:
         waveformArray=waveformArray[None,:]
     
-        
     peakToTrough = np.zeros(len(waveformArray))       
     for iw, w in enumerate(waveformArray):
 #        peakInd = np.argmax(np.absolute(w))
@@ -2178,9 +2213,7 @@ def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):
         else:
             peakInd = np.argmin(w)
             peakToTrough[iw] = np.argmax(w[peakInd:])/(sampleRate/1000.0)       
-        
-        
-        
+    
     if plot:
         plt.figure(facecolor='w')
         ax = plt.subplot(1,1,1)
@@ -2194,7 +2227,6 @@ def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):
         plt.tight_layout()
      
     return peakToTrough
-
 
 
 if __name__=="__main__":

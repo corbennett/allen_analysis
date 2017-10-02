@@ -1059,7 +1059,7 @@ class probeData():
             # make similar matrices for pre-trial spike rate, spike density functons, and f1/f0
             respMat = np.full((len(tf),len(sf),len(ori)),np.nan)
             preTrialMat = respMat.copy()
-            sdf = np.full(respMat.shape+(round(sdfSamples/self.sampleRate/sdfSampInt),),np.nan)
+            sdf = np.full(respMat.shape+(int(round(sdfSamples/self.sampleRate/sdfSampInt)),),np.nan)
             f1f0Mat = respMat.copy()
             contrastTrials = trialContrast>0+tol
             for tfInd,thisTF in enumerate(tf):
@@ -1514,8 +1514,8 @@ class probeData():
             numFullTrials = v['stimStartFrames'].size - 1
             trials = trials[trials<numFullTrials]
         
-#        if len(trials) == 0:            
-#            return
+        if len(trials) == 0:            
+            return
         
         trialStarts = v['frameSamples'][v['stimStartFrames'][trials]]
         trialFrameLengths = (np.diff(v['stimStartFrames']) - v['interTrialInterval'])[trials]
@@ -1542,21 +1542,21 @@ class probeData():
             halfTheta = np.arctan(lv/time)[::-1] * (180./np.pi)
             start = np.where(halfTheta>=v['startRadius'])[0][0]
             timeToCollision.append(360000 - start)
-            plt.plot(halfTheta[360000-9168:])
+#            plt.plot(halfTheta[360000-9168:])
             
-        sdfPadding = round(0.4/sdfSampInt)
+        sdfPadding = int(round(0.4/sdfSampInt))
         
         for uindex, unit in enumerate(units):
             spikes = self.units[str(unit)]['times'][str(protocol)]
-            sdf = np.full((trialConditions.shape[0],round(sdfSamples/self.sampleRate/sdfSampInt)),np.nan)
+            sdf = np.full((trialConditions.shape[0],int(round(sdfSamples/self.sampleRate/sdfSampInt))),np.nan)
             peakTimeFromCollision = np.full(trialConditions.shape[0], np.nan)
             peakResp = np.full(trialConditions.shape[0], np.nan)
 
             for ic, c in enumerate(trialConditions):
                 condTrials = np.array([i for i,t in enumerate(trialParams) if all(t == c)])
                 if condTrials.size>0:
-                    thissdf, sdfTime = self.getSDF(spikes, trialEnds[condTrials] - np.median(trialSampleLengths[condTrials]), np.median(trialSampleLengths[condTrials]), sigma=sdfSigma)
-                    collision = timeToCollision[np.where(np.unique(trialLV)==c[0])[0]]
+                    thissdf, sdfTime = self.getSDF(spikes, trialEnds[condTrials] - np.median(trialSampleLengths[condTrials]), np.median(trialSampleLengths[condTrials]), sigma=sdfSigma)                    
+                    collision = timeToCollision[int(np.where(np.unique(trialLV)==c[0])[0])]
                     thissdf = thissdf[:collision+sdfPadding]
                     sdf[ic, -thissdf.size:] = thissdf
                     peakTimeFromCollision[ic] = sdf.shape[1] - np.nanargmax(sdf[ic]) - sdfPadding
@@ -1603,8 +1603,8 @@ class probeData():
                 for ic, c in enumerate(trialConditions):
                     xaxis = int(np.where(np.unique(trialPos[:, 0]) == c[1])[0])
                     yaxis = abs(int(np.where(np.unique(trialPos[:, 1]) == c[2])[0])-1)
-                    linecolor = colors[np.where(np.unique(trialColor) == c[3])[0]]
-                    alpha = alphas[np.where(np.unique(trialLV) == c[0])[0]]
+                    linecolor = colors[int(np.where(np.unique(trialColor) == c[3])[0])]
+                    alpha = alphas[int(np.where(np.unique(trialLV) == c[0])[0])]
                     ax = fig.add_subplot(gs[yaxis, xaxis])
                     ax.plot(sdf[ic], color=linecolor, alpha=alpha)
                     ax.set_ylim([0, np.nanmax(sdf)])
@@ -2488,9 +2488,8 @@ class probeData():
         return peaks
     
     
-    def plotRaster(self,unit,protocol,startSamples=None,offset=0,windowDur=None,paramNames=None,paramColors=None,grid=False):
+    def plotRaster(self,unit,protocol,startSamples=None,offset=0,windowDur=None,paramNames=None,paramColors=None,grid=False,axes=None):
         # offset and windowDur input in seconds then converted to samples
-        protocol = str(protocol)
         offset = int(offset*self.sampleRate)
         params = []
         if startSamples is None:
@@ -2510,7 +2509,7 @@ class probeData():
             windowDur = int(windowDur*self.sampleRate)
             windowDur = [windowDur for _ in startSamples]
         startSamples = startSamples+offset
-        spikes = self.units[str(unit)]['times'][protocol]
+        spikes = self.units[str(unit)]['times'][str(protocol)]
         
         if paramColors is None:
             paramColors = [None]*len(params)
@@ -2520,23 +2519,29 @@ class probeData():
                     paramColors[i] = cm.Dark2(range(0,256,int(256/len(set(params[i])))))
                     break
         grid = True if grid and len(paramNames)==2 else False
-         
-        plt.figure(facecolor='w')
-        if grid:
-            axes = []
-            rows = []
-            gs = gridspec.GridSpec(len(set(params[1])),len(set(params[0])))
+        
+        if axes is None:
+            plt.figure(facecolor='w')
+            if grid:
+                axes = []
+                rows = []
+                gs = gridspec.GridSpec(len(set(params[1])),len(set(params[0])))
+            else:
+                axes = [plt.subplot(1,1,1)]
+                rows = [0]
+                gs = None
         else:
-            axes = [plt.subplot(1,1,1)]
+            axes = [axes]
             rows = [0]
             gs = None
+            
         if len(params)<1:
             self.appendToRaster(axes,spikes,startSamples,offset,windowDur,rows=rows)
         else:
             self.parseRaster(axes,spikes,startSamples,offset,windowDur,params,paramColors,rows=rows,grid=grid,gs=gs)
         for ax,r in zip(axes,rows):
             ax.set_xlim([offset/self.sampleRate,(max(windowDur)+offset)/self.sampleRate])
-            ax.set_ylim([-0.5,r+0.5])
+            ax.set_ylim([-0.5,r-0.5])
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False)
@@ -2546,7 +2551,7 @@ class probeData():
             else:
                 ax.set_xlabel('Time (s)')
                 ax.set_ylabel('Trial')
-        axes[-1].set_title('Unit '+str(unit))
+        axes[-1].set_title('Unit '+str(unit)+', '+self.getProtocolLabel(protocol))
          
          
     def parseRaster(self,axes,spikes,startSamples,offset,windowDur,params,paramColors,paramIndex=0,trialsIn=None,rows=[0],grid=False,gs=None,grow=None,gcol=0):
@@ -2579,6 +2584,26 @@ class probeData():
             spikeTimes = (spikes[np.logical_and(spikes>startSamples[i],spikes<startSamples[i]+windowDur[i])]-startSamples[i]+offset)/self.sampleRate
             axes[-1].vlines(spikeTimes,rows[-1]-0.4,rows[-1]+0.4,color=color)
             rows[-1] += 1
+            
+            
+    def plotLaserRaster(self,units=None,figNum=None,nonMU=False):
+        if units is None:
+            if nonMU:
+                units,_ = self.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
+            else:
+                units,_ = self.getOrderedUnits()
+        elif not isinstance(units,(list,tuple)):
+            units = [units]
+        laserProtocols = [protocol for protocol,label in enumerate(self.kwdFileList) if 'laser' in label]
+        if len(laserProtocols)>0:
+            for u in units:
+                if figNum is not None:
+                    figNum += 1
+                f = plt.figure(num=figNum,figsize=(10,10))
+                for ind,protocol in enumerate(laserProtocols):
+                    ax = f.add_subplot(len(laserProtocols),1,ind+1)
+                    laserStartSamples = self.behaviorData[str(protocol)]['137_pulses'][0]
+                    self.plotRaster(u,str(protocol),laserStartSamples,offset=-2,windowDur=6,axes=ax)
     
     
     def runAllAnalyses(self, units=None, protocolsToRun=None, splitRunning=False, useCache=False, plot=True):
@@ -3021,11 +3046,17 @@ class probeData():
                 return        
         
         table = pandas.read_excel(fileName, sheetname=sheetname)
+                
+        if 'Genotype' in table.columns:
+            self.genotype = table.Genotype[0]
+        else:
+            self.genotype = ''
+            
         for u in range(table.shape[0]):
             unit = table.Cell[u]
             if not np.isnan(unit):
-                label = table.Label[u]
-                self.units[str(int(unit))]['label'] = label
+                self.units[str(int(unit))]['label'] = table.Label[u]
+                self.units[str(int(unit))]['laserResp'] = table['Laser Resp'][u]
         assert(all('label' in self.units[u] for u in self.units.keys()))
             
         try:
@@ -3331,7 +3362,7 @@ class probeData():
         
         dataThresh_rev = dataThresh[::-1]
         pulseOff = np.where(dataThresh_rev[1:]>dataThresh_rev[:-1])[0]
-        goodPoints = np.where(pulseOff[1:] - pulseOff[:-1] > 100000)[0]
+        goodPoints = np.where(pulseOff[1:] - pulseOff[:-1] > 1000)[0]
         goodPoints += 1
         goodPoints = np.insert(goodPoints, 0, 0)
         pulseEnds = (dataThresh.size - pulseOff[goodPoints])[::-1]
