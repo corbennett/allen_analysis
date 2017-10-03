@@ -246,7 +246,9 @@ class popProbeData():
         i = np.array(self.data.index.get_level_values('photoTag').tolist())
         i[np.isnan(i)] = 0
         isPhotoTagged = i.astype(bool)
-        return isPhotoTagged
+        notPhotoTagged = self.data.index.get_level_values('genotype')=='Ntsr1 Cre x Ai32'
+        notPhotoTagged[isPhotoTagged] = False
+        return isPhotoTagged,notPhotoTagged
     
     
     def plotLaserRaster(self):
@@ -1156,7 +1158,7 @@ class popProbeData():
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
-        data = self.data.laserOff.stat.checkerboard[cellsInRegion]    
+        data = self.data.laserOff.allTrials.checkerboard[cellsInRegion]    
         
         
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])

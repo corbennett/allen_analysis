@@ -1081,26 +1081,31 @@ class probeData():
                             pwr **= 0.5
                             f1Ind = np.argmin(np.absolute(f-thisTF))
                             f1f0Mat[tfInd,sfInd,oriInd] = pwr[f1Ind-1:f1Ind+2].max()/s.mean()
-                            
+            
+            peakRespMat = np.nanmax(sdf[:,:,:,inAnalysisWindow],axis=3)               
             if usePeakResp:
-                respMat = np.nanmax(sdf[:,:,:,inAnalysisWindow],axis=3)
+                respMat = peakRespMat
             
             # calculate spontRate from gray screen trials
             grayTrials = trialContrast<0+tol
             if any(grayTrials):
+                peakSpontRateDist = self.getSDFNoise(spikes,trialStartSamples[grayTrials],max(trialEndSamples[grayTrials]-trialStartSamples[grayTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
+                peakSpontRateMean = peakSpontRateDist.mean()
+                peakSpontRateStd = peakSpontRateDist.std()
                 if usePeakResp:
-                    spontRateDist = self.getSDFNoise(spikes,trialStartSamples[grayTrials],max(trialEndSamples[grayTrials]-trialStartSamples[grayTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
+                    spontRateMean = peakSpontRateMean
+                    spontRateStd = peakSpontRateStd
                 else:
                     nreps = 100
                     spontRateDist = np.zeros(nreps)
                     grayTrialInd = np.where(grayTrials)[0]
                     for ind in range(nreps):
                         spontRateDist[ind] = trialResp[np.random.choice(grayTrialInd,grayTrialInd.size)].mean()
-                spontRateMean = spontRateDist.mean()
-                spontRateStd = spontRateDist.std()
+                    spontRateMean = spontRateDist.mean()
+                    spontRateStd = spontRateDist.std()
                 hasResp = respMat>spontRateMean+5*spontRateStd
             else:
-                spontRateMean = spontRateStd =  np.nan
+                spontRateMean = spontRateStd = peakSpontRateMean = peakSpontRateStd = np.nan
                 hasResp = np.zeros_like(respMat,dtype=bool)
             
             # find significant responses
@@ -1167,6 +1172,9 @@ class probeData():
                                           'respMat': respMat,
                                           'f1f0Mat': f1f0Mat,
                                           'trials': trials,
+                                          'peakSpontRateMean': peakSpontRateMean,
+                                          'peakSpontRateStd': peakSpontRateStd,
+                                          'peakRespMat': peakRespMat,
                                           '_sdf': sdf,
                                           '_sdfTime': sdfTime}
             if protocolType=='stf':
