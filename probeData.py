@@ -3064,7 +3064,10 @@ class probeData():
             unit = table.Cell[u]
             if not np.isnan(unit):
                 self.units[str(int(unit))]['label'] = table.Label[u]
-                self.units[str(int(unit))]['laserResp'] = table['Laser Resp'][u]
+                if 'Laser Resp' in table.keys():
+                    self.units[str(int(unit))]['laserResp'] = table['Laser Resp'][u]
+                else:
+                    self.units[str(int(unit))]['laserResp'] = np.nan
         assert(all('label' in self.units[u] for u in self.units.keys()))
             
         try:
