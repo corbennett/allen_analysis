@@ -3110,6 +3110,8 @@ class probeData():
         zSlope = zRange/trackLength
                         
         units, unitsYPos = self.getOrderedUnits()
+        if min(unitsYPos)>0:
+            unitsYPos = [y-1260 for y in unitsYPos]
         for i, unit in enumerate(units):
             distFromTip = unitsYPos[i] - tipProbePos
             pos = np.array([xSlope, ySlope, zSlope])*distFromTip

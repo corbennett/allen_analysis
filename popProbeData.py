@@ -10,6 +10,7 @@ import clust, fileIO, probeData
 import cv2, datetime, math, nrrd, os, re, itertools
 import numpy as np
 import pandas as pd
+from xml.dom import minidom
 import scipy.stats
 from scipy.spatial.distance import euclidean
 from matplotlib import pyplot as plt
@@ -25,7 +26,8 @@ class popProbeData():
         self.experimentFiles = None
         self.excelFile = None
         self.data = None
-        self.annotationDataFile = None
+        self.annotationData = None
+        self.annotationStructures = None
     
     
     def getExperimentFiles(self,append=False):
@@ -141,10 +143,16 @@ class popProbeData():
             for u in units:
                 experimentDate.append(expDate)
                 animalID.append(anmID)
-                genotype.append(p.genotype)
+                if hasattr(p,'genotype'):
+                    genotype.append(p.genotype)
+                else:
+                    genotype.append('')
                 unitID.append(u)
                 unitLabel.append(p.units[u]['label'])
-                photoTag.append(p.units[u]['laserResp'])
+                if 'laserResp' in p.units[u].keys():
+                    photoTag.append(p.units[u]['laserResp'])
+                else:
+                    photoTag.append(False)
                 for i,c in enumerate((ccfX,ccfY,ccfZ)):
                     c.append(p.units[u]['CCFCoords'][i])
                 
@@ -227,19 +235,33 @@ class popProbeData():
         return inSCAxons
         
         
-    def getInLP(self,padding=None):
-        if self.annotationDataFile is None:
-            self.annotationDataFile = fileIO.getFile('Choose annotation data file')
-        annotationData,_ = nrrd.read(self.annotationDataFile)
-        annotationData = annotationData.transpose((1,2,0))
-        inLP = annotationData==218
-        inLP[:,inLP.shape[1]//2:,:] = False
+    def getRegionID(self,regionLabel):
+        if self.annotationStructures is None:
+            f = fileIO.getFile('Choose annotation structures file','*.xml')
+            self.annotationStructures = minidom.parse(f)
+        for structure in self.annotationStructures.getElementsByTagName('structure'):
+            if structure.childNodes[7].childNodes[0].nodeValue[1:-1]==regionLabel:
+                return [int(sub.childNodes[0].nodeValue) for sub in structure.getElementsByTagName('id')]
+        return []
+        
+        
+    def getInRegion(self,regionLabel,padding=None):
+        if self.annotationData is None:
+            self.getAnnotationData()
+        regionID = self.getRegionID(regionLabel)
+        inRegion = np.in1d(self.annotationData,regionID).reshape(self.annotationData.shape)
+        inRegion[:,inRegion.shape[1]//2:,:] = False
         if padding is not None:
-            rng = [[a.min()-padding,a.max()+padding] for a in np.where(inLP)]
-            inLP = inLP[[slice(r[0],r[1]) for r in rng]]
+            rng = [[a.min()-padding,a.max()+padding] for a in np.where(inRegion)]
+            inRegion = inRegion[[slice(r[0],r[1]) for r in rng]]
         else:
-            rng = [[0,s] for s in inLP.shape]
-        return inLP,rng
+            rng = [[0,s] for s in inRegion.shape]
+        return inRegion,rng
+        
+        
+    def getAnnotationData(self):
+        f = fileIO.getFile('Choose annotation data file','*.nrrd')
+        self.annotationData = nrrd.read(f)[0].transpose((1,2,0))
         
         
     def getIsPhotoTagged(self):
@@ -263,10 +285,66 @@ class popProbeData():
             p = self.getProbeDataObj(exp)
             expDate,animalID = p.getExperimentInfo()
             table = pd.read_excel(self.excelFile,sheetname=expDate+'_'+animalID)
-            if table.Genotype[0]=='Ntsr1 Cre x Ai32':
+            if 'Genotype' not in table.keys() or table.Genotype[0]=='Ntsr1 Cre x Ai32':
                 p.plotLaserRaster(figNum=figNumStart,nonMU=True)
             figNumStart += np.sum((self.data.index.get_level_values('experimentDate')==expDate) & (self.data.index.get_level_values('animalID')==animalID))
-    
+            
+            
+    def plotOMI(self):
+        omiLabel = ('spont','sparseNoise','gratings','checkerboard','loom')
+        omi = []
+        
+        # spont
+        spontOmi = []
+        windowDur = 15000
+        for exp in self.experimentFiles:
+            p = self.getProbeDataObj(exp)
+            protocol = p.getProtocolIndex('laser2')
+            if protocol is None:
+                protocol = p.getProtocolIndex('laser')
+            pulseStarts,pulseEnds,pulseAmps = p.behaviorData[str(protocol)]['137_pulses']
+            for u in p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))[0]:
+                spikes = p.units[u]['times'][str(protocol)]
+                controlResp = np.mean(p.findSpikesPerTrial(pulseStarts-windowDur,pulseStarts,spikes))
+                laserResp = np.mean(p.findSpikesPerTrial(pulseEnds-windowDur,pulseEnds,spikes))
+                spontOmi.append((laserResp-controlResp)/(laserResp+controlResp))
+        omi.append(np.array(spontOmi))
+        
+        # sparseNoise
+        controlMax,laserMax = [np.maximum(*[np.stack(self.data[laser].allTrials.sparseNoise[onOff]).max(axis=(1,2,3)) for onOff in ('onResp','offResp')]) for laser in ('laserOff','laserOn')]
+        omi.append((laserMax-controlMax)/(laserMax+controlMax))
+        
+        # gratings
+        controlMax,laserMax = [np.stack(self.data[laser].allTrials.gratings.respMat).max(axis=(1,2,3)) for laser in ('laserOff','laserOn')]
+        omi.append((laserMax-controlMax)/(laserMax+controlMax))
+        
+        # checkerboard
+        controlMax,laserMax = [np.stack(self.data[laser].allTrials.checkerboard.respMat).max(axis=(1,2)) for laser in ('laserOff','laserOn')]
+        omi.append((laserMax-controlMax)/(laserMax+controlMax))
+        
+        # loom
+        controlMax,laserMax = [np.stack(self.data[laser].allTrials.loom.peakResp).max(axis=1) for laser in ('laserOff','laserOn')]
+        omi.append((laserMax-controlMax)/(laserMax+controlMax))
+        
+        # plot
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        ax.plot([0,0],[0,1.1],'k--')
+        for d,label,clr in zip(omi,omiLabel,('k','r','g','b','0.5')):
+            cumProb = [np.count_nonzero(d<=i)/d.size for i in np.sort(d)]
+            ax.plot(np.sort(d),cumProb,clr,linewidth=2,label=label)
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        #ax.set_xlim([0,2000])
+        ax.set_ylim([0,1.01])
+        #ax.set_xticks(size)
+        ax.set_yticks([0,0.5,1])
+        ax.set_xlabel('OMI',fontsize=20)
+        ax.set_ylabel('Cumulative Probability',fontsize=20)
+        plt.legend(loc='upper left',numpoints=1,frameon=False,fontsize=18)
+        plt.tight_layout()
+        
             
     def analyzeRF(self):
         
@@ -470,9 +548,12 @@ class popProbeData():
             if data.sizeTuningOff[i].size>3:
                 allSizesInd[i] = True      
         for scInd in (inSCAxons,~inSCAxons):
-            ind = allSizesInd & scInd
-            sizeTuningOn = np.stack(data.sizeTuningOn[ind])[isOn[ind] | isOnOff[ind]]
-            sizeTuningOff = np.stack(data.sizeTuningOff[ind])[isOff[ind] | isOnOff[ind]]
+            sizeTuningOn = np.full((data.shape[0],len(sizeTuningSize)),np.nan)
+            sizeTuningOff = sizeTuningOn.copy()
+            ind = allSizesInd & scInd & (isOn | isOnOff)
+            sizeTuningOn[ind] = np.stack(data.sizeTuningOn[ind])
+            ind = allSizesInd & scInd & (isOff | isOnOff)
+            sizeTuningOff[ind] = np.stack(data.sizeTuningOff[ind])
             
             sizeResp = sizeTuningOff.copy()
             sizeResp[onVsOff>0] = sizeTuningOn[onVsOff>0].copy()
@@ -734,7 +815,7 @@ class popProbeData():
             cellRegions = self.data.index.get_level_values('region')
             cellsInRegion = cellRegions==region
         
-        inLP,rng = self.getInLP(padding=padding)
+        inLP,rng = self.getInRegion(region,padding=padding)
         LPmask = inLP.astype(float)
         LPmask[LPmask==0] = np.nan
         yRange,xRange,zRange = rng
@@ -868,7 +949,7 @@ class popProbeData():
                             for i in (0,1,2):
                                 colorMaps[im][y, x, z, i] = RGB[i]
               
-        fullShape = self.getInLP()[0].shape+(4,)
+        fullShape = self.getInRegion('LP')[0].shape+(4,)
         fullMap = [np.zeros(fullShape,dtype=np.uint8) for _ in (0,1)]
         for i in (0,1):
             fullMap[i][yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],:3] = colorMaps[i]*255
@@ -961,7 +1042,7 @@ class popProbeData():
         
         inSCAxons = self.getSCAxons()
         
-        region = 'LP'
+        region = 'LGd'
         cellRegions = self.data.index.get_level_values('region')
         cellsInRegion = cellRegions==region
         
@@ -1162,6 +1243,8 @@ class popProbeData():
         
         
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
+#        patchSpeed = bckgndSpeed = np.array([-80,-20,0,20,80])
+        
         
         # get data from units with spikes during checkerboard protocol
         # ignore days with laser trials
@@ -2161,30 +2244,27 @@ class popProbeData():
         
         return tempShifted, peakToTrough
     
-    def findRegions(self, ccfCoords, annotationData=None, tolerance=100):
+    def findRegions(self, ccfCoords, tolerance=100):
         mcc = MouseConnectivityCache(manifest_file='connectivity/mouse_connectivity_manifest.json')
         struct_df = mcc.get_structures()
         
-        if annotationData is None:
-            if self.annotationDataFile is None:
-                self.annotationDataFile = fileIO.getFile('Choose annotation data file')
-            annotationData,_ = nrrd.read(self.annotationDataFile)
-            annotationData = annotationData.transpose((1,2,0))
+        if self.annotationData is None:
+            self.getAnnotationData()
         
         ccf = np.copy(ccfCoords)
         ccf /= 25
         ccf = np.round(ccf).astype(int)
-        regionID = annotationData[ccf[1], ccf[0], ccf[2]]
+        regionID = self.annotationData[ccf[1], ccf[0], ccf[2]]
         if regionID!=218:
 
             #check to see if unit is within 'tolerance' microns of LP        
             tolerance /= 25
-            inLP, _ = self.getInLP()
+            inLP, _ = self.getInRegion('LP')
             mask = np.zeros(inLP.shape)
             rng = [[int(a-tolerance-1),int(a+tolerance+1)] for a in [ccf[1], ccf[0], ccf[2]]]
             mask[[slice(r[0],r[1]) for r in rng]] = 1
             inLP *= mask.astype('bool')
-#            LPregion = np.array(np.where(annotationData==218)).T
+#            LPregion = np.array(np.where(self.annotationData==218)).T
             if np.sum(inLP)>0:            
                 LPregion = np.array(np.where(inLP)).T
                 distances = np.sum((LPregion - [ccf[1], ccf[0], ccf[2]])**2, axis=1)**0.5
