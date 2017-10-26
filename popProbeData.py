@@ -290,40 +290,52 @@ class popProbeData():
             figNumStart += np.sum((self.data.index.get_level_values('experimentDate')==expDate) & (self.data.index.get_level_values('animalID')==animalID))
             
             
-    def plotOMI(self):
+    def plotOMI(self,region=None):
         omiLabel = ('spont','sparseNoise','gratings','checkerboard','loom')
         omi = []
-        
+        if region is None:
+            cellsInRegion = np.ones(len(self.data)).astype('bool')
+        else:
+            cellRegions = self.data.index.get_level_values('region')
+            cellsInRegion = cellRegions==region
         # spont
         spontOmi = []
         windowDur = 15000
+        uIndex = 0
         for exp in self.experimentFiles:
             p = self.getProbeDataObj(exp)
             protocol = p.getProtocolIndex('laser2')
             if protocol is None:
                 protocol = p.getProtocolIndex('laser')
-            pulseStarts,pulseEnds,pulseAmps = p.behaviorData[str(protocol)]['137_pulses']
+            try:
+                pulseStarts,pulseEnds,pulseAmps = p.behaviorData[str(protocol)]['137_pulses']
+            except:
+                print(exp)
+                uIndex += len(p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))[0])
+                continue
             for u in p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))[0]:
-                spikes = p.units[u]['times'][str(protocol)]
-                controlResp = np.mean(p.findSpikesPerTrial(pulseStarts-windowDur,pulseStarts,spikes))
-                laserResp = np.mean(p.findSpikesPerTrial(pulseEnds-windowDur,pulseEnds,spikes))
-                spontOmi.append((laserResp-controlResp)/(laserResp+controlResp))
+                if cellsInRegion[uIndex]:                
+                    spikes = p.units[u]['times'][str(protocol)]
+                    controlResp = np.mean(p.findSpikesPerTrial(pulseStarts-windowDur,pulseStarts,spikes))
+                    laserResp = np.mean(p.findSpikesPerTrial(pulseEnds-windowDur,pulseEnds,spikes))
+                    spontOmi.append((laserResp-controlResp)/(laserResp+controlResp))
+                uIndex += 1
         omi.append(np.array(spontOmi))
         
         # sparseNoise
-        controlMax,laserMax = [np.maximum(*[np.stack(self.data[laser].allTrials.sparseNoise[onOff]).max(axis=(1,2,3)) for onOff in ('onResp','offResp')]) for laser in ('laserOff','laserOn')]
+        controlMax,laserMax = [np.maximum(*[np.stack(self.data[laser].allTrials.sparseNoise[onOff][cellsInRegion]).max(axis=(1,2,3)) for onOff in ('onResp','offResp')]) for laser in ('laserOff','laserOn')]
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
         # gratings
-        controlMax,laserMax = [np.stack(self.data[laser].allTrials.gratings.respMat).max(axis=(1,2,3)) for laser in ('laserOff','laserOn')]
+        controlMax,laserMax = [np.stack(self.data[laser].allTrials.gratings.respMat[cellsInRegion]).max(axis=(1,2,3)) for laser in ('laserOff','laserOn')]
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
         # checkerboard
-        controlMax,laserMax = [np.stack(self.data[laser].allTrials.checkerboard.respMat).max(axis=(1,2)) for laser in ('laserOff','laserOn')]
+        controlMax,laserMax = [np.stack(self.data[laser].allTrials.checkerboard.respMat[cellsInRegion]).max(axis=(1,2)) for laser in ('laserOff','laserOn')]
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
         # loom
-        controlMax,laserMax = [np.stack(self.data[laser].allTrials.loom.peakResp).max(axis=1) for laser in ('laserOff','laserOn')]
+        controlMax,laserMax = [np.stack(self.data[laser].allTrials.loom.peakResp[cellsInRegion]).max(axis=1) for laser in ('laserOff','laserOn')]
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
         # plot
@@ -351,8 +363,12 @@ class popProbeData():
         inSCAxons = self.getSCAxons()
         
         region = 'LP'
-        cellRegions = self.data.index.get_level_values('region')
-        cellsInRegion = cellRegions==region
+       
+        if region is None:
+            cellsInRegion = np.ones(len(self.data)).astype('bool')
+        else:
+            cellRegions = self.data.index.get_level_values('region')
+            cellsInRegion = cellRegions==region
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
@@ -1042,9 +1058,12 @@ class popProbeData():
         
         inSCAxons = self.getSCAxons()
         
-        region = 'LGd'
-        cellRegions = self.data.index.get_level_values('region')
-        cellsInRegion = cellRegions==region
+        region = 'LP'
+        if region is None:
+            cellsInRegion = np.ones(len(self.data)).astype('bool')
+        else:
+            cellRegions = self.data.index.get_level_values('region')
+            cellsInRegion = cellRegions==region
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
@@ -1183,9 +1202,12 @@ class popProbeData():
     def analyzeOri(self):
         inSCAxons = self.getSCAxons()
         
-        region = 'VPM'
-        cellRegions = self.data.index.get_level_values('region')
-        cellsInRegion = cellRegions==region
+        region = 'LP'
+        if region is None:
+            cellsInRegion = np.ones(len(self.data)).astype('bool')
+        else:
+            cellRegions = self.data.index.get_level_values('region')
+            cellsInRegion = cellRegions==region
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
@@ -1234,8 +1256,11 @@ class popProbeData():
         inSCAxons = self.getSCAxons()
         
         region = 'LP'
-        cellRegions = self.data.index.get_level_values('region')
-        cellsInRegion = cellRegions==region
+        if region is None:
+            cellsInRegion = np.ones(len(self.data)).astype('bool')
+        else:
+            cellRegions = self.data.index.get_level_values('region')
+            cellsInRegion = cellRegions==region
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
@@ -1495,9 +1520,12 @@ class popProbeData():
         
         inSCAxons = self.getSCAxons()
         
-        region = 'PO'
-        cellRegions = self.data.index.get_level_values('region')
-        cellsInRegion = cellRegions==region
+        region = 'LP'
+        if region is None:
+            cellsInRegion = np.ones(len(self.data)).astype('bool')
+        else:
+            cellRegions = self.data.index.get_level_values('region')
+            cellsInRegion = cellRegions==region
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
