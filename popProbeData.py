@@ -1277,14 +1277,13 @@ class popProbeData():
             h = 0.5
             ax.add_patch(patches.Rectangle([preTime,-h],width=stimTime,height=h,color='0.5'))
             laserEnd = preTime+stimTime+laserPostTime
-            ax.add_patch(patches.Rectangle([0,-3*h],width=laserEnd,height=h,color='b'))
-            ax.add_patch(patches.Polygon(np.array([[laserEnd,-3*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h]]),color='b'))
+            ax.add_patch(patches.Polygon(np.array([[0,-2*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h],[0,-3*h]]),color='b'))
             ymax = 0
             for s,clr in zip((sdfControl,sdfLaser),('k','b')):
                 sdf = np.stack(s)[ind]
                 sdfMean = sdf.mean(axis=0)
                 sdfSem = sdf.std(axis=0)/(ind.sum()**0.5)
-                ax.plot(sdfTime,sdfMean,clr)
+                ax.plot(sdfTime,sdfMean,clr,linewidth=2)
                 ax.fill_between(sdfTime,sdfMean+sdfSem,sdfMean-sdfSem,color=clr,alpha=0.5)
                 ymax = max(ymax,np.max(sdfMean+sdfSem))
             ax.set_xlim([0,3.5])
@@ -1304,8 +1303,7 @@ class popProbeData():
             h = 0.5
             ax.add_patch(patches.Rectangle([preTime,-h],width=stimTime,height=h,color='0.5'))
             laserEnd = preTime+stimTime+laserPostTime
-            ax.add_patch(patches.Rectangle([0,-3*h],width=laserEnd,height=h,color='b'))
-            ax.add_patch(patches.Polygon(np.array([[laserEnd,-3*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h]]),color='b'))
+            ax.add_patch(patches.Polygon(np.array([[0,-2*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h],[0,-3*h]]),color='b'))
             ymax = 0
             for s,clr in zip((sdfControl,sdfLaser),('k','b')):
                 sdf = np.stack(s)[ind]
@@ -1315,7 +1313,7 @@ class popProbeData():
                 else:
                     sdfMean += baseline-sdfMean[sdfTime<preTime].mean()
                 sdfSem = sdf.std(axis=0)/(ind.sum()**0.5)
-                ax.plot(sdfTime,sdfMean,clr)
+                ax.plot(sdfTime,sdfMean,clr,linewidth=2)
                 ax.fill_between(sdfTime,sdfMean+sdfSem,sdfMean-sdfSem,color=clr,alpha=0.5)
                 ymax = max(ymax,np.max(sdfMean+sdfSem))
             ax.set_xlim([0,3.5])
@@ -1335,13 +1333,11 @@ class popProbeData():
             h = 0.05
             ax.add_patch(patches.Rectangle([preTime,-h],width=stimTime,height=h,color='0.5'))
             laserEnd = preTime+stimTime+laserPostTime
-            ax.add_patch(patches.Rectangle([0,-3*h],width=laserEnd,height=h,color='b'))
-            ax.add_patch(patches.Polygon(np.array([[laserEnd,-3*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h]]),color='b'))
-            r = np.stack(sdfLaser)[ind].mean(axis=0)/np.stack(sdfControl)[ind].mean(axis=0)
-            ax.plot(sdfTime,r,'k',linewidth=2)
+            ax.add_patch(patches.Polygon(np.array([[0,-2*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h],[0,-3*h]]),color='b'))
+            ax.plot(sdfTime,np.stack(sdfLaser)[ind].mean(axis=0)/np.stack(sdfControl)[ind].mean(axis=0),'k',linewidth=2)
             ax.set_xlim([0,3.5])
             ax.set_xticks([])
-            ax.set_ylim([-0.2,1.05*r.max()])
+            ax.set_ylim([-0.2,1.6])
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.spines['bottom'].set_visible(False)
@@ -1402,6 +1398,86 @@ class popProbeData():
         ax.set_xlabel('Preferred Direction',fontsize='xx-large')
         ax.set_ylabel('Number of Units',fontsize='xx-large')
         plt.tight_layout()
+        
+        
+    def compareLaserCheckerboards(self):
+        cellsInRegion = [self.getCellsInRegion('LP',inSCAxons=b) for b in (True,False)]    
+        
+        patchSpeed = bckgndSpeed = np.array([-80,-20,0,20,80])
+        
+        controlData = self.data.laserOff.allTrials.checkerboard
+        controlRespMat = np.stack(controlData.respMat)
+        laserRespMat = np.stack(self.data.laserOn.allTrials.checkerboard.respMat)
+        
+        controlMax = controlRespMat.max(axis=(1,2))
+        laserMax = laserRespMat.max(axis=(1,2))
+        omi = (laserMax-controlMax)/(laserMax+controlMax)
+        
+        zthresh = 6
+        spontRateMean = np.array(controlData.spontRateMean)
+        spontRateStd = np.array(controlData.spontRateStd)
+        respZ = (controlRespMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
+        hasResp = (respZ>zthresh).any(axis=2).any(axis=1)
+               
+        for cellInd,label in zip(cellsInRegion,('in SC axons','not SC axons')):
+            ind = cellInd & hasResp & (omi<np.inf)
+            meanRespControl = controlRespMat[ind].mean(axis=0)
+            meanRespLaser = laserRespMat[ind].mean(axis=0)
+            for resp,respType in zip((meanRespControl,meanRespLaser),('control','laser')):
+                fig = plt.figure(facecolor='w')
+                ax = fig.add_subplot(1,1,1)
+                im = ax.imshow(resp,clim=(meanRespLaser.min(),meanRespControl.max()),cmap='gray',interpolation='none',origin='lower')
+                for side in ('right','top'):
+                    ax.spines[side].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+                ax.set_xticks(np.arange(bckgndSpeed.size))
+                ax.set_xticklabels(bckgndSpeed,fontsize=18)
+                ax.set_yticks(np.arange(patchSpeed.size))
+                ax.set_yticklabels(patchSpeed,fontsize=18)
+                ax.set_xlabel('Background Speed (deg/s)',fontsize=20)
+                ax.set_ylabel('Patch Speed (deg/s)',fontsize=20)
+                ax.set_title(label+' '+respType,fontsize=20)
+                plt.colorbar(im)
+                plt.tight_layout()
+                
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            controlMaxRows = controlRespMat[ind].max(axis=1)
+            laserMaxRows = laserRespMat[ind].max(axis=1)
+            meanControl = controlMaxRows.mean(axis=0)
+            meanLaser = laserMaxRows.mean(axis=0)
+            semControl = controlMaxRows.std(axis=0)/(ind.sum()**0.5)
+            semLaser = laserMaxRows.std(axis=0)/(ind.sum()**0.5)
+            ax.plot(bckgndSpeed,meanControl,'k',linewidth=2)
+            ax.fill_between(bckgndSpeed,meanControl+semControl,meanControl-semControl,color='k',alpha=0.5)
+            ax.plot(bckgndSpeed,meanLaser,'b',linewidth=2)
+            ax.fill_between(bckgndSpeed,meanLaser+semLaser,meanLaser-semLaser,color='b',alpha=0.5)
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_ylim([0,1.05*np.max(meanControl+semControl)])
+            ax.set_xticks(bckgndSpeed)
+            ax.set_xlabel('Background Speed (deg/s)',fontsize=20)
+            ax.set_ylabel('Max Response (spikes/s)',fontsize=20)
+            ax.set_title(label,fontsize=20)
+            plt.tight_layout()
+            
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            sup = 100*(1-laserMaxRows/controlMaxRows)
+            meanSup = sup.mean(axis=0)
+            semSup = sup.std(axis=0)/(ind.sum()**0.5)
+            ax.plot(bckgndSpeed,meanSup,'k',linewidth=2)
+            ax.fill_between(bckgndSpeed,meanSup+semSup,meanSup-semSup,color='k',alpha=0.5)
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_ylim([0,1.05*np.max(meanSup+semSup)])
+            ax.set_xticks(bckgndSpeed)
+            ax.set_xlabel('Background Speed (deg/s)',fontsize=20)
+            ax.set_ylabel('% Suppression',fontsize=20)
+            ax.set_title(label,fontsize=20)
+            plt.tight_layout()
     
     
     def analyzeCheckerboard(self, hasLaser=False):
@@ -1416,7 +1492,8 @@ class popProbeData():
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
-        data = self.data.laserOff.allTrials.checkerboard[cellsInRegion]    
+        
+        data = self.data.laserOn.allTrials.checkerboard[cellsInRegion]    
         
         if hasLaser:
             patchSpeed = bckgndSpeed = np.array([-80,-20,0,20,80])
@@ -1432,7 +1509,7 @@ class popProbeData():
             hasCheckerboard = (data.respMat.notnull())
         
         #get z score and determine significant responses
-        zthresh = 0
+        zthresh = 10
         
         #if laser, take uindex from control trials
         if hasLaser:
