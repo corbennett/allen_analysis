@@ -15,7 +15,7 @@ import scipy.stats
 from scipy.spatial.distance import euclidean
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
-from matplotlib.patches import Ellipse
+from matplotlib import patches
 from matplotlib import cm
 from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
 
@@ -235,6 +235,20 @@ class popProbeData():
         return inSCAxons
         
         
+    def getCellsInRegion(self,region=None,inSCAxons=None):
+        if region is None:
+            cellsInRegion = np.ones(len(self.data)).astype('bool')
+        else:
+            cellRegions = self.data.index.get_level_values('region')
+            cellsInRegion = cellRegions==region
+        if inSCAxons is not None:
+            if inSCAxons:
+                cellsInRegion = cellsInRegion & self.getSCAxons()
+            else:
+                cellsInRegion = cellsInRegion & ~self.getSCAxons()
+        return cellsInRegion
+        
+        
     def getRegionID(self,regionLabel):
         if self.annotationStructures is None:
             f = fileIO.getFile('Choose annotation structures file','*.xml')
@@ -290,15 +304,14 @@ class popProbeData():
             figNumStart += np.sum((self.data.index.get_level_values('experimentDate')==expDate) & (self.data.index.get_level_values('animalID')==animalID))
             
             
-    def plotOMI(self,region=None):
-        omiLabel = ('spont','sparseNoise','gratings','checkerboard','loom')
+    def plotOMI(self,region=None,inSCAxons=None):
+        cellsInRegion = self.getCellsInRegion(region,inSCAxons)
+        
+        rate = []
         omi = []
-        if region is None:
-            cellsInRegion = np.ones(len(self.data)).astype('bool')
-        else:
-            cellRegions = self.data.index.get_level_values('region')
-            cellsInRegion = cellRegions==region
+        
         # spont
+        spontRate = []
         spontOmi = []
         windowDur = 15000
         uIndex = 0
@@ -318,44 +331,68 @@ class popProbeData():
                     spikes = p.units[u]['times'][str(protocol)]
                     controlResp = np.mean(p.findSpikesPerTrial(pulseStarts-windowDur,pulseStarts,spikes))
                     laserResp = np.mean(p.findSpikesPerTrial(pulseEnds-windowDur,pulseEnds,spikes))
+                    spontRate.append(controlResp)
                     spontOmi.append((laserResp-controlResp)/(laserResp+controlResp))
                 uIndex += 1
+        rate.append(np.array(spontRate))
         omi.append(np.array(spontOmi))
         
         # sparseNoise
         controlMax,laserMax = [np.maximum(*[np.stack(self.data[laser].allTrials.sparseNoise[onOff][cellsInRegion]).max(axis=(1,2,3)) for onOff in ('onResp','offResp')]) for laser in ('laserOff','laserOn')]
+        rate.append(controlMax)
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
         # gratings
         controlMax,laserMax = [np.stack(self.data[laser].allTrials.gratings.respMat[cellsInRegion]).max(axis=(1,2,3)) for laser in ('laserOff','laserOn')]
+        rate.append(controlMax)        
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
         # checkerboard
         controlMax,laserMax = [np.stack(self.data[laser].allTrials.checkerboard.respMat[cellsInRegion]).max(axis=(1,2)) for laser in ('laserOff','laserOn')]
+        rate.append(controlMax)        
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
         # loom
         controlMax,laserMax = [np.stack(self.data[laser].allTrials.loom.peakResp[cellsInRegion]).max(axis=1) for laser in ('laserOff','laserOn')]
+        rate.append(controlMax)        
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
-        # plot
+        # plot omi distributions
+        protLabel = ('spont','sparseNoise','gratings','checkerboard','loom')
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
         ax.plot([0,0],[0,1.1],'k--')
-        for d,label,clr in zip(omi,omiLabel,('k','r','g','b','0.5')):
+        for d,label,clr in zip(omi,protLabel,('k','r','g','b','0.5')):
             cumProb = [np.count_nonzero(d<=i)/d.size for i in np.sort(d)]
             ax.plot(np.sort(d),cumProb,clr,linewidth=2,label=label)
         for side in ('right','top'):
             ax.spines[side].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-        #ax.set_xlim([0,2000])
+        ax.set_xlim([-1,0.55])
         ax.set_ylim([0,1.01])
-        #ax.set_xticks(size)
         ax.set_yticks([0,0.5,1])
         ax.set_xlabel('OMI',fontsize=20)
         ax.set_ylabel('Cumulative Probability',fontsize=20)
         plt.legend(loc='upper left',numpoints=1,frameon=False,fontsize=18)
         plt.tight_layout()
+        
+        # plot omi vs firing rate
+        for r,i,label in zip(rate,omi,protLabel):
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            rmax = 1.05*r.max()
+            ax.plot([0,rmax],[0,0],'k--')
+            ax.plot(r,i,'ko')
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlim([-0.05,rmax])
+            ax.set_ylim([-1.05,0.55])
+            ax.set_yticks([-1,-0.5,0,0.5])
+            ax.set_xlabel('Spikes/s',fontsize=20)
+            ax.set_ylabel('OMI',fontsize=20)
+            ax.set_title(label,fontsize=20)
+            plt.tight_layout()
         
             
     def analyzeRF(self):
@@ -746,7 +783,7 @@ class popProbeData():
             for sub in fit:
                 x,y = probeData.getEllipseXY(*sub[:5])
                 if sub[3]<40:
-                    e = Ellipse(xy=[sub[0], sub[1]], width=sub[2], height=sub[3], angle=sub[4])
+                    e = patches.Ellipse(xy=[sub[0], sub[1]], width=sub[2], height=sub[3], angle=sub[4])
                     e.set_edgecolor('none')
                     e.set_alpha(0.5)
                     color = cm.jet((sub[1] + 40)/110.0)
@@ -1055,49 +1092,62 @@ class popProbeData():
     
     
     def analyzeSTF(self):
-        
-        inSCAxons = self.getSCAxons()
-        
         region = 'LP'
         if region is None:
             cellsInRegion = np.ones(len(self.data)).astype('bool')
         else:
             cellRegions = self.data.index.get_level_values('region')
             cellsInRegion = cellRegions==region
-        
-        inSCAxons = inSCAxons[cellsInRegion]
-        ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
-        data = self.data.laserOff.allTrials.gratings[cellsInRegion]        
-        
+              
         sf = np.array([0.01,0.02,0.04,0.08,0.16,0.32])
         tf = np.array([0.5,1,2,4,8])
         
-        hasGratings = data.respMat.notnull()
+        laser = 'on'
         
-        stfFit = np.stack(data.stfFitParams[hasGratings])
+        inSCAxons = self.getSCAxons()[cellsInRegion]
         
-        # plot mean resp and f1/f0 matrices
-        numUnits = np.count_nonzero(hasGratings)
-        respMat = np.full((numUnits,tf.size,sf.size),np.nan)
-        f1f0Mat = respMat.copy()
-        for uind,u in enumerate(np.where(hasGratings)[0]):
-            n = np.zeros(numUnits,dtype=bool)
-            n[uind] = True
-            i = np.in1d(tf,np.round(data.tf[u],2))
-            j = np.in1d(sf,np.round(data.sf[u],2))
-            ind = np.ix_(n,i,j)
-            resp = data.respMat[u]
-            f1f0 = data.f1f0Mat[u]
-            bestOriInd = np.unravel_index(np.argmax(resp),resp.shape)[2]
-            respMat[ind] = resp[:,:,bestOriInd]
-            f1f0Mat[ind] = f1f0[:,:,bestOriInd]
+        laserOffData = self.data.laserOff.allTrials.gratings[cellsInRegion]
+        hasGratings = laserOffData.respMat.notnull()
         
-        for scInd,title in zip((np.ones(inSCAxons.size,dtype=bool),inSCAxons,~inSCAxons),('all','SC','not SC')):
-            ind = scInd[np.where(hasGratings)[0]]
-            meanNormRespMat = np.nanmean(respMat[ind]/np.nanmax(np.nanmax(respMat[ind],axis=2),axis=1)[:,None,None],axis=0)
+        laserOffRespMat = np.full((hasGratings.sum(),tf.size,sf.size),np.nan)
+        if laser=='on':
+            laserOnRespMat = laserOffRespMat.copy()
+        for ind,u in enumerate(np.where(hasGratings)[0]):
+            n = np.zeros(laserOffRespMat.shape[0],dtype=bool)
+            n[ind] = True
+            i = np.in1d(tf,np.round(laserOffData.tf[u],2))
+            j = np.in1d(sf,np.round(laserOffData.sf[u],2))
+            respInd = np.ix_(n,i,j)
+            laserOffResp = laserOffData.respMat[u]
+            bestOriInd = np.unravel_index(np.argmax(laserOffResp),laserOffResp.shape)[2]
+            laserOffRespMat[respInd] = laserOffResp[:,:,bestOriInd]
+            if laser=='on':
+                laserOnResp = self.data.laserOn.allTrials.gratings[cellsInRegion].respMat[u]
+                laserOnRespMat[respInd] = laserOnResp[:,:,bestOriInd]
+                
+        zthresh = 0
+        spontRateMean = laserOffData.spontRateMean[hasGratings]
+        spontRateStd = laserOffData.spontRateStd[hasGratings]
+        respZ = (laserOffRespMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
+        hasResp = (respZ>zthresh).any(axis=2).any(axis=1)
+        
+        stfFit = np.stack(laserOffData.stfFitParams)[hasGratings]
+        hasResp = ~np.isnan(stfFit[:,0])
+        respMat = laserOffRespMat[hasResp]
+        if laser=='on':
+            stfFit = np.stack(self.data.laserOn.allTrials.gratings[cellsInRegion].stfFitParams[hasGratings][hasResp])
+            respMat = laserOnRespMat[hasResp]
+            
+        inSCAxons = inSCAxons[hasGratings][hasResp]
+        
+        # plot mean resp
+        for ind,title in zip((np.ones(inSCAxons.size,dtype=bool),inSCAxons,~inSCAxons),('all','SC','not SC')):
+#            normRespMat = respMat[ind]/np.nanmax(respMat[ind],axis=(1,2))[:,None,None]
+#            meanRespMat = np.nanmean(normRespMat,axis=0)
+            meanRespMat = np.nanmean(respMat[ind],axis=0)
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
-            plt.imshow(meanNormRespMat,cmap='gray',interpolation='none',origin='lower')
+            im = plt.imshow(meanRespMat,cmap='gray',interpolation='none',origin='lower')
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
             ax.tick_params(direction='out',top=False,right=False,labelsize=18)
@@ -1107,23 +1157,9 @@ class popProbeData():
             ax.set_yticks(np.arange(tf.size))
             ax.set_xlabel('Cycles/deg',fontsize=20)
             ax.set_ylabel('Cycles/s',fontsize=20)
-            ax.set_title(title,fontsize=20)
+            ax.set_title(title+', laser '+laser,fontsize=20)
+            plt.colorbar(im)
             plt.tight_layout()
-        
-        fig = plt.figure(facecolor='w')
-        ax = fig.add_subplot(1,1,1)
-        plt.imshow(np.nanmean(f1f0Mat,axis=0),cmap='gray',interpolation='none',origin='lower')
-        ax.spines['right'].set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-        ax.set_xticklabels(sf)
-        ax.set_yticklabels(tf)
-        ax.set_xticks(np.arange(sf.size))
-        ax.set_yticks(np.arange(tf.size))
-        ax.set_xlabel('Cycles/deg',fontsize=20)
-        ax.set_ylabel('Cycles/s',fontsize=20)
-        ax.set_title('F1/F0',fontsize=20)
-        plt.tight_layout()
         
         # plot center SF and TF and speed tuning index
         fig = plt.figure(facecolor='w')
@@ -1140,6 +1176,7 @@ class popProbeData():
         ax.set_yticklabels([tf[0],tf[-1]])
         ax.set_xlabel('Cycles/deg',fontsize=20)
         ax.set_ylabel('Cycles/s',fontsize=20)
+        ax.set_title('laser '+laser,fontsize=20)
         plt.tight_layout()
         
         fig = plt.figure(facecolor='w')
@@ -1154,6 +1191,7 @@ class popProbeData():
         ax.set_xticklabels(tf)
         ax.set_xlabel('Center Temporal Frequency',fontsize=20)
         ax.set_ylabel('Number of Units',fontsize=20)
+        ax.set_title('laser '+laser,fontsize=20)
         plt.tight_layout()
         
         fig = plt.figure(facecolor='w')
@@ -1168,6 +1206,7 @@ class popProbeData():
         ax.set_xticklabels(sf)
         ax.set_xlabel('Center Spatial Frequency',fontsize=20)
         ax.set_ylabel('Number of Units',fontsize=20)
+        ax.set_title('laser '+laser,fontsize=20)
         plt.tight_layout()
         
         fig = plt.figure(facecolor='w')
@@ -1180,6 +1219,7 @@ class popProbeData():
         ax.set_xticks([0,0.5,1])
         ax.set_xlabel('Speed Tuning Index',fontsize=20)
         ax.set_ylabel('Number of Units',fontsize=20)
+        ax.set_title('laser '+laser,fontsize=20)
         plt.tight_layout()
         
         # plot preferred speed
@@ -1196,7 +1236,119 @@ class popProbeData():
         ax.tick_params(direction='out',top=False,right=False,labelsize=18)
         ax.set_xlabel('Preferred Speed (degrees/s)',fontsize=20)
         ax.set_ylabel('Number of Units',fontsize=20)
+        ax.set_title('laser '+laser,fontsize=20)
         plt.tight_layout()
+        
+        
+    def plotGratingsSDF(self,region=None,inSCAxons=None):
+        sdfControl = []
+        sdfLaser = []
+        for expInd,exp in enumerate(self.experimentFiles):
+            print('analyzing experiment '+str(expInd+1)+' of '+str(len(self.experimentFiles)))
+            p = self.getProbeDataObj(exp)
+            protocol = p.getProtocolIndex('gratings')
+            laserTrials,controlTrials = p.findLaserTrials(protocol)
+            p.analyzeGratings(trials=controlTrials,fit=False,plot=False,saveTag='_control')
+            p.analyzeGratings(trials=laserTrials,fit=False,plot=False,saveTag='_laser')
+            for u in p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))[0]:
+                respMat = p.units[str(u)]['gratings_stf_control']['respMat']
+                maxRespInd = np.unravel_index(np.argmax(respMat),respMat.shape)
+                sdfControl.append(p.units[str(u)]['gratings_stf_control']['_sdf'][maxRespInd])
+                sdfLaser.append(p.units[str(u)]['gratings_stf_laser']['_sdf'][maxRespInd])
+        sdfTime = p.units[str(u)]['gratings_stf_control']['_sdfTime']
+        frameRate = p.visstimData[str(protocol)]['frameRate']
+        preTime = p.visstimData[str(protocol)]['preTime']/frameRate
+        stimTime = p.visstimData[str(protocol)]['stimTime']/frameRate
+        postTime = p.visstimData[str(protocol)]['postTime']/frameRate
+        laserPreTime = p.visstimData[str(protocol)]['laserPreFrames']/frameRate
+        laserPostTime = p.visstimData[str(protocol)]['laserPostFrames']/frameRate
+        laserRampTime = p.visstimData[str(protocol)]['laserRampFrames']/frameRate
+        
+        if inSCAxons is None:
+            cellsInRegion = [self.getCellsInRegion(region)]
+            label = ('',)
+        else:
+            cellsInRegion = [self.getCellsInRegion(region,inSCAxons=b) for b in (True,False)]
+            label = ('in SC axons','not SC axons')
+        
+        for ind,lbl in zip(cellsInRegion,label):
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            h = 0.5
+            ax.add_patch(patches.Rectangle([preTime,-h],width=stimTime,height=h,color='0.5'))
+            laserEnd = preTime+stimTime+laserPostTime
+            ax.add_patch(patches.Rectangle([0,-3*h],width=laserEnd,height=h,color='b'))
+            ax.add_patch(patches.Polygon(np.array([[laserEnd,-3*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h]]),color='b'))
+            ymax = 0
+            for s,clr in zip((sdfControl,sdfLaser),('k','b')):
+                sdf = np.stack(s)[ind]
+                sdfMean = sdf.mean(axis=0)
+                sdfSem = sdf.std(axis=0)/(ind.sum()**0.5)
+                ax.plot(sdfTime,sdfMean,clr)
+                ax.fill_between(sdfTime,sdfMean+sdfSem,sdfMean-sdfSem,color=clr,alpha=0.5)
+                ymax = max(ymax,np.max(sdfMean+sdfSem))
+            ax.set_xlim([0,3.5])
+            ax.set_ylim([-2,1.05*ymax])
+            ax.set_xticks([])
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,bottom=False,labelsize=18)
+            ax.set_ylabel('Spikes/s',fontsize=20)
+            ax.set_title(lbl,fontsize=20)
+            plt.tight_layout()
+            
+        for ind,lbl in zip(cellsInRegion,label):
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            h = 0.5
+            ax.add_patch(patches.Rectangle([preTime,-h],width=stimTime,height=h,color='0.5'))
+            laserEnd = preTime+stimTime+laserPostTime
+            ax.add_patch(patches.Rectangle([0,-3*h],width=laserEnd,height=h,color='b'))
+            ax.add_patch(patches.Polygon(np.array([[laserEnd,-3*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h]]),color='b'))
+            ymax = 0
+            for s,clr in zip((sdfControl,sdfLaser),('k','b')):
+                sdf = np.stack(s)[ind]
+                sdfMean = sdf.mean(axis=0)
+                if clr=='k':
+                    baseline = sdfMean[sdfTime<preTime].mean()
+                else:
+                    sdfMean += baseline-sdfMean[sdfTime<preTime].mean()
+                sdfSem = sdf.std(axis=0)/(ind.sum()**0.5)
+                ax.plot(sdfTime,sdfMean,clr)
+                ax.fill_between(sdfTime,sdfMean+sdfSem,sdfMean-sdfSem,color=clr,alpha=0.5)
+                ymax = max(ymax,np.max(sdfMean+sdfSem))
+            ax.set_xlim([0,3.5])
+            ax.set_xticks([])
+            ax.set_ylim([-2,1.05*ymax])
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,bottom=False,labelsize=18)
+            ax.set_ylabel('Spikes/s (laser baseline shifted)',fontsize=20)
+            ax.set_title(lbl,fontsize=20)
+            plt.tight_layout()
+        
+        for ind,lbl in zip(cellsInRegion,label):
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            h = 0.05
+            ax.add_patch(patches.Rectangle([preTime,-h],width=stimTime,height=h,color='0.5'))
+            laserEnd = preTime+stimTime+laserPostTime
+            ax.add_patch(patches.Rectangle([0,-3*h],width=laserEnd,height=h,color='b'))
+            ax.add_patch(patches.Polygon(np.array([[laserEnd,-3*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h]]),color='b'))
+            r = np.stack(sdfLaser)[ind].mean(axis=0)/np.stack(sdfControl)[ind].mean(axis=0)
+            ax.plot(sdfTime,r,'k',linewidth=2)
+            ax.set_xlim([0,3.5])
+            ax.set_xticks([])
+            ax.set_ylim([-0.2,1.05*r.max()])
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,bottom=False,labelsize=18)
+            ax.set_ylabel('Laser/Control',fontsize=20)
+            ax.set_title(lbl,fontsize=20)
+            plt.tight_layout()
     
     
     def analyzeOri(self):
@@ -1264,28 +1416,34 @@ class popProbeData():
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
-        data = self.data.laserOff.allTrials.checkerboard[cellsInRegion]    
         
+        laser = 'laserOn'        
+        
+        data = self.data[laser].allTrials.checkerboard[cellsInRegion]    
         
         patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
-#        patchSpeed = bckgndSpeed = np.array([-80,-20,0,20,80])
-        
+        patchSpeed = bckgndSpeed = np.array([-80,-20,0,20,80])
         
         # get data from units with spikes during checkerboard protocol
         # ignore days with laser trials
         hasCheckerboard = (data.respMat.notnull()) & (self.data.laserOn.stat.checkerboard.respMat.isnull()[cellsInRegion]) 
         respMat = np.stack(data.respMat[hasCheckerboard])
         hasSpikes = respMat.any(axis=2).any(axis=1)
-        respMat = respMat[hasSpikes]
-        uindex = np.where(hasCheckerboard)[0][hasSpikes]
+        
+        if laser=='laserOff':
+            respMat = respMat[hasSpikes]
+            uindex = np.where(hasCheckerboard)[0][hasSpikes]
+        else:
+            respMat = respMat[uindex]
         
         # get z score and determine significant responses
-        spontRateMean = data.spontRateMean[uindex]
-        spontRateStd = data.spontRateStd[uindex]
-        respZ = (respMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
-        hasResp = (respZ>10).any(axis=2).any(axis=1)
-        respMat = respMat[hasResp]
-        uindex = uindex[hasResp]
+        if laser=='laserOff':
+            spontRateMean = data.spontRateMean[uindex]
+            spontRateStd = data.spontRateStd[uindex]
+            respZ = (respMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
+            hasResp = (respZ>0).any(axis=2).any(axis=1)
+            respMat = respMat[hasResp]
+            uindex = uindex[hasResp]
         
         inSCAxonsIndex = inSCAxons[uindex]        
         
@@ -1397,7 +1555,7 @@ class popProbeData():
         respMatBaseSubNorm = respMatBaseSub/(maxResp-minResp)[:,None,None]
         
         # plot mean response in and out of SC axons        
-        for resp in [respMatNorm[inSCAxonsIndex], respMatNorm[~inSCAxonsIndex]]:
+        for resp in [respMat[inSCAxonsIndex], respMat[~inSCAxonsIndex]]:
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
             r = np.nanmean(resp, axis=0)
