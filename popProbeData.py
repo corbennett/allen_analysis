@@ -1404,7 +1404,7 @@ class popProbeData():
         plt.tight_layout()
     
     
-    def analyzeCheckerboard(self):
+    def analyzeCheckerboard(self, hasLaser=False):
         inSCAxons = self.getSCAxons()
         
         region = 'LP'
@@ -1416,35 +1416,50 @@ class popProbeData():
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
+        data = self.data.laserOff.allTrials.checkerboard[cellsInRegion]    
         
-        laser = 'laserOn'        
+        if hasLaser:
+            patchSpeed = bckgndSpeed = np.array([-80,-20,0,20,80])
+        else:
+            patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
         
-        data = self.data[laser].allTrials.checkerboard[cellsInRegion]    
-        
-        patchSpeed = bckgndSpeed = np.array([-90,-30,-10,0,10,30,90])
-        patchSpeed = bckgndSpeed = np.array([-80,-20,0,20,80])
         
         # get data from units with spikes during checkerboard protocol
         # ignore days with laser trials
-        hasCheckerboard = (data.respMat.notnull()) & (self.data.laserOn.stat.checkerboard.respMat.isnull()[cellsInRegion]) 
-        respMat = np.stack(data.respMat[hasCheckerboard])
-        hasSpikes = respMat.any(axis=2).any(axis=1)
+        if not hasLaser:
+            hasCheckerboard = (data.respMat.notnull()) & (self.data.laserOn.allTrials.checkerboard.respMat.isnull()[cellsInRegion]) 
+        else:
+            hasCheckerboard = (data.respMat.notnull())
         
-        if laser=='laserOff':
+        #get z score and determine significant responses
+        zthresh = 0
+        
+        #if laser, take uindex from control trials
+        if hasLaser:
+            controlData = self.data.laserOff.allTrials.checkerboard[cellsInRegion]
+            respMat = np.stack(controlData.respMat[hasCheckerboard])
+            hasSpikes = respMat.any(axis=2).any(axis=1)
             respMat = respMat[hasSpikes]
             uindex = np.where(hasCheckerboard)[0][hasSpikes]
+            spontRateMean = controlData.spontRateMean[uindex]
+            spontRateStd = controlData.spontRateStd[uindex]
+            respZ = (respMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
+            hasResp = (respZ>zthresh).any(axis=2).any(axis=1)
+            uindex = uindex[hasResp]
+            
         else:
-            respMat = respMat[uindex]
-        
-        # get z score and determine significant responses
-        if laser=='laserOff':
+            respMat = np.stack(data.respMat[hasCheckerboard])
+            hasSpikes = respMat.any(axis=2).any(axis=1)
+            respMat = respMat[hasSpikes]
+            uindex = np.where(hasCheckerboard)[0][hasSpikes]
             spontRateMean = data.spontRateMean[uindex]
             spontRateStd = data.spontRateStd[uindex]
             respZ = (respMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
-            hasResp = (respZ>0).any(axis=2).any(axis=1)
-            respMat = respMat[hasResp]
+            hasResp = (respZ>zthresh).any(axis=2).any(axis=1)
             uindex = uindex[hasResp]
         
+        respMat = np.stack(data.respMat)
+        respMat = respMat[uindex]
         inSCAxonsIndex = inSCAxons[uindex]        
         
 #        # fill in NaNs where no running trials
