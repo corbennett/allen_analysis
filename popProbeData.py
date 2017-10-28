@@ -1400,8 +1400,14 @@ class popProbeData():
         plt.tight_layout()
         
         
-    def compareLaserCheckerboards(self):
-        cellsInRegion = [self.getCellsInRegion('LP',inSCAxons=b) for b in (True,False)]    
+    def compareLaserCheckerboards(self,region=None):
+        if region=='LP':
+            inSCAxons = (True,False)
+            label = ('in SC Axons','not SC Axons')
+        else:
+            inSCAxons = (None,)
+            label = (str(region),)
+        cellsInRegion = [self.getCellsInRegion(region,insc) for insc in inSCAxons]    
         
         patchSpeed = bckgndSpeed = np.array([-80,-20,0,20,80])
         
@@ -1418,8 +1424,8 @@ class popProbeData():
         spontRateStd = np.array(controlData.spontRateStd)
         respZ = (controlRespMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
         hasResp = (respZ>zthresh).any(axis=2).any(axis=1)
-               
-        for cellInd,label in zip(cellsInRegion,('in SC axons','not SC axons')):
+        
+        for cellInd,lbl in zip(cellsInRegion,label):
             ind = cellInd & hasResp & (omi<np.inf)
             meanRespControl = controlRespMat[ind].mean(axis=0)
             meanRespLaser = laserRespMat[ind].mean(axis=0)
@@ -1436,7 +1442,7 @@ class popProbeData():
                 ax.set_yticklabels(patchSpeed,fontsize=18)
                 ax.set_xlabel('Background Speed (deg/s)',fontsize=20)
                 ax.set_ylabel('Patch Speed (deg/s)',fontsize=20)
-                ax.set_title(label+' '+respType,fontsize=20)
+                ax.set_title(lbl+' '+respType,fontsize=20)
                 plt.colorbar(im)
                 plt.tight_layout()
                 
@@ -1459,7 +1465,7 @@ class popProbeData():
             ax.set_xticks(bckgndSpeed)
             ax.set_xlabel('Background Speed (deg/s)',fontsize=20)
             ax.set_ylabel('Max Response (spikes/s)',fontsize=20)
-            ax.set_title(label,fontsize=20)
+            ax.set_title(lbl,fontsize=20)
             plt.tight_layout()
             
             fig = plt.figure(facecolor='w')
@@ -1476,7 +1482,7 @@ class popProbeData():
             ax.set_xticks(bckgndSpeed)
             ax.set_xlabel('Background Speed (deg/s)',fontsize=20)
             ax.set_ylabel('% Suppression',fontsize=20)
-            ax.set_title(label,fontsize=20)
+            ax.set_title(lbl,fontsize=20)
             plt.tight_layout()
     
     
