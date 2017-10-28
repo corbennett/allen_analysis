@@ -57,7 +57,7 @@ class probeData():
         return datDict
         
         
-    def loadExperiment(self, loadRunningData=False, loadUnits=True):
+    def loadExperiment(self, loadRunningData=True, loadWaveforms=False, loadUnits=True):
         self.kwdFileList, self.nsamps = getKwdInfo()
         filelist = self.kwdFileList
         filePaths = [os.path.dirname(f) for f in filelist]        
@@ -73,40 +73,47 @@ class probeData():
                     
         if loadUnits:
             self.getSingleUnits(fileDir=os.path.dirname(filePaths[0]))
-        self.mapChannels()
-        self.visstimData = {}
-        self.behaviorData = {}
-        self.TTL = {}
-        for pro, proPath in enumerate(filePaths):
-            files = os.listdir(proPath)
-            
-            visStimFound = False
-            eyeDataFound = False
-            self.behaviorData[str(pro)] = {}
-            for f in files:
-                if 'VisStim' in f:
-                    self.getVisStimData(os.path.join(proPath, f), protocol=pro)
-                    visStimFound = True
-                    continue
-            
-                #load eye tracking data
-                if 'MouseEyeTracker' in f:  
-                    self.getEyeTrackData(os.path.join(proPath, f), protocol=pro)
-                    eyeDataFound = True
-                    continue
+        if loadRunningData:
+            self.mapChannels()
+            self.visstimData = {}
+            self.behaviorData = {}
+            self.TTL = {}
+            for pro, proPath in enumerate(filePaths):
+                files = os.listdir(proPath)
                 
-            ttlFile = [f for f in files if f.endswith('kwe')][0]             
-            self.getTTLData(filePath=os.path.join(proPath, ttlFile), protocol=pro)
+                visStimFound = False
+                eyeDataFound = False
+                self.behaviorData[str(pro)] = {}
+                for f in files:
+                    if 'VisStim' in f:
+                        self.getVisStimData(os.path.join(proPath, f), protocol=pro)
+                        visStimFound = True
+                        continue
+                
+                    #load eye tracking data
+                    if 'MouseEyeTracker' in f:  
+                        self.getEyeTrackData(os.path.join(proPath, f), protocol=pro)
+                        eyeDataFound = True
+                        continue
+                    
+                ttlFile = [f for f in files if f.endswith('kwe')][0]             
+                self.getTTLData(filePath=os.path.join(proPath, ttlFile), protocol=pro)
+                
+                if loadRunningData:
+                    wd = self._d[pro]['data'][:, self.wheelChannel]*self._d[pro]['gains'][self.wheelChannel]
+                    wd = wd[::500]
+                    self.behaviorData[str(pro)]['running'] = self.decodeWheel(wd)
+                if not visStimFound:
+                    print('No vis stim data found for ' + os.path.basename(proPath))
+                if not eyeDataFound:
+                    print('No eye tracking data found for ' + os.path.basename(proPath))
             
-            if loadRunningData:
-                wd = self._d[pro]['data'][:, self.wheelChannel]*self._d[pro]['gains'][self.wheelChannel]
-                wd = wd[::500]
-                self.behaviorData[str(pro)]['running'] = self.decodeWheel(wd)
-            if not visStimFound:
-                print('No vis stim data found for ' + os.path.basename(proPath))
-            if not eyeDataFound:
-                print('No eye tracking data found for ' + os.path.basename(proPath))
+            for i, pro in enumerate(self.kwdFileList):
+                if 'laser' in pro:
+                    self.findAnalogPulses(self.blueLaserChannel, i)
             
+            if loadWaveforms:
+                self.getWaveforms()
     
     def getTTLData(self, filePath=None, protocol=0):
         
