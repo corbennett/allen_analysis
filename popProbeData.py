@@ -28,6 +28,7 @@ class popProbeData():
         self.data = None
         self.annotationData = None
         self.annotationStructures = None
+        self.inSCAxonsVol = None
     
     
     def getExperimentFiles(self,append=False):
@@ -224,14 +225,13 @@ class popProbeData():
         return y,x,z
     
     
-    def getSCAxons(self,fromFile=False):
+    def getSCAxons(self):
         y,x,z = self.getCCFCoords()
-        if fromFile:
-            filePath = fileIO.getFile()
-            inSCVol = np.load(filePath)
-            inSCAxons = np.array([inSCVol[i//25,j//25,k//25] for i,j,k in zip(y,x,z)])
-        else:
-            inSCAxons = (x<=170*25) & (z>=300*25)
+        inSCAxons = (x<=170*25) & (z>=300*25)
+        if self.inSCAxonsVol is None:
+            filePath = fileIO.getFile('Select SC axons file','*.npy')
+            self.inSCAxonsVol = np.load(filePath)
+        inSCAxons = inSCAxons | np.array([self.inSCAxonsVol[int(i//25),int(j//25),int(k//25)] for i,j,k in zip(y,x,z)])
         return inSCAxons
         
         
@@ -862,16 +862,13 @@ class popProbeData():
     
     def makeRFVolume(self, padding=10, sigma=3, region=None, weighted=False):
         
-        if region is None:
-            cellsInRegion = np.ones(len(self.data)).astype('bool')
-        else:
-            cellRegions = self.data.index.get_level_values('region')
-            cellsInRegion = cellRegions==region
+        cellsInRegion = self.getCellsInRegion(region)
         
         inLP,rng = self.getInRegion(region,padding=padding)
         LPmask = inLP.astype(float)
         LPmask[LPmask==0] = np.nan
         yRange,xRange,zRange = rng
+        rangeSlice = tuple(slice(r[0],r[1]) for r in rng)
         
         CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)[cellsInRegion]
         
@@ -879,7 +876,6 @@ class popProbeData():
         elev = np.zeros_like(counts)
         azi = np.zeros_like(counts)
         data = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]
-        expDate = data.index.get_level_values('experimentDate')
         isOnOff = data.index.get_level_values('unitLabel')=='on off'
         isOn = data.index.get_level_values('unitLabel')=='on'
         isOff = data.index.get_level_values('unitLabel')=='off'  
@@ -952,12 +948,21 @@ class popProbeData():
             contours = cv2.findContours(LPmask.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
             contours = contours[0] if len(contours)<3 else contours[1]
             cx,cy = np.squeeze(contours).T
+            
+            scAxons = cv2.findContours(self.inSCAxonsVol[rangeSlice].astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            scAxons = scAxons[0] if len(scAxons)<3 else scAxons[1]
+            s = [s.shape[0] for s in scAxons]
+            scAxons = scAxons[s.index(max(s))]
+            scx,scy = np.squeeze(scAxons).T
+            
             if a==0:
                 x,y = y,x
                 cx,cy = cy,cx
-            fig = plt.figure(str(a), facecolor='w')
+                scx,scy = scy,scx
+            fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
             ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
+            ax.plot(np.append(scx,scx[0]),np.append(scy,scy[0]),'0.5',linewidth=2)
             ax.plot(x,y,'ro')
             ax.set_aspect('equal')
             ax.axis('off')
