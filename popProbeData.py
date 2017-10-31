@@ -1418,7 +1418,9 @@ class popProbeData():
         
         controlData = self.data.laserOff.allTrials.checkerboard
         controlRespMat = np.stack(controlData.respMat)
-        laserRespMat = np.stack(self.data.laserOn.allTrials.checkerboard.respMat)
+        
+        laserData = self.data.laserOn.allTrials.checkerboard
+        laserRespMat = np.stack(laserData.respMat)
         
         controlMax = controlRespMat.max(axis=(1,2))
         laserMax = laserRespMat.max(axis=(1,2))
