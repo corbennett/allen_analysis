@@ -738,6 +738,97 @@ class popProbeData():
         ax.set_aspect('equal')
         plt.tight_layout()
         
+        # rf center colored by omi
+        controlMax,laserMax = [np.maximum(*[np.stack(self.data[laser].allTrials.sparseNoise[onOff][cellsInRegion]).max(axis=(1,2,3)) for onOff in ('onResp','offResp')]) for laser in ('laserOff','laserOn')]
+        omi = (laserMax-controlMax)/(laserMax+controlMax)
+        expDate = data.index.get_level_values('experimentDate')
+        centeredRFs = []
+        centeredRFOMIs = []
+        for exp in expDate.unique():
+            expInd = expDate==exp
+            for fit,label in zip((onFit,offFit),('On','Off')):
+                ind = expInd & (fit[:,0]>-30) & (fit[:,0]<130) & (fit[:,1]>-40) & (fit[:,1]<95)
+                weightedPopCenter = np.sum(fit[ind,:2]*-omi[ind][:,None],axis=0)/np.sum(-omi[ind])
+                popCenter = fit[ind,:2].mean(axis=0)
+                centeredRFs.append(fit[ind,:2]-popCenter)
+                centeredRFOMIs.append(omi[ind])
+                plt.figure(facecolor='w')
+                ax = plt.subplot(1,1,1)
+                ax.scatter(fit[ind,0],fit[ind,1],c=plt.cm.bwr(omi[ind]*0.5+0.5),s=100)
+                ax.spines['right'].set_visible(False)
+                ax.spines['top'].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+                ax.set_xlabel('Azimuth',fontsize=20)
+                ax.set_ylabel('Elevation',fontsize=20)
+                ax.set_title(exp+', '+label,fontsize=20)
+                ax.set_aspect('equal')
+                plt.tight_layout()
+        centeredRFs = np.concatenate(centeredRFs)
+        centeredRFOMIs = np.concatenate(centeredRFOMIs)
+        
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        ax.plot([-100,100],[0,0],'k--')
+        ax.plot([0,0],[-100,100],'k--')
+        ax.scatter(centeredRFs[:,0],centeredRFs[:,1],c=plt.cm.bwr(centeredRFOMIs*0.5+0.5),s=100)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlim([-100,100])
+        ax.set_ylim([-100,100])
+        ax.set_xlabel('Relative Azimuth',fontsize=20)
+        ax.set_ylabel('Relative Elevation',fontsize=20)
+        ax.set_title('OMI',fontsize=20)
+        ax.set_aspect('equal')
+        plt.tight_layout()
+        
+        radii = np.arange(10,105,10)
+        inner = np.zeros(centeredRFs.shape[0],dtype=bool)
+        ringOmiMean = np.zeros(radii.size)
+        ringOmiSem = ringOmiMean.copy()
+        for i,r in enumerate(radii):
+            outer = ((centeredRFs[:,0]**2)+(centeredRFs[:,1]**2)<r**2)
+            inRing = ~inner & outer
+            inner = outer
+            ringOmiMean[i] = centeredRFOMIs[inRing].mean()
+            ringOmiSem[i] = centeredRFOMIs[inRing].std()/(inRing.sum()**0.5)
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        ax.plot(radii,ringOmiMean,'k',linewidth=2)
+        ax.fill_between(radii,ringOmiMean-ringOmiSem,ringOmiMean+ringOmiSem,color='k',alpha=0.5)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlim([0,105])
+        ax.set_xlabel('Bin Outer Radius',fontsize=20)
+        ax.set_ylabel('Mean OMI',fontsize=20)
+        plt.tight_layout()
+        
+        x = np.meshgrid(np.arange(-100,100.1,0.1))[0]
+        inner = np.zeros((x.size,)*2,dtype=bool)
+        ringOmiImg = np.zeros(inner.shape)
+        for r,rOmi in zip(radii,ringOmiMean):
+            outer = (x**2+x[:,None]**2)<r**2
+            inRing = ~inner & outer
+            inner = outer
+            ringOmiImg[inRing] = -rOmi
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        im = ax.imshow(ringOmiImg,cmap='gray')
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xticks([0,1000,2000])
+        ax.set_yticks([0,1000,2000])
+        ax.set_xticklabels([-100,0,100])
+        ax.set_yticklabels([100,0,100])
+        ax.set_xlabel('Azimuth',fontsize=20)
+        ax.set_ylabel('Elevation',fontsize=20)
+        ax.set_title('Mean OMI',fontsize=20)
+        plt.colorbar(im)
+        plt.tight_layout()
+            
+        
         # plot rf center vs probe position
         expDate = data.index.get_level_values('experimentDate')
         for exp in expDate.unique():
