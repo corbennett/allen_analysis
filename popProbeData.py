@@ -827,7 +827,6 @@ class popProbeData():
         ax.set_title('Mean OMI',fontsize=20)
         plt.colorbar(im)
         plt.tight_layout()
-            
         
         # plot rf center vs probe position
         expDate = data.index.get_level_values('experimentDate')
@@ -1344,8 +1343,8 @@ class popProbeData():
             p = self.getProbeDataObj(exp)
             protocol = p.getProtocolIndex('gratings')
             laserTrials,controlTrials = p.findLaserTrials(protocol)
-            p.analyzeGratings(trials=controlTrials,fit=False,plot=False,saveTag='_control')
-            p.analyzeGratings(trials=laserTrials,fit=False,plot=False,saveTag='_laser')
+            p.analyzeGratings(trials=controlTrials,fit=False,plot=False,showLaserPreFrames=True,saveTag='_control')
+            p.analyzeGratings(trials=laserTrials,fit=False,plot=False,showLaserPreFrames=True,saveTag='_laser')
             for u in p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))[0]:
                 respMat = p.units[str(u)]['gratings_stf_control']['respMat']
                 maxRespInd = np.unravel_index(np.argmax(respMat),respMat.shape)
@@ -1359,6 +1358,9 @@ class popProbeData():
         laserPreTime = p.visstimData[str(protocol)]['laserPreFrames']/frameRate
         laserPostTime = p.visstimData[str(protocol)]['laserPostFrames']/frameRate
         laserRampTime = p.visstimData[str(protocol)]['laserRampFrames']/frameRate
+        stimStartTime = preTime+laserPreTime
+        laserStart = preTime-0.25
+        laserEnd = preTime+laserPreTime+stimTime+laserPostTime
         
         if inSCAxons is None:
             cellsInRegion = [self.getCellsInRegion(region)]
@@ -1370,10 +1372,9 @@ class popProbeData():
         for ind,lbl in zip(cellsInRegion,label):
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
-            h = 0.5
-            ax.add_patch(patches.Rectangle([preTime,-h],width=stimTime,height=h,color='0.5'))
-            laserEnd = preTime+stimTime+laserPostTime
-            ax.add_patch(patches.Polygon(np.array([[0,-2*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h],[0,-3*h]]),color='b'))
+            h = 0.5 # bar height
+            ax.add_patch(patches.Rectangle([stimStartTime,-h],width=stimTime,height=h,color='0.5'))
+            ax.add_patch(patches.Polygon(np.array([[laserStart,-3*h],[laserStart+laserRampTime,-2*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h]]),color='b'))
             ymax = 0
             for s,clr in zip((sdfControl,sdfLaser),('k','b')):
                 sdf = np.stack(s)[ind]
@@ -1382,7 +1383,7 @@ class popProbeData():
                 ax.plot(sdfTime,sdfMean,clr,linewidth=2)
                 ax.fill_between(sdfTime,sdfMean+sdfSem,sdfMean-sdfSem,color=clr,alpha=0.5)
                 ymax = max(ymax,np.max(sdfMean+sdfSem))
-            ax.set_xlim([0,3.5])
+            ax.set_xlim([0,5])
             ax.set_ylim([-2,1.05*ymax])
             ax.set_xticks([])
             ax.spines['right'].set_visible(False)
@@ -1396,23 +1397,23 @@ class popProbeData():
         for ind,lbl in zip(cellsInRegion,label):
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
-            h = 0.5
-            ax.add_patch(patches.Rectangle([preTime,-h],width=stimTime,height=h,color='0.5'))
-            laserEnd = preTime+stimTime+laserPostTime
-            ax.add_patch(patches.Polygon(np.array([[0,-2*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h],[0,-3*h]]),color='b'))
+            h = 0.5 # bar height
+            ax.add_patch(patches.Rectangle([stimStartTime,-h],width=stimTime,height=h,color='0.5'))
+            ax.add_patch(patches.Polygon(np.array([[laserStart,-3*h],[laserStart+laserRampTime,-2*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h]]),color='b'))
             ymax = 0
             for s,clr in zip((sdfControl,sdfLaser),('k','b')):
                 sdf = np.stack(s)[ind]
                 sdfMean = sdf.mean(axis=0)
+                baselineInd = (sdfTime>stimStartTime-0.5) & (sdfTime<stimStartTime)
                 if clr=='k':
-                    baseline = sdfMean[sdfTime<preTime].mean()
+                    baseline = sdfMean[baselineInd].mean()
                 else:
-                    sdfMean += baseline-sdfMean[sdfTime<preTime].mean()
+                    sdfMean += baseline-sdfMean[baselineInd].mean()
                 sdfSem = sdf.std(axis=0)/(ind.sum()**0.5)
                 ax.plot(sdfTime,sdfMean,clr,linewidth=2)
                 ax.fill_between(sdfTime,sdfMean+sdfSem,sdfMean-sdfSem,color=clr,alpha=0.5)
                 ymax = max(ymax,np.max(sdfMean+sdfSem))
-            ax.set_xlim([0,3.5])
+            ax.set_xlim([0,5])
             ax.set_xticks([])
             ax.set_ylim([-2,1.05*ymax])
             ax.spines['right'].set_visible(False)
@@ -1426,12 +1427,11 @@ class popProbeData():
         for ind,lbl in zip(cellsInRegion,label):
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
-            h = 0.05
-            ax.add_patch(patches.Rectangle([preTime,-h],width=stimTime,height=h,color='0.5'))
-            laserEnd = preTime+stimTime+laserPostTime
-            ax.add_patch(patches.Polygon(np.array([[0,-2*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h],[0,-3*h]]),color='b'))
+            h = 0.05 # bar height
+            ax.add_patch(patches.Rectangle([stimStartTime,-h],width=stimTime,height=h,color='0.5'))
+            ax.add_patch(patches.Polygon(np.array([[laserStart,-3*h],[laserStart+laserRampTime,-2*h],[laserEnd,-2*h],[laserEnd+laserRampTime,-3*h]]),color='b'))
             ax.plot(sdfTime,np.stack(sdfLaser)[ind].mean(axis=0)/np.stack(sdfControl)[ind].mean(axis=0),'k',linewidth=2)
-            ax.set_xlim([0,3.5])
+            ax.set_xlim([0,5])
             ax.set_xticks([])
             ax.set_ylim([-0.2,1.6])
             ax.spines['right'].set_visible(False)
