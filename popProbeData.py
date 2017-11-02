@@ -986,31 +986,6 @@ class popProbeData():
         onFit[isOff | noRF,:] = np.nan
         offFit[isOn | noRF,:] = np.nan
         
-#        for uindex, coords in enumerate(CCFCoords):
-#            if any(np.isnan(coords)):
-#                continue
-#            else:
-#                label = data.index.get_level_values('unitLabel')[uindex]
-#                if label == 'on':
-#                    fit = onFit[uindex]
-#                elif label == 'off':
-#                    fit = offFit[uindex]
-#                elif label == 'on off':
-#                    fit = (onFit[uindex] + offFit[uindex])/2
-#                else:
-#                    continue
-#                
-#                if not any(np.isnan(fit[:2])):
-#                    ccf = coords/25
-#                    ccf = ccf.astype(int)
-#                    ccf -= np.array([xRange[0], yRange[0], zRange[0]])
-#                    
-#                    counts[ccf[1], ccf[0], ccf[2]]+=1
-#                    x,y = fit[:2]
-#                    elev[ccf[1], ccf[0], ccf[2]] += y
-#                    azi[ccf[1], ccf[0], ccf[2]] += x        
-        
-        
         for fitType, sub in zip([onFit, offFit], ['on', 'off']):
             for uindex, coords in enumerate(CCFCoords):
                 if any(np.isnan(coords)):
@@ -1039,6 +1014,8 @@ class popProbeData():
             contours = contours[0] if len(contours)<3 else contours[1]
             cx,cy = np.squeeze(contours).T
             
+            if self.inSCAxonsVol is None:
+                _ = self.getSCAxons()
             scAxons = cv2.findContours(self.inSCAxonsVol[rangeSlice].astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
             scAxons = scAxons[0] if len(scAxons)<3 else scAxons[1]
             s = [s.shape[0] for s in scAxons]
@@ -1051,9 +1028,9 @@ class popProbeData():
                 scx,scy = scy,scx
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
+            ax.add_patch(patches.Polygon(np.stack((scx,scy)).T,color='0.5',alpha=0.25))
             ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
-            ax.plot(np.append(scx,scx[0]),np.append(scy,scy[0]),'0.5',linewidth=2)
-            ax.plot(x,y,'ro')
+            ax.plot(x,y,'ko',markersize=5)
             ax.set_aspect('equal')
             ax.axis('off')
             ax.set_xlim([cx.min()-padding,cx.max()+padding])
