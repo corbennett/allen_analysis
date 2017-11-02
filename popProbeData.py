@@ -1174,7 +1174,7 @@ class popProbeData():
         sf = np.array([0.01,0.02,0.04,0.08,0.16,0.32])
         tf = np.array([0.5,1,2,4,8])
         
-        laser = 'on'
+        laser = 'off'
         
         inSCAxons = self.getSCAxons()[cellsInRegion]
         
@@ -1203,8 +1203,8 @@ class popProbeData():
         respZ = (laserOffRespMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
         hasResp = (respZ>zthresh).any(axis=2).any(axis=1)
         
-        stfFit = np.stack(laserOffData.stfFitParams)[hasGratings]
-        hasResp = ~np.isnan(stfFit[:,0])
+        stfFit = np.stack(laserOffData.stfFitParams)[hasGratings][hasResp]
+        
         respMat = laserOffRespMat[hasResp]
         if laser=='on':
             stfFit = np.stack(self.data.laserOn.allTrials.gratings[cellsInRegion].stfFitParams[hasGratings][hasResp])
@@ -1574,7 +1574,7 @@ class popProbeData():
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
         
-        data = self.data.laserOn.allTrials.checkerboard[cellsInRegion]    
+        data = self.data.laserOff.allTrials.checkerboard[cellsInRegion]    
         
         if hasLaser:
             patchSpeed = bckgndSpeed = np.array([-80,-20,0,20,80])
@@ -1616,8 +1616,7 @@ class popProbeData():
             hasResp = (respZ>zthresh).any(axis=2).any(axis=1)
             uindex = uindex[hasResp]
         
-        respMat = np.stack(data.respMat)
-        respMat = respMat[uindex]
+        respMat = np.stack(data.respMat[uindex])
         inSCAxonsIndex = inSCAxons[uindex]        
         
 #        # fill in NaNs where no running trials
