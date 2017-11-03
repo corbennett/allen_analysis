@@ -90,6 +90,17 @@ class popProbeData():
                     p.saveHDF5(exp)
         else:
             probeDataObj.readExcelFile(fileName=self.excelFile)
+            
+            
+    def saveProbeCoordPtsNpy(self):
+        d = fileIO.getDir('Choose folder to save points to')
+        for exp in self.experimentFiles:
+            p = self.getProbeDataObj(exp)
+            entry = p.CCFLPEntryPosition
+            tip= p.CCFTipPosition
+            pts = np.stack((entry,tip))/25+1
+            expDate,anmID = p.getExperimentInfo()
+            np.save(os.path.join(d,expDate+'_'+anmID+'.npy'),pts)
     
     
     def makeDataFrame(self,analyzeExperiments=False,findRegion=True):
