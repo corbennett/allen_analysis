@@ -29,6 +29,7 @@ class popProbeData():
         self.annotationData = None
         self.annotationStructures = None
         self.inSCAxonsVol = None
+        self.inACAxonsVol = None
     
     
     def getExperimentFiles(self,append=False):
@@ -226,6 +227,46 @@ class popProbeData():
             return
         self.data.to_hdf(filePath,'table')
         
+        
+    def showUnitPositions(self,region,padding=10,expDate=None,animalID=None):
+        cellsInRegion = self.getCellsInRegion(region,inSCAxons=None,inACAxons=None)
+        if expDate is not None:
+            cellsInRegion[self.data.index.get_level_values('experimentDate')!=expDate] = False
+        if animalID is not None:
+            cellsInRegion[self.data.index.get_level_values('animalID')!=animalID] = False
+        inRegion,rng = self.getInRegion(region,padding=padding)
+        rangeSlice = tuple(slice(r[0],r[1]) for r in rng)
+        ccfCoords = self.getCCFCoords(cellsInRegion)
+        for a in range(3):
+            ind = [0,1,2]
+            ind.remove(a)
+            y,x = [ccfCoords[i]/25-rng[i][0] for i in ind]
+            contours = cv2.findContours(inRegion.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            contours = contours[0] if len(contours)<3 else contours[1]
+            cx,cy = np.squeeze(contours).T
+            if region=='LP':
+                if self.inSCAxonsVol is None:
+                    _ = self.getSCAxons()
+                scAxons = cv2.findContours(self.inSCAxonsVol[rangeSlice].astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                scAxons = scAxons[0] if len(scAxons)<3 else scAxons[1]
+                s = [s.shape[0] for s in scAxons]
+                scAxons = scAxons[s.index(max(s))]
+                scx,scy = np.squeeze(scAxons).T
+            if a==0:
+                x,y = y,x
+                cx,cy = cy,cx
+                scx,scy = scy,scx
+            fig = plt.figure(facecolor='w')
+            ax = fig.add_subplot(1,1,1)
+            ax.add_patch(patches.Polygon(np.stack((scx,scy)).T,color='0.5',alpha=0.25))
+            ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
+            ax.plot(x,y,'ko',markersize=5)
+            ax.set_aspect('equal')
+            ax.axis('off')
+            ax.set_xlim([cx.min()-padding,cx.max()+padding])
+            ax.set_ylim([cy.max()+padding,cy.min()-padding])
+            plt.tight_layout()
+        
     
     def getCCFCoords(self, cells=None):
         if cells is None:
@@ -244,9 +285,27 @@ class popProbeData():
             self.inSCAxonsVol = np.load(filePath)
         inSCAxons = inSCAxons | np.array([self.inSCAxonsVol[int(i//25),int(j//25),int(k//25)] for i,j,k in zip(y,x,z)])
         return inSCAxons
+
+# code used to make in SC and in AC convex hull volumes
+#ahull = a.copy()
+#for i in range(a.shape[2]):
+#    _,contours,_ = cv2.findContours(a[:,:,i].copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+#    h = [cv2.convexHull(c) for c in contours if c.shape[0]>=3]
+#    img = np.zeros(a.shape[:2],dtype=np.uint8)
+#    cv2.drawContours(img,h,-1,1,-1,cv2.LINE_AA)
+#    ahull[:,:,i] = img
+        
+    def getACAxons(self):
+        y,x,z = self.getCCFCoords()
+        inACAxons = (x>=190*25) | (z<=280*25)
+        if self.inACAxonsVol is None:
+            filePath = fileIO.getFile('Select AC axons file','*.npy')
+            self.inACAxonsVol = np.load(filePath)
+        inACAxons = inACAxons | np.array([self.inACAxonsVol[int(i//25),int(j//25),int(k//25)] for i,j,k in zip(y,x,z)])
+        return inACAxons
         
         
-    def getCellsInRegion(self,region=None,inSCAxons=None):
+    def getCellsInRegion(self,region=None,inSCAxons=None,inACAxons=None):
         if region is None:
             cellsInRegion = np.ones(len(self.data)).astype('bool')
         else:
@@ -257,6 +316,11 @@ class popProbeData():
                 cellsInRegion = cellsInRegion & self.getSCAxons()
             else:
                 cellsInRegion = cellsInRegion & ~self.getSCAxons()
+        if inACAxons is not None:
+            if inACAxons:
+                cellsInRegion = cellsInRegion & self.getACAxons()
+            else:
+                cellsInRegion = cellsInRegion & ~self.getACAxons()
         return cellsInRegion
         
         
@@ -415,8 +479,7 @@ class popProbeData():
         if region is None:
             cellsInRegion = np.ones(len(self.data)).astype('bool')
         else:
-            cellRegions = self.data.index.get_level_values('region')
-            cellsInRegion = cellRegions==region
+            cellsInRegion = self.getCellsInRegion(region,inSCAxons=None,inACAxons=None)
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
@@ -457,11 +520,13 @@ class popProbeData():
         onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
         onAspect = onFit[:,2]/onFit[:,3]
         badOn = (onArea<minRFCutoff) | (onArea>maxRFCutoff) | (onAspect<minAspectCutoff) | (onAspect>maxAspectCutoff)
+        onFit[badOn,:] = np.nan
         onArea[badOn] = np.nan
         onAspect[badOn] = np.nan
         offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
         offAspect = offFit[:,2]/offFit[:,3]
         badOff = (offArea<minRFCutoff) | (offArea>maxRFCutoff) | (offAspect<minAspectCutoff) | (offAspect>maxAspectCutoff)
+        offFit[badOff,:] = np.nan        
         offArea[badOff] = np.nan
         offAspect[badOff] = np.nan
         rfArea = offArea.copy()
@@ -611,7 +676,7 @@ class popProbeData():
         for i in range(data.shape[0]):
             if data.sizeTuningOff[i].size>3:
                 allSizesInd[i] = True      
-        for scInd in (inSCAxons,~inSCAxons):
+        for scInd in (np.ones(inSCAxons.size,dtype=bool),inSCAxons,~inSCAxons):
             sizeTuningOn = np.full((data.shape[0],len(sizeTuningSize)),np.nan)
             sizeTuningOff = sizeTuningOn.copy()
             ind = allSizesInd & scInd & (isOn | isOnOff)
@@ -969,7 +1034,6 @@ class popProbeData():
         LPmask = inLP.astype(float)
         LPmask[LPmask==0] = np.nan
         yRange,xRange,zRange = rng
-        rangeSlice = tuple(slice(r[0],r[1]) for r in rng)
         
         CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)[cellsInRegion]
         
@@ -1012,41 +1076,6 @@ class popProbeData():
                         x,y = fitType[uindex][:2]
                         elev[ccf[1], ccf[0], ccf[2]] += y
                         azi[ccf[1], ccf[0], ccf[2]] += x
-                        
-        # plot recording positions
-        ccfCoords = self.getCCFCoords(cellsInRegion)
-        for a in range(3):
-#            anyCounts = counts.any(axis=a).astype(np.uint8)
-#            y,x = np.where(anyCounts)
-            ind = [0,1,2]
-            ind.remove(a)
-            y,x = [ccfCoords[i]/25-rng[i][0] for i in ind]
-            contours = cv2.findContours(LPmask.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-            contours = contours[0] if len(contours)<3 else contours[1]
-            cx,cy = np.squeeze(contours).T
-            
-            if self.inSCAxonsVol is None:
-                _ = self.getSCAxons()
-            scAxons = cv2.findContours(self.inSCAxonsVol[rangeSlice].astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-            scAxons = scAxons[0] if len(scAxons)<3 else scAxons[1]
-            s = [s.shape[0] for s in scAxons]
-            scAxons = scAxons[s.index(max(s))]
-            scx,scy = np.squeeze(scAxons).T
-            
-            if a==0:
-                x,y = y,x
-                cx,cy = cy,cx
-                scx,scy = scy,scx
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
-            ax.add_patch(patches.Polygon(np.stack((scx,scy)).T,color='0.5',alpha=0.25))
-            ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
-            ax.plot(x,y,'ko',markersize=5)
-            ax.set_aspect('equal')
-            ax.axis('off')
-            ax.set_xlim([cx.min()-padding,cx.max()+padding])
-            ax.set_ylim([cy.max()+padding,cy.min()-padding])
-            plt.tight_layout()
                 
         if not weighted:
             elev /= counts
@@ -1179,15 +1208,12 @@ class popProbeData():
         if region is None:
             cellsInRegion = np.ones(len(self.data)).astype('bool')
         else:
-            cellRegions = self.data.index.get_level_values('region')
-            cellsInRegion = cellRegions==region
+            cellsInRegion = self.getCellsInRegion(region,True,False)
               
         sf = np.array([0.01,0.02,0.04,0.08,0.16,0.32])
         tf = np.array([0.5,1,2,4,8])
         
         laser = 'off'
-        
-        inSCAxons = self.getSCAxons()[cellsInRegion]
         
         laserOffData = self.data.laserOff.allTrials.gratings[cellsInRegion]
         hasGratings = laserOffData.respMat.notnull()
@@ -1208,41 +1234,38 @@ class popProbeData():
                 laserOnResp = self.data.laserOn.allTrials.gratings[cellsInRegion].respMat[u]
                 laserOnRespMat[respInd] = laserOnResp[:,:,bestOriInd]
                 
-        zthresh = 0
+        zthresh = 10
         spontRateMean = laserOffData.spontRateMean[hasGratings]
         spontRateStd = laserOffData.spontRateStd[hasGratings]
         respZ = (laserOffRespMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
         hasResp = (respZ>zthresh).any(axis=2).any(axis=1)
         
-        stfFit = np.stack(laserOffData.stfFitParams)[hasGratings][hasResp]
+        stfFit = np.stack(laserOffData[hasGratings][hasResp].stfFitParams)
         
         respMat = laserOffRespMat[hasResp]
         if laser=='on':
             stfFit = np.stack(self.data.laserOn.allTrials.gratings[cellsInRegion].stfFitParams[hasGratings][hasResp])
             respMat = laserOnRespMat[hasResp]
-            
-        inSCAxons = inSCAxons[hasGratings][hasResp]
         
         # plot mean resp
-        for ind,title in zip((np.ones(inSCAxons.size,dtype=bool),inSCAxons,~inSCAxons),('all','SC','not SC')):
-#            normRespMat = respMat[ind]/np.nanmax(respMat[ind],axis=(1,2))[:,None,None]
-#            meanRespMat = np.nanmean(normRespMat,axis=0)
-            meanRespMat = np.nanmean(respMat[ind],axis=0)
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
-            im = plt.imshow(meanRespMat,cmap='gray',interpolation='none',origin='lower')
-            ax.spines['right'].set_visible(False)
-            ax.spines['top'].set_visible(False)
-            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-            ax.set_xticklabels(sf)
-            ax.set_yticklabels(tf)
-            ax.set_xticks(np.arange(sf.size))
-            ax.set_yticks(np.arange(tf.size))
-            ax.set_xlabel('Cycles/deg',fontsize=20)
-            ax.set_ylabel('Cycles/s',fontsize=20)
-            ax.set_title(title+', laser '+laser,fontsize=20)
-            plt.colorbar(im)
-            plt.tight_layout()
+        r = respMat-spontRateMean[hasResp,None,None]
+        normRespMat = r/np.nanmax(r,axis=(1,2))[:,None,None]
+        meanRespMat = np.nanmean(normRespMat,axis=0)
+        meanRespMat = np.nanmean(r,axis=0)
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        im = plt.imshow(meanRespMat,clim=(0,meanRespMat.max()),cmap='gray',interpolation='none',origin='lower')
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xticklabels(sf)
+        ax.set_yticklabels(tf)
+        ax.set_xticks(np.arange(sf.size))
+        ax.set_yticks(np.arange(tf.size))
+        ax.set_xlabel('Cycles/deg',fontsize=20)
+        ax.set_ylabel('Cycles/s',fontsize=20)
+        plt.colorbar(im)
+        plt.tight_layout()
         
         # plot center SF and TF and speed tuning index
         fig = plt.figure(facecolor='w')
@@ -1579,8 +1602,7 @@ class popProbeData():
         if region is None:
             cellsInRegion = np.ones(len(self.data)).astype('bool')
         else:
-            cellRegions = self.data.index.get_level_values('region')
-            cellsInRegion = cellRegions==region
+            cellsInRegion = self.getCellsInRegion(region,True,False)
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
@@ -1628,7 +1650,24 @@ class popProbeData():
             uindex = uindex[hasResp]
         
         respMat = np.stack(data.respMat[uindex])
-        inSCAxonsIndex = inSCAxons[uindex]        
+        inSCAxonsIndex = inSCAxons[uindex]
+        
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        r = respMat-spontRateMean[hasResp,None,None]
+        meanResp = r.mean(axis=0)
+        im = ax.imshow(meanResp,clim=(0,meanResp.max()),cmap='gray',interpolation='none',origin='lower')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xticks(np.arange(bckgndSpeed.size))
+        ax.set_xticklabels(bckgndSpeed,fontsize=18)
+        ax.set_yticks(np.arange(patchSpeed.size))
+        ax.set_yticklabels(patchSpeed,fontsize=18)
+        ax.set_xlabel('Background Speed (deg/s)',fontsize=20)
+        ax.set_ylabel('Patch Speed (deg/s)',fontsize=20)
+        plt.tight_layout()
+        plt.colorbar(im)
         
 #        # fill in NaNs where no running trials
 #        statRespMat = np.stack(self.data.laserOff.stat.checkerboard.respMat[uindex])
