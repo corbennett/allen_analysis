@@ -468,11 +468,61 @@ class popProbeData():
             ax.set_ylabel('OMI',fontsize=20)
             ax.set_title(label,fontsize=20)
             plt.tight_layout()
+            
+            
+    def getRFData(self,data,useBestSize=False):
+        minRFCutoff = 100
+        maxRFCutoff = 5000
+        minAspectCutoff = 0.25
+        maxAspectCutoff = 4
+        isOnOff = data.index.get_level_values('unitLabel')=='on off'
+        isOn = data.index.get_level_values('unitLabel')=='on'
+        isOff = data.index.get_level_values('unitLabel')=='off'  
+        noRF = np.logical_not(isOnOff | isOn | isOff) 
+        onFit = np.full((data.shape[0],7),np.nan)
+        offFit = onFit.copy()
+        sizeUsedOn = np.full(data.shape[0],np.nan)
+        sizeUsedOff = sizeUsedOn.copy()
+        for u in range(data.shape[0]):
+            if useBestSize:
+                boxSize = data.boxSize[u]
+                boxSizeInd = np.where(boxSize<25)[0]
+                sizeInd = data.sizeTuningOn[u][boxSizeInd].argmax()
+                sizeUsedOn[u] = boxSize[sizeInd]
+                onFit[u] = data.onFit[u][sizeInd]
+                sizeInd = data.sizeTuningOff[u][boxSizeInd].argmax()
+                sizeUsedOff[u] = boxSize[sizeInd]
+                offFit[u] = data.offFit[u][sizeInd]
+            else:
+                for size in (10,5,20):
+                    sizeInd = data.boxSize[u]==size
+                    if sizeInd.any():
+                        onFit[u] = data.onFit[u][sizeInd]
+                        offFit[u] = data.offFit[u][sizeInd]
+                        if not np.all(np.isnan(onFit[u])) or not np.all(np.isnan(offFit[u])):
+                            sizeUsedOn[u] = size
+                            sizeUsedOff[u] = size
+                            break
+        sizeUsedOn[noRF] = np.nan
+        sizeUsedOff[noRF] = np.nan
+        onFit[isOff | noRF,:] = np.nan
+        offFit[isOn | noRF,:] = np.nan
+        onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
+        onAspect = onFit[:,2]/onFit[:,3]
+        badOn = (onArea<minRFCutoff) | (onArea>maxRFCutoff) | (onAspect<minAspectCutoff) | (onAspect>maxAspectCutoff)
+        onFit[badOn,:] = np.nan
+        onArea[badOn] = np.nan
+        onAspect[badOn] = np.nan
+        offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
+        offAspect = offFit[:,2]/offFit[:,3]
+        badOff = (offArea<minRFCutoff) | (offArea>maxRFCutoff) | (offAspect<minAspectCutoff) | (offAspect>maxAspectCutoff)
+        offFit[badOff,:] = np.nan        
+        offArea[badOff] = np.nan
+        offAspect[badOff] = np.nan
+        return sizeUsedOn,sizeUsedOff,onFit,offFit,onArea,offArea,onAspect,offAspect,minRFCutoff,maxRFCutoff,minAspectCutoff,maxAspectCutoff
         
             
     def analyzeRF(self):
-        
-        inSCAxons = self.getSCAxons()
         
         region = 'LP'
        
@@ -481,7 +531,7 @@ class popProbeData():
         else:
             cellsInRegion = self.getCellsInRegion(region,inSCAxons=None,inACAxons=None)
         
-        inSCAxons = inSCAxons[cellsInRegion]
+        inSCAxons = self.getSCAxons()[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
         data = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]        
         
@@ -498,37 +548,9 @@ class popProbeData():
         respLatency[isOn | noRF,1] = np.nan
         latencyCombined = np.nanmean(respLatency,axis=1)
         
-        onFit = np.full((data.shape[0],7),np.nan)
-        offFit = onFit.copy()
-        sizeUsed = np.full(data.shape[0],np.nan)
-        for u in range(data.shape[0]):
-            for size in (10,5,20):
-                sizeInd = data.boxSize[u]==size
-                if sizeInd.any():
-                    onFit[u] = data.onFit[u][sizeInd]
-                    offFit[u] = data.offFit[u][sizeInd]
-                    if not np.all(np.isnan(onFit[u])) or not np.all(np.isnan(offFit[u])):
-                        sizeUsed[u] = size
-                        break
-        sizeUsed[noRF] = np.nan
-        onFit[isOff | noRF,:] = np.nan
-        offFit[isOn | noRF,:] = np.nan
-        minRFCutoff = 100
-        maxRFCutoff = 5000
-        minAspectCutoff = 0.25
-        maxAspectCutoff = 4
-        onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
-        onAspect = onFit[:,2]/onFit[:,3]
-        badOn = (onArea<minRFCutoff) | (onArea>maxRFCutoff) | (onAspect<minAspectCutoff) | (onAspect>maxAspectCutoff)
-        onFit[badOn,:] = np.nan
-        onArea[badOn] = np.nan
-        onAspect[badOn] = np.nan
-        offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
-        offAspect = offFit[:,2]/offFit[:,3]
-        badOff = (offArea<minRFCutoff) | (offArea>maxRFCutoff) | (offAspect<minAspectCutoff) | (offAspect>maxAspectCutoff)
-        offFit[badOff,:] = np.nan        
-        offArea[badOff] = np.nan
-        offAspect[badOff] = np.nan
+        useBestSize = False
+        sizeUsedOn,sizeUsedOff,onFit,offFit,onArea,offArea,onAspect,offAspect,minRFCutoff,maxRFCutoff,minAspectCutoff,maxAspectCutoff = self.getRFData(data,useBestSize)        
+        
         rfArea = offArea.copy()
         rfArea[onVsOff>0] = onArea[onVsOff>0].copy()
         rfAspect = offAspect.copy()
@@ -917,28 +939,29 @@ class popProbeData():
             gs = gridspec.GridSpec(2,2)
             for i,azimOrElev in enumerate(('Azimuth','Elevation')):
                 for j,(rf,clr) in enumerate(zip((onFit,offFit),('r','b'))):
-                    ax = plt.subplot(gs[i,j])
                     hasRF = np.logical_not(np.isnan(rf[ind,i]))
-                    linFit = scipy.stats.linregress(depth[hasRF],rf[ind,i][hasRF])
-                    ax.plot(xlim,linFit[0]*xlim+linFit[1],color='0.6',linewidth=2)
-                    ax.plot(depth,rf[ind,i],'o',color=clr,markersize=10)
-                    ax.spines['right'].set_visible(False)
-                    ax.spines['top'].set_visible(False)
-                    ax.tick_params(direction='out',top=False,right=False,labelsize='large')
-                    ax.set_xlim(xlim)
-                    ylim = (-20,120) if azimOrElev=='Azimuth' else (-40,80)
-                    ax.set_ylim(ylim)
-                    ax.set_xticks(ax.get_xticks()[[0,-1]])
-                    ax.set_yticks(ax.get_yticks()[[0,-1]])
-                    if i==1:
-                        ax.set_xlabel('Depth (microns)',fontsize='x-large')
-                    else:
-                        ax.set_xticklabels([])
-                    if j==0:
-                        ax.set_ylabel(azimOrElev+' (degrees)',fontsize='x-large')
-                    else:
-                        ax.set_yticklabels([])
-                    plt.tight_layout()
+                    if hasRF.any():
+                        ax = plt.subplot(gs[i,j])
+                        linFit = scipy.stats.linregress(depth[hasRF],rf[ind,i][hasRF])
+                        ax.plot(xlim,linFit[0]*xlim+linFit[1],color='0.6',linewidth=2)
+                        ax.plot(depth,rf[ind,i],'o',color=clr,markersize=10)
+                        ax.spines['right'].set_visible(False)
+                        ax.spines['top'].set_visible(False)
+                        ax.tick_params(direction='out',top=False,right=False,labelsize='large')
+                        ax.set_xlim(xlim)
+                        ylim = (-20,120) if azimOrElev=='Azimuth' else (-40,80)
+                        ax.set_ylim(ylim)
+                        ax.set_xticks(ax.get_xticks()[[0,-1]])
+                        ax.set_yticks(ax.get_yticks()[[0,-1]])
+                        if i==1:
+                            ax.set_xlabel('Depth (microns)',fontsize='x-large')
+                        else:
+                            ax.set_xticklabels([])
+                        if j==0:
+                            ax.set_ylabel(azimOrElev+' (degrees)',fontsize='x-large')
+                        else:
+                            ax.set_yticklabels([])
+                        plt.tight_layout()
         
         # rf bubble plots
         colors = [(1, 0, 0), (0, 0, 1)]
@@ -1040,26 +1063,10 @@ class popProbeData():
         counts = np.zeros([r[1]-r[0] for r in rng])
         elev = np.zeros_like(counts)
         azi = np.zeros_like(counts)
+        
         data = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]
-        isOnOff = data.index.get_level_values('unitLabel')=='on off'
-        isOn = data.index.get_level_values('unitLabel')=='on'
-        isOff = data.index.get_level_values('unitLabel')=='off'  
-        noRF = np.logical_not(isOnOff | isOn | isOff) 
-        onFit = np.full((data.shape[0],7),np.nan)
-        offFit = onFit.copy()
-        sizeUsed = np.full(data.shape[0],np.nan)
-        for u in range(data.shape[0]):
-            for size in (10,5,20):
-                sizeInd = data.boxSize[u]==size
-                if sizeInd.any():
-                    onFit[u] = data.onFit[u][sizeInd] 
-                    offFit[u] = data.offFit[u][sizeInd]
-                    if not np.all(np.isnan(onFit[u])) or not np.all(np.isnan(offFit[u])):
-                        sizeUsed[u] = size
-                        break
-        sizeUsed[noRF] = np.nan
-        onFit[isOff | noRF,:] = np.nan
-        offFit[isOn | noRF,:] = np.nan
+        
+        sizeUsedOn,sizeUsedOff,onFit,offFit = self.getRFData(data,useBestSize=True)[:4]
         
         for fitType, sub in zip([onFit, offFit], ['on', 'off']):
             for uindex, coords in enumerate(CCFCoords):
@@ -1528,7 +1535,7 @@ class popProbeData():
         laserMax = laserRespMat.max(axis=(1,2))
         omi = (laserMax-controlMax)/(laserMax+controlMax)
         
-        zthresh = 6
+        zthresh = 10
         spontRateMean = np.array(controlData.spontRateMean)
         spontRateStd = np.array(controlData.spontRateStd)
         respZ = (controlRespMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
