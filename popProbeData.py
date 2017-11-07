@@ -1609,7 +1609,7 @@ class popProbeData():
         if region is None:
             cellsInRegion = np.ones(len(self.data)).astype('bool')
         else:
-            cellsInRegion = self.getCellsInRegion(region,True,False)
+            cellsInRegion = self.getCellsInRegion(region,None,None)
         
         inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
@@ -1724,18 +1724,62 @@ class popProbeData():
         cumProbPatchIndexSC = [np.count_nonzero(patchIndexSC<=i)/patchIndexSC.size for i in np.sort(patchIndexSC)]
         cumProbPatchIndexNonSC = [np.count_nonzero(patchIndexNonSC<=i)/patchIndexNonSC.size for i in np.sort(patchIndexNonSC)]
         ax.plot([0,0],[0,1],'k--')
-        ax.plot(np.sort(patchIndexNonSC),cumProbPatchIndexNonSC,'0.6',linewidth=3)
-        ax.plot(np.sort(patchIndexSC),cumProbPatchIndexSC,'k',linewidth=3)
+        ax.plot(np.sort(patchIndexNonSC),cumProbPatchIndexNonSC,'k',linewidth=3)
+        ax.plot(np.sort(patchIndexSC),cumProbPatchIndexSC,'g',linewidth=3)
         for side in ('right','top'):
             ax.spines[side].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-        ax.set_xlim([-0.8,0.8])
+        ax.set_xlim([-0.85,0.85])
         ax.set_ylim([0,1.01])
         ax.set_xticks([-0.5,0,0.5])
         ax.set_yticks([0,0.5,1])
         ax.set_xlabel('Patch-Background Index',fontsize=20)
         ax.set_ylabel('Cumulative Probability',fontsize=20)
+        p = scipy.stats.ranksums(patchIndexSC,patchIndexNonSC)[1]
+        ax.set_title('p = '+str(p))
         plt.tight_layout()
+        
+        # speed tuning
+        bestSpeed = np.full(hasResp.sum(),np.nan)
+        bestPatchSpeed = bestSpeed.copy()
+        bestBckgndSpeed = bestSpeed.copy()
+        for i,(r,z) in enumerate(zip(respMat,respZ[hasResp])):
+            ind = np.s_[patchSpeed!=0,bckgndSpeed==0]
+            bestSpeedInd = np.argmax(r[ind])
+            if z[ind][bestSpeedInd]>zthresh:
+                bestPatchSpeed[i] = patchSpeed[patchSpeed!=0][bestSpeedInd]
+            rmax = r[ind].max()
+            
+            ind = np.s_[:,bckgndSpeed!=0]
+            bestSpeedInd = np.argmax(r[ind].max(axis=0))
+            if z[ind].max(axis=0)[bestSpeedInd]>zthresh:
+                bestBckgndSpeed[i] = bckgndSpeed[bckgndSpeed!=0][bestSpeedInd]
+            
+            bestSpeed[i] = bestBckgndSpeed[i] if r[ind].max()>rmax else bestPatchSpeed[i]
+        
+        s = []
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        for scInd,clr in zip((inSCAxons,~inSCAxons),('g','k')):
+            ind = scInd[uindex]
+            d = bestSpeed[ind]
+            d = d[~np.isnan(d)]
+            d = abs(d)
+            cumProb = [np.count_nonzero(d<=i)/d.size for i in np.sort(d)]
+            ax.plot(np.sort(d),cumProb,clr,linewidth=2)
+            s.append(d)
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlim([0,100])
+        ax.set_ylim([0,1.01])
+        ax.set_yticks([0,0.5,1])
+        ax.set_xlabel('Best Speed (degrees/s)',fontsize=20)
+        ax.set_ylabel('Fraction of Cells',fontsize=20)
+        p = scipy.stats.ranksums(s[0],s[1])[1]
+        ax.set_title('p = '+str(p))
+        plt.tight_layout()
+        
         
         # correlate responses with response-type templates
 #        patchTemplate = np.zeros((patchSpeed.size,bckgndSpeed.size))
@@ -1905,16 +1949,14 @@ class popProbeData():
         
     def analyzeLoom(self):
         
-        inSCAxons = self.getSCAxons()
-        
         region = 'LP'
         if region is None:
             cellsInRegion = np.ones(len(self.data)).astype('bool')
         else:
-            cellRegions = self.data.index.get_level_values('region')
-            cellsInRegion = cellRegions==region
+            cellsInRegion = self.getCellsInRegion(region,None,None)
+            
+        inSCAxons = self.getSCAxons()[cellsInRegion] if region=='LP' else np.ones_like(cellsInRegion)
         
-        inSCAxons = inSCAxons[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
         data = self.data.laserOff.allTrials.loom[cellsInRegion]            
         
@@ -1922,12 +1964,17 @@ class popProbeData():
         
         hasLoom = np.array(data.peakResp.notnull())
         
-        
-        peakResp = np.stack(data.peakResp[hasLoom])
+        zthresh = 6
+        peakResp = np.zeros((hasLoom.sum(),16))
+        for i,d in enumerate(data.peakResp[hasLoom]):
+            if d.size<16:
+                peakResp[i,:d.size] = d
+            else:
+                peakResp[i] = d
         spontRateMean = np.array(data.spontRateMean[hasLoom])
         spontRateStd = np.array(data.spontRateStd[hasLoom])
         respZ = (peakResp-spontRateMean[:,None])/spontRateStd[:,None]
-        hasResp = (respZ>6).any(axis=1)
+        hasResp = (respZ>zthresh).any(axis=1)
         hasRespInd = np.where(hasLoom)[0][hasResp]
         hasNoRespInd = np.where(hasLoom)[0][~hasResp]
         
@@ -1937,31 +1984,40 @@ class popProbeData():
         # compare max loom peak resp and z score in/out SC axons
         inSCInd = inSCAxons[np.where(hasLoom)[0]]
         for resp,binSize,xlab in zip((maxLoomResp-spontRateMean,maxLoomZ),(5,2),('spikes/s','z score')):
-            axmax = 1.05*resp.max()
+            axmax = 1.05*np.nanmax(resp)
             for ind,title in zip((inSCInd,~inSCInd),('SC Axons','Not SC Axons')):
-                plt.figure(facecolor='w')
-                ax = plt.subplot(1,1,1)
-                ax.hist(resp[ind],bins=np.arange(0,axmax,binSize),range=[0,axmax],color='k')
-                for side in ('right','top'):
-                    ax.spines[side].set_visible(False)
-                ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-                ax.set_xlabel('Max Loom Response ('+xlab+')',fontsize=20)
-                ax.set_ylabel('Number of Cells',fontsize=20)
-                ax.set_title(title,fontsize=20)
-                plt.tight_layout()
+                if ind.any():
+                    plt.figure(facecolor='w')
+                    ax = plt.subplot(1,1,1)
+                    ax.hist(resp[ind],bins=np.arange(0,axmax,binSize),range=[0,axmax],color='k')
+                    for side in ('right','top'):
+                        ax.spines[side].set_visible(False)
+                    ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+                    ax.set_xlabel('Max Loom Response ('+xlab+')',fontsize=20)
+                    ax.set_ylabel('Number of Cells',fontsize=20)
+                    ax.set_title(title,fontsize=20)
+                    plt.tight_layout()
         
-        # plot cumulative distribution for inSC and outSC max responses        
-        fig, ax = plt.subplots()
-        for ind, color in zip((inSCInd, ~inSCInd), ('k', 'g')):
-            axmax = 1.05*maxLoomZ.max()
-            h, b = np.histogram(maxLoomZ[ind], bins=np.arange(0, 30, 2))
-            h = h/np.sum(h)
-            ax.plot(b, np.append(np.cumsum(h), 1), color)
-            ax.set_xlim([0, 31])
-            ax.set_ylim([0, 1.1])
-        probeData.formatFigure(fig, ax, 'Max Loom response', xLabel='z-score', yLabel='Cumulative fraction')
-        ax.text(22, 0.2, 'Out of SC axons', {'color':'g'})
-        ax.text(22, 0.1, 'In SC axons', {'color':'k'})    
+        # plot cumulative distribution for inSC and outSC max responses
+        r = maxLoomResp-spontRateMean
+        plt.figure(facecolor='w')
+        ax = plt.subplot(1,1,1)
+        for ind, color in zip((inSCInd, ~inSCInd), ('g','k')):
+            if ind.any():
+                cumProb = [np.sum(r[ind]<=i)/ind.sum() for i in np.sort(r[ind])]
+                ax.plot(np.sort(r[ind]),cumProb,color,linewidth='2')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_ylim([0,1.01])
+        ax.set_yticks([0,0.5,1])
+        ax.set_xlabel('Max Loom Resp (Spikes/s)',fontsize=20)
+        ax.set_ylabel('Cumulative Fraction',fontsize=20)
+        ax.text(22, 0.2, 'Out of SC axons', {'color':'k'})
+        ax.text(22, 0.1, 'In SC axons', {'color':'g'})
+        p = scipy.stats.ranksums(maxLoomResp[inSCInd],maxLoomResp[~inSCInd])[1]
+        ax.text(22, 0.3, 'p = '+str(round(p,5)), {'color':'0.5'})
+        plt.tight_layout()
         
         
         # histogram of r-value of linear fit
@@ -1975,25 +2031,24 @@ class popProbeData():
         
         binWidth = 0.05
         for r,label in zip((linFitLV[:,2],linFitSqrtLV[:,2]),('Size/Speed','sqrt(Size/Speed)')):
-            for ind,title in zip((inSCAxons[hasRespInd],~inSCAxons[hasRespInd]),('SC Axons','Not SC Axons')):
-                plt.figure(facecolor='w')
-                ax = plt.subplot(1,1,1)
+            plt.figure(facecolor='w')
+            ax = plt.subplot(1,1,1)
+            for ind,clr in zip((inSCAxons[hasRespInd],~inSCAxons[hasRespInd]),('g','k')):
                 h,bins = np.histogram(r[ind],bins=np.arange(-1,1+binWidth/2,binWidth))
-                ax.bar(bins[:-1],h/ind.sum(),width=binWidth,color='k')
-                ax.set_xlim([-1,1])
-                ax.set_ylim([0,0.55])
-                for side in ('right','top'):
-                    ax.spines[side].set_visible(False)
-                ax.tick_params(direction='out',top=False,right=False,labelsize=18)
-                ax.set_xlabel('r (Peak Time vs '+label+')',fontsize=20)
-                ax.set_ylabel('Fraction of Cells',fontsize=20)
-                ax.set_title(title,fontsize=20)
-                plt.tight_layout()
+                ax.bar(bins[:-1],h/ind.sum(),width=binWidth,color=clr,alpha=0.5)
+            ax.set_xlim([-1,1])
+            ax.set_ylim([0,0.55])
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+            ax.set_xlabel('r (Peak Time vs '+label+')',fontsize=20)
+            ax.set_ylabel('Fraction of Cells',fontsize=20)
+            plt.tight_layout()
                 
         # plot r values vs location in LP
         padding = 10
         jitter = 3
-        inLP,rng = self.getInLP(padding=padding)
+        inLP,rng = self.getInRegion('LP',padding=padding)
         ccfCoords = self.getCCFCoords(cellsInRegion)
         isGoodFit = linFitLV[:,2]>=0.95
         goodFitInd = hasRespInd[isGoodFit]
@@ -2002,7 +2057,7 @@ class popProbeData():
             ind = [0,1,2]
             ind.remove(a)
             y,x = [ccfCoords[i]/25-rng[i][0] for i in ind]
-            contours,_ = cv2.findContours(inLP.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            _,contours,_ = cv2.findContours(inLP.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
             cx,cy = np.squeeze(contours).T
             if a==0:
                 x,y = y,x
@@ -2085,7 +2140,7 @@ class popProbeData():
         plt.tight_layout()
         
         # plot fit for each cell        
-        for pt,fit,inSC in zip(peakTimes,linFitLV,inSCAxons[uindex]):
+        for pt,fit,inSC in zip(peakTimes,linFitLV,inSCAxons):
             plt.figure(facecolor='w')
             ax = plt.subplot(1,1,1)
             ax.plot(lvRatio,lvRatio*fit[0]+fit[1],'k-')
