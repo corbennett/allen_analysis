@@ -380,16 +380,15 @@ class popProbeData():
             
             
     def plotOMI(self,region=None,inSCAxons=None):
-        cellsInRegion = self.getCellsInRegion(region,inSCAxons)
         
         rate = []
         omi = []
         
         # spont
-        spontRate = []
-        spontOmi = []
+        spontRate = np.full(self.data.shape[0],np.nan)
+        spontOmi = spontRate.copy()
         windowDur = 15000
-        uIndex = 0
+        uindex = 0
         for exp in self.experimentFiles:
             p = self.getProbeDataObj(exp)
             protocol = p.getProtocolIndex('laser2')
@@ -399,38 +398,40 @@ class popProbeData():
                 pulseStarts,pulseEnds,pulseAmps = p.behaviorData[str(protocol)]['137_pulses']
             except:
                 print(exp)
-                uIndex += len(p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))[0])
+                uindex += len(p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))[0])
                 continue
-            for u in p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))[0]:
-                if cellsInRegion[uIndex]:                
-                    spikes = p.units[u]['times'][str(protocol)]
-                    controlResp = np.mean(p.findSpikesPerTrial(pulseStarts-windowDur,pulseStarts,spikes))
-                    laserResp = np.mean(p.findSpikesPerTrial(pulseEnds-windowDur,pulseEnds,spikes))
-                    spontRate.append(controlResp)
-                    spontOmi.append((laserResp-controlResp)/(laserResp+controlResp))
-                uIndex += 1
-        rate.append(np.array(spontRate))
-        omi.append(np.array(spontOmi))
+            for u in p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))[0]:               
+                spikes = p.units[u]['times'][str(protocol)]
+                controlResp = np.mean(p.findSpikesPerTrial(pulseStarts-windowDur,pulseStarts,spikes))
+                laserResp = np.mean(p.findSpikesPerTrial(pulseEnds-windowDur,pulseEnds,spikes))
+                spontRate[uindex] = controlResp
+                spontOmi[uindex] = (laserResp-controlResp)/(laserResp+controlResp)
+                uindex += 1
+        rate.append(spontRate)
+        omi.append(spontOmi)
         
         # sparseNoise
-        controlMax,laserMax = [np.maximum(*[np.stack(self.data[laser].allTrials.sparseNoise[onOff][cellsInRegion]).max(axis=(1,2,3)) for onOff in ('onResp','offResp')]) for laser in ('laserOff','laserOn')]
+        controlMax,laserMax = [np.maximum(*[np.stack(self.data[laser].allTrials.sparseNoise[onOff]).max(axis=(1,2,3)) for onOff in ('onResp','offResp')]) for laser in ('laserOff','laserOn')]
         rate.append(controlMax)
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
         # gratings
-        controlMax,laserMax = [np.stack(self.data[laser].allTrials.gratings.respMat[cellsInRegion]).max(axis=(1,2,3)) for laser in ('laserOff','laserOn')]
+        controlMax,laserMax = [np.stack(self.data[laser].allTrials.gratings.respMat).max(axis=(1,2,3)) for laser in ('laserOff','laserOn')]
         rate.append(controlMax)        
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
         # checkerboard
-        controlMax,laserMax = [np.stack(self.data[laser].allTrials.checkerboard.respMat[cellsInRegion]).max(axis=(1,2)) for laser in ('laserOff','laserOn')]
+        controlMax,laserMax = [np.stack(self.data[laser].allTrials.checkerboard.respMat).max(axis=(1,2)) for laser in ('laserOff','laserOn')]
         rate.append(controlMax)        
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
         
         # loom
-        controlMax,laserMax = [np.stack(self.data[laser].allTrials.loom.peakResp[cellsInRegion]).max(axis=1) for laser in ('laserOff','laserOn')]
+        controlMax,laserMax = [np.stack(self.data[laser].allTrials.loom.peakResp).max(axis=1) for laser in ('laserOff','laserOn')]
         rate.append(controlMax)        
         omi.append((laserMax-controlMax)/(laserMax+controlMax))
+        
+        
+        cellsInRegion = self.getCellsInRegion(region,inSCAxons=None)
         
         # plot omi distributions
         protLabel = ('spont','sparseNoise','gratings','checkerboard','loom')
@@ -438,8 +439,11 @@ class popProbeData():
         ax = fig.add_subplot(1,1,1)
         ax.plot([0,0],[0,1.1],'k--')
         for d,label,clr in zip(omi,protLabel,('k','r','g','b','0.5')):
+            d = d[cellsInRegion]
+            d = d[~np.isnan(d)]
             cumProb = [np.count_nonzero(d<=i)/d.size for i in np.sort(d)]
             ax.plot(np.sort(d),cumProb,clr,linewidth=2,label=label)
+            ax.plot(np.nanmedian(d),0.016,'^',mec=clr,mfc='none',mew=2,ms=8)
         for side in ('right','top'):
             ax.spines[side].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False,labelsize=18)
@@ -455,6 +459,7 @@ class popProbeData():
         for r,i,label in zip(rate,omi,protLabel):
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
+            r = r[cellsInRegion]
             rmax = 1.05*r.max()
             ax.plot([0,rmax],[0,0],'k--')
             ax.plot(r,i,'ko')
@@ -1049,7 +1054,7 @@ class popProbeData():
         plt.tight_layout()
                 
     
-    def makeRFVolume(self, padding=10, sigma=3, region=None, weighted=False):
+    def makeVolume(self, data=None, region=None, padding=10, sigma=3, weighted=False, maskNoData=True, cmap='jet'):
         
         cellsInRegion = self.getCellsInRegion(region)
         
@@ -1060,154 +1065,69 @@ class popProbeData():
         
         CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)[cellsInRegion]
         
+        if data is None: # make elevation map
+            d = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]
+            sizeUsedOn,sizeUsedOff,onFit,offFit = self.getRFData(d,useBestSize=True)[:4]
+            data = np.nanmean(np.stack((onFit[:,1],offFit[:,1])),axis=0)
+            
         counts = np.zeros([r[1]-r[0] for r in rng])
-        elev = np.zeros_like(counts)
-        azi = np.zeros_like(counts)
+        dataMap = np.zeros_like(counts)
         
-        data = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]
-        
-        sizeUsedOn,sizeUsedOff,onFit,offFit = self.getRFData(data,useBestSize=True)[:4]
-        
-        for fitType, sub in zip([onFit, offFit], ['on', 'off']):
-            for uindex, coords in enumerate(CCFCoords):
-                if any(np.isnan(coords)):
-                    continue
-                else:
-                    label = data.index.get_level_values('unitLabel')[uindex]
-                    if sub in label:
-                        ccf = coords/25
-                        ccf = ccf.astype(int)
-                        ccf -= np.array([xRange[0], yRange[0], zRange[0]])
-                        
-                        counts[ccf[1], ccf[0], ccf[2]]+=1
-                        x,y = fitType[uindex][:2]
-                        elev[ccf[1], ccf[0], ccf[2]] += y
-                        azi[ccf[1], ccf[0], ccf[2]] += x
+        for uindex,(d,coords) in enumerate(zip(data,CCFCoords)):
+            if np.isnan(d) or any(np.isnan(coords)):
+                continue
+            c = coords/25
+            c -= [xRange[0], yRange[0], zRange[0]]
+            c = c.astype(int)
+            counts[c[1], c[0], c[2]] += 1
+            dataMap[c[1], c[0], c[2]] += d
                 
         if not weighted:
-            elev /= counts
-            azi /= counts
+            dataMap /= counts
         
-        elev_s = probeData.gaussianConvolve3D(elev,sigma)
-        azi_s = probeData.gaussianConvolve3D(azi, sigma)
-        
-        elev_s *= LPmask
-        azi_s *= LPmask
+        dataMap_s = probeData.gaussianConvolve3D(dataMap,sigma)
+        dataMap_s *= LPmask
         
         if weighted:
             counts_s = probeData.gaussianConvolve3D(counts, sigma)
-            elev_s /= counts_s
-            azi_s /= counts_s
-     
-        mat = np.zeros((sigma*3,)*3)
-        i = (sigma*3)//2
-        mat[i,i,i] = 1
-        maskThresh = probeData.gaussianConvolve3D((mat>0).astype(float),sigma=sigma).max()*0.5
-        mask = probeData.gaussianConvolve3D((counts>0).astype(float),sigma=sigma)
-        elev_s[mask<maskThresh] = np.nan
-        azi_s[mask<maskThresh] = np.nan
+            dataMap_s /= counts_s
         
-        minVal = [np.nanmin(elev_s), np.nanmin(azi_s)]
-        maxVal = [np.nanmax(elev_s- minVal[0]) , np.nanmax(azi_s- minVal[1])]
+        if maskNoData:
+            mat = np.zeros((sigma*3,)*3)
+            i = (sigma*3)//2
+            mat[i,i,i] = 1
+            maskThresh = probeData.gaussianConvolve3D((mat>0).astype(float),sigma=sigma).max()*0.5
+            mask = probeData.gaussianConvolve3D((counts>0).astype(float),sigma=sigma)
+            dataMap_s[mask<maskThresh] = np.nan
         
-        colorMaps = [np.full(elev_s.shape+(3,),np.nan) for _ in (0,1)]
-        for im, m in enumerate([elev_s, azi_s]):
-            for y in xrange(m.shape[0]):
-                for x in xrange(m.shape[1]):
-                    for z in xrange(m.shape[2]):
-                        thisVox = (m[y,x,z] - minVal[im])/maxVal[im]
-                        if not np.isnan(thisVox):
+        if cmap=='jet':
+            minVal = np.nanmin(dataMap_s)
+            maxVal = np.nanmax(dataMap_s-minVal)
+        elif cmap=='bwr':
+            maxVal = np.nanmax(np.absolute(dataMap_s))
+        
+        colorMap = np.full(dataMap.shape+(3,),np.nan)
+        for y in xrange(colorMap.shape[0]):
+            for x in xrange(colorMap.shape[1]):
+                for z in xrange(colorMap.shape[2]):
+                    if cmap=='jet':
+                        thisVox = (dataMap_s[y,x,z]-minVal)/maxVal
+                    elif cmap=='bwr':
+                        thisVox = (dataMap_s[y,x,z]/maxVal+1)*0.5
+                    if not np.isnan(thisVox):
+                        if cmap=='jet':
                             RGB = cm.jet(thisVox)
-                            for i in (0,1,2):
-                                colorMaps[im][y, x, z, i] = RGB[i]
-              
+                        elif cmap=='bwr':
+                            RGB = cm.bwr(thisVox)
+                        for i in (0,1,2):
+                            colorMap[y, x, z, i] = RGB[i]
+        
         fullShape = self.getInRegion('LP')[0].shape+(4,)
-        fullMap = [np.zeros(fullShape,dtype=np.uint8) for _ in (0,1)]
-        for i in (0,1):
-            fullMap[i][yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],:3] = colorMaps[i]*255
-            fullMap[i][yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],3][~np.isnan(colorMaps[i][:,:,:,0])] = 255
+        fullMap = np.zeros(fullShape,dtype=np.uint8)
+        fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],:3] = colorMap*255
+        fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],3][~np.isnan(colorMap[:,:,:,0])] = 255
 
-        return fullMap, elev_s, azi_s
-    
-    
-    def makeVolume(self, vals, units=None, padding=10, sigma=1, regions=[218], annotationDataFile=None, rgbVolume=True, weighted=False):
-        if units is not None:        
-            ind = self.data.index.get_level_values('unitID').isin(units)       
-            data = self.data[ind]        
-        else:
-            data = self.data
-        data = self.data.ix[uindex]   
-        CCFCoords = np.stack((data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)
-        
-        if annotationDataFile is None:
-            annotationDataFile = fileIO.getFile() 
-        
-        annotationData,_ = nrrd.read(annotationDataFile)
-        annotationData = annotationData.transpose((1,2,0))
-        
-        inRegionBinary = np.zeros_like(annotationData)         
-        for r in regions:
-            thisRegion = annotationData == r
-            inRegionBinary[thisRegion] = 1
-        
-        inRegion = np.where(inRegionBinary)
-        
-        #find left hemisphere region for xRange
-        maxProj = np.max(inRegionBinary, axis=2).astype(int)                
-        cnts,_ = cv2.findContours(maxProj.copy(order='C').astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        leftSide = np.argmin([np.min(u[:, :, 0]) for u in cnts])
-        
-        xRange = [np.min(cnts[leftSide][:, :, 0]) - padding, np.max(cnts[leftSide][:, :, 0]) + padding]
-        yRange = [np.min(inRegion[0])-padding, np.max(inRegion[0])+padding]
-        zRange = [np.min(inRegion[2])-padding, np.max(inRegion[2])+padding]
-        
-        mask = inRegionBinary[yRange[0]:yRange[1], xRange[0]:xRange[1], zRange[0]:zRange[1]].astype(np.float)
-        mask[mask==0] = np.nan
-                
-        counts = np.zeros([np.diff(yRange), np.diff(xRange), np.diff(zRange)])
-        vol = np.zeros_like(counts)
-        for uindex, coords in enumerate(CCFCoords):
-            if any(np.isnan(coords)) or vals[uindex] is None or np.isnan(vals[uindex]):
-                continue
-            else:
-                ccf = coords/25
-                ccf = ccf.astype(int)
-                ccf -= np.array([xRange[0], yRange[0], zRange[0]])
-                if vals[uindex] < 1800:
-                    counts[ccf[1], ccf[0], ccf[2]]+=1
-                    vol[ccf[1], ccf[0], ccf[2]] += vals[uindex]
-        
-        if weighted is False:
-            vol /= counts
-            
-        vol_s = probeData.gaussianConvolve3D(vol,sigma)
-        vol_s *= mask
-        
-        if weighted:
-            counts_s = probeData.gaussianConvolve3D(counts, sigma)        
-            counts_s *= mask
-            vol_s /= counts_s
-        
-        minVal = np.nanmin(vol_s)
-        maxVal = np.nanmax(vol_s - minVal)
-        if rgbVolume:        
-            colorMap = np.full(vol_s.shape+(3,),np.nan)
-            for y in xrange(vol_s.shape[0]):
-                for x in xrange(vol_s.shape[1]):
-                    for z in xrange(vol_s.shape[2]):
-                        thisVox = (vol_s[y,x,z] - minVal)/maxVal
-                        if not np.isnan(thisVox):
-                            RGB = cm.jet(thisVox)
-                            for i in (0,1,2):
-                                colorMap[y, x, z, i] = RGB[i]
-                                
-            fullMap = np.full(annotationData.shape+(3,),np.nan)
-            fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMap
-                
-        if rgbVolume:
-            return fullMap, vol_s
-        else:
-            return vol_s
+        return fullMap, dataMap_s
     
     
     def analyzeSTF(self):
