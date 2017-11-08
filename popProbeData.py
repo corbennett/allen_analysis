@@ -1969,6 +1969,7 @@ class popProbeData():
         padding = 10
         jitter = 3
         inLP,rng = self.getInRegion('LP',padding=padding)
+        rangeSlice = tuple(slice(r[0],r[1]) for r in rng)
         ccfCoords = self.getCCFCoords(cellsInRegion)
         isGoodFit = linFitLV[:,2]>=0.95
         goodFitInd = hasRespInd[isGoodFit]
@@ -1979,16 +1980,26 @@ class popProbeData():
             y,x = [ccfCoords[i]/25-rng[i][0] for i in ind]
             _,contours,_ = cv2.findContours(inLP.astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
             cx,cy = np.squeeze(contours).T
+            if region=='LP':
+                if self.inSCAxonsVol is None:
+                    _ = self.getSCAxons()
+                scAxons = cv2.findContours(self.inSCAxonsVol[rangeSlice].astype(np.uint8).max(axis=a).copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+                scAxons = scAxons[0] if len(scAxons)<3 else scAxons[1]
+                s = [s.shape[0] for s in scAxons]
+                scAxons = scAxons[s.index(max(s))]
+                scx,scy = np.squeeze(scAxons).T
             if a==0:
                 x,y = y,x
                 cx,cy = cy,cx
+                scx,scy = scy,scx
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
+            ax.add_patch(patches.Polygon(np.stack((scx,scy)).T,color='0.5',alpha=0.25))
             ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
             jit = np.random.uniform(-jitter,jitter+1,(2,notGoodFitInd.size))
-            ax.plot(x[notGoodFitInd]+jit[0],y[notGoodFitInd]+jit[1],'o',mfc='0.5',mec='none')
+            ax.plot(x[notGoodFitInd]+jit[0],y[notGoodFitInd]+jit[1],'o',mec='0.5',mfc='none',mew=2,alpha=0.5)
             jit = np.random.uniform(-jitter,jitter+1,(2,goodFitInd.size))
-            ax.plot(x[goodFitInd]+jit[0],y[goodFitInd]+jit[1],'o',mfc='r',mec='none')
+            ax.plot(x[goodFitInd]+jit[0],y[goodFitInd]+jit[1],'o',mec=[0.5,0,0.5],mfc='none',mew=2,alpha=0.5)
             ax.set_aspect('equal')
             ax.axis('off')
             ax.set_xlim([cx.min()-padding,cx.max()+padding])
