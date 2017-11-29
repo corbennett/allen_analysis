@@ -5,10 +5,14 @@ Created on Sun Oct 30 12:16:42 2016
 @author: Gale
 """
 
+from __future__ import division
 import numpy as np
 import scipy.cluster
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from sklearn.metrics import silhouette_samples, silhouette_score
+from kmodes import kmodes as km
+from probeData import formatFigure
 
 
 def standardizeData(data):
@@ -125,7 +129,7 @@ def plotClusters3d(data,clustID,method='pca',colors=None):
     
 def plotPseudoF(data,maxClusters=None,method='kmeans',iterations=100):
     if maxClusters is None:
-        maxClusters = data.shape[0]
+        maxClusters = data.shape[0]//2
     Fratio = np.zeros(maxClusters)
     overallMean = data.mean(axis=0)
     for k in range(1,maxClusters+1):
@@ -155,32 +159,48 @@ def plotPseudoF(data,maxClusters=None,method='kmeans',iterations=100):
     
 def plotMeanSilhouetteValue(data,maxClusters=None,method='kmeans',iterations=100):
     if maxClusters is None:
-        maxClusters = data.shape[0]
-    sil = np.zeros(maxClusters)
-    for k in range(1,maxClusters+1):
+        maxClusters = data.shape[0]//2
+    silValues = []
+    for k in xrange(2,maxClusters+1):
         if method=='kmeans':
             clustID,_ = kmeans(data,k,iterations)
         elif method=='ward':
             clustID,_ = ward(data,k)
-        clusters = np.unique(clustID)
-        clusterMeans = [data[clustID==clust,:].mean(axis=0) for clust in clusters]
-        sil = 0
-        for ind,clust in enumerate(clusters):
-            sse = np.array([np.sum(np.square(data[clustID==clust]-cMean),axis=1) for cMean in clusterMeans])
-            a = sse[ind] # distance from own cluster centroid
-            b = sse[np.arange(k)!=ind].min(axis=0) # distance from closest other cluster centroid
-            sil[k-1] += np.sum((a-b)/np.maximum(a,b))
-    sil /= data.shape[0]
+        
+        silValues.append(silhouette_score(data, clustID))
         
     fig = plt.figure(facecolor='w')
     ax = fig.add_subplot(1,1,1)
-    ax.plot(np.arange(1,maxClusters+1),sil,'k')
+    ax.plot(np.arange(2,maxClusters+1),silValues,'k')
     ax.set_xlim([0,maxClusters+0.5])
     ax.set_xlabel('# Clusters')
     ax.set_ylabel('Mean Silhouette Value')
     for side in ('right','top'):
         ax.spines[side].set_visible(False)
     ax.tick_params(direction='out',top=False,right=False)
+
+         
+def silhouettePlot(data,clusterLabels,metric='euclidean'):
+    numClusters = np.unique(clusterLabels).size
+    silVals = silhouette_samples(data, clusterLabels, metric=metric)
+    
+    fig = plt.figure('Silhouette Values')
+    ax = fig.add_subplot(111)
+    
+    ylower = 10
+    for ic, clust in enumerate(np.unique(clusterLabels)):
+        clustSilVals = silVals[clusterLabels==clust]
+        clustSilVals = np.sort(clustSilVals)
+        
+        clustYs = np.arange(ylower, ylower + clustSilVals.size)
+        color = plt.cm.spectral(float(ic) / numClusters)
+        
+        ax.fill_betweenx(clustYs, 0, clustSilVals, facecolor=color, edgecolor=color)
+        ax.text(-0.05, ylower + 0.5*clustSilVals.size, str(ic))
+        ax.text(0.95*ax.get_xlim()[1], ylower + 0.5*clustSilVals.size, str(np.mean(clustSilVals)))
+        ylower += clustSilVals.size + 10
+        
+    formatFigure(fig, ax, xLabel='Silhouette Values', yLabel='Cluster')
             
     
 def kmeans(data,k,iterations=100,initCentroids='points',plot=False):
@@ -192,11 +212,20 @@ def kmeans(data,k,iterations=100,initCentroids='points',plot=False):
         plotMeanSilhouetteValue(data,maxClusters=min(k*2,data.shape[0]),method='kmeans',iterations=iterations)
         plotClusters3d(data,clustID)
     return clustID,centroids
+    
+    
+def kmodes(data,k,iterations=100,plot=False):
+    m = km.KModes(n_clusters=k, init='Huang', n_init=iterations, verbose=False)
+    clustID = m.fit_predict(data)+1
+    centroids = m.cluster_centroids_
+    if plot:
+        pass
+    return clustID,centroids
 
     
-def ward(data,nClusters=None,plot=False):
+def cluster(data,nClusters=None,method='ward',metric='euclidean',plot=False,colors=None):
     # data is n samples x m parameters
-    linkageMat = scipy.cluster.hierarchy.linkage(data,'ward')
+    linkageMat = scipy.cluster.hierarchy.linkage(data,method=method,metric=metric)
     if nClusters is None:
         clustID = None
     else:
@@ -205,14 +234,29 @@ def ward(data,nClusters=None,plot=False):
         plt.figure(facecolor='w')
         ax = plt.subplot(1,1,1)
         colorThresh = 0 if nClusters<2 else linkageMat[::-1,2][nClusters-2]
-        scipy.cluster.hierarchy.dendrogram(linkageMat,ax=ax,color_threshold=colorThresh)
+        if colors is not None:
+            scipy.cluster.hierarchy.set_link_color_palette(list(colors))
+        scipy.cluster.hierarchy.dendrogram(linkageMat,ax=ax,color_threshold=colorThresh,above_threshold_color='k')
+        scipy.cluster.hierarchy.set_link_color_palette(None)
         ax.set_yticks([])
         for side in ('right','top','left','bottom'):
             ax.spines[side].set_visible(False)
+            
+        n = 1000
+        randLinkage = np.zeros((n,linkageMat.shape[0]))
+        rdata = data.copy()
+        for i in range(n):
+            for j in range(data.shape[1]):
+                rdata[:,j] = data[np.random.permutation(data.shape[0]),j]
+            _,m = cluster(rdata)
+            randLinkage[i] = m[::-1,2]
         
         plt.figure(facecolor='w')
         ax = plt.subplot(1,1,1)
-        ax.plot(np.arange(linkageMat.shape[0])+2,linkageMat[::-1,2],'k')
+        k = np.arange(linkageMat.shape[0])+2
+        ax.plot(k,np.percentile(randLinkage,1,axis=0),'k--')
+        ax.plot(k,np.percentile(randLinkage,99,axis=0),'k--')
+        ax.plot(k,linkageMat[::-1,2],'k')
         ax.set_xlim([0,data.shape[0]])
         ax.set_xlabel('# Clusters')
         ax.set_ylabel('Minimum Linkage Distance')
@@ -220,10 +264,15 @@ def ward(data,nClusters=None,plot=False):
             ax.spines[side].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False)
         
-        plotPseudoF(data,method='ward')
-        plotMeanSilhouetteValue(data,method='ward')
-        plotClusters3d(data,clustID)
+#        plotPseudoF(data,method='ward')
+#        plotMeanSilhouetteValue(data,method='ward')
+#        if clustID is not None:
+#            plotClusters3d(data,clustID)
     return clustID,linkageMat
+    
+    
+def ward(data,nClusters=None,plot=False):
+    clustID,linkageMat = cluster(data,nClusters=nClusters,method='ward',metric='euclidean',plot=plot)
 
         
 def nestedPCAClust(data,method='kmeans',nSplit=2,minClustSize=2,varExplained=0.9,clustID=[],linkageMat=[]):
