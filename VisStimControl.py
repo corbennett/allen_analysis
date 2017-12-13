@@ -196,8 +196,6 @@ class VisStimControl():
             self._laserPort.parity = serial.PARITY_NONE
             self._laserPort.open()
             self._laserPort.write('em\r sdmes 0\r sames 1\r') # analog modulation mode
-        else:
-            raise ValueError('laser must be Blue, Orange, Blue LED, Red LED, or None')
         if self.laser is not None:
             self.setLaserOff()
     
@@ -256,12 +254,12 @@ class VisStimControl():
             if self.laser2 is not None:
                 self._laser2AnalogControl.Write(np.array([0.0]))
                 
-    def setLaserParams(self,laser,power,split=False):
-        self.laser = laser
-        self.laserPower = power
+    def setLaserParams(self,laser=None,power=None,split=True):
+        self.laser = 'Blue' if laser is None else laser
+        self.laserPower = [0,0.84] if power is None else power
         if split:
             self.laser2 = 'Blue LED'
-            self.laser2Power = 3.2
+            self.laser2Power = 2.6
         protocol = self.__module__
         if protocol=='makeGratings':
             self.postTime = 180
