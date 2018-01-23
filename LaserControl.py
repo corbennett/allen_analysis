@@ -33,7 +33,7 @@ class LaserControl():
         self.nidaqAnalogOut = None
         self.nidaqSecondaryAnalogOut = None
         self.visControl = None
-        self.dualPower = [0.86,2.3]
+        self.dualPower = [0.94,2.6]
         
         winWidth = 500
         winHeight = 300
@@ -96,7 +96,7 @@ class LaserControl():
         
         self.pulseNumControl = QtGui.QSpinBox()
         self.pulseNumControl.setPrefix('# Pulses:  ')
-        self.pulseNumControl.setRange(1,1000)
+        self.pulseNumControl.setRange(1,1000000)
         self.pulseNumControl.setSingleStep(1)
         self.pulseNumControl.setValue(1)
         self.pulseNumControl.setEnabled(False)
@@ -114,7 +114,7 @@ class LaserControl():
         self.pulseIntervalControl = QtGui.QDoubleSpinBox()
         self.pulseIntervalControl.setPrefix('Pulse Interval:  ')
         self.pulseIntervalControl.setSuffix(' s')
-        self.pulseDurControl.setDecimals(3)
+        self.pulseIntervalControl.setDecimals(3)
         self.pulseIntervalControl.setRange(0.001,60)
         self.pulseIntervalControl.setSingleStep(0.1)
         self.pulseIntervalControl.setValue(5)
@@ -242,26 +242,22 @@ class LaserControl():
         if self.onOffButton.isChecked():
             self.onOffButton.setText('Stop')
             if self.controlType=='analog':
-                power = self.powerControl.value()
-                if self.nidaqSecondaryAnalogOut is not None:
-                    secondaryPower = self.secondaryPowerControl.value()
                 rampDur = self.rampDurControl.value()
                 if rampDur>0:
-                    ramp = np.linspace(self.zeroOffsetControl.value(),power,round(rampDur*self.nidaqAnalogOut.sampRate))
+                    power = np.linspace(self.zeroOffsetControl.value(),self.powerControl.value(),round(rampDur*self.nidaqAnalogOut.sampRate))
                     if self.nidaqSecondaryAnalogOut is not None:
-                        secondaryRamp = np.linspace(0.25,secondaryPower,round(rampDur*self.nidaqAnalogOut.sampRate))
+                        secondaryPower = np.linspace(0.25,self.secondaryPowerControl.value(),round(rampDur*self.nidaqAnalogOut.sampRate))
+                else:
+                    power = np.array([self.powerControl.value()])
+                    if self.nidaqSecondaryAnalogOut is not None:
+                        secondaryPower = np.array([self.secondaryPowerControl.value()])
             if self.modeMenu.currentIndex()==0:
                 if self.controlType=='digital':
                     self.nidaqDigitalOut.WriteBit(self.nidaqDigitalOutCh,0)
                 else:
-                    if rampDur>0:
-                        self.nidaqAnalogOut.Write(ramp)
-                        if self.nidaqSecondaryAnalogOut is not None:
-                            self.nidaqSecondaryAnalogOut.Write(secondaryRamp)
-                    else:
-                        self.nidaqAnalogOut.Write(np.array([power]))
-                        if self.nidaqSecondaryAnalogOut is not None:
-                            self.nidaqSecondaryAnalogOut.Write(np.array([secondaryPower]))
+                    self.nidaqAnalogOut.Write(power)
+                    if self.nidaqSecondaryAnalogOut is not None:
+                        self.nidaqSecondaryAnalogOut.Write(secondaryPower)
             else:
                 pulseDur = self.pulseDurControl.value()
                 pulseInt = self.pulseIntervalControl.value()
@@ -276,18 +272,12 @@ class LaserControl():
                         time.sleep(pulseDur)
                         self.nidaqDigitalOut.WriteBit(self.nidaqDigitalOutCh,1)
                     else:
-                        if rampDur>0:
-                            t = time.clock()
-                            self.nidaqAnalogOut.Write(ramp)
-                            if self.nidaqSecondaryAnalogOut is not None:
-                                self.nidaqSecondaryAnalogOut.Write(secondaryRamp)
-                            while time.clock()-t<pulseDur:
-                                time.sleep(1/self.nidaqAnalogOut.sampRate)
-                        else:
-                            self.nidaqAnalogOut.Write(np.array([power]))
-                            if self.nidaqSecondaryAnalogOut is not None:
-                                self.nidaqSecondaryAnalogOut.Write(np.array([secondaryPower]))
-                            time.sleep(pulseDur)
+                        t = time.clock()
+                        self.nidaqAnalogOut.Write(power)
+                        if self.nidaqSecondaryAnalogOut is not None:
+                            self.nidaqSecondaryAnalogOut.Write(secondaryPower)
+                        while time.clock()-t<pulseDur:
+                            time.sleep(1/self.nidaqAnalogOut.sampRate)
                         self.nidaqAnalogOut.Write(np.array([0.0]))
                         if self.nidaqSecondaryAnalogOut is not None:
                             self.nidaqSecondaryAnalogOut.Write(np.array([0.0]))
