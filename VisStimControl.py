@@ -161,11 +161,11 @@ class VisStimControl():
     def readRotaryEncoder(self):
         return self._rotEncoderInput.data[:]
         
-    def deliverReward(self):
-        self._rewardOut.Write(np.concatenate((self._rewardOut.voltageRange[1]*np.ones(round(self._rewardOut.sampRate*self.rewardDur)),[0])))
-        
-    def getLickInput(self):
-        return self._digInputs.Read()[0]
+#    def deliverReward(self):
+#        self._rewardOut.Write(np.concatenate((self._rewardOut.voltageRange[1]*np.ones(round(self._rewardOut.sampRate*self.rewardDur)),[0])))
+#        
+#    def getLickInput(self):
+#        return self._digInputs.Read()[0]
         
     def setAcquisitionSignal(self,level):
         self._digOutputs.WriteBit(0,level)
@@ -254,21 +254,22 @@ class VisStimControl():
             if self.laser2 is not None:
                 self._laser2AnalogControl.Write(np.array([0.0]))
                 
-    def setLaserParams(self,laser=None,power=None,split=True):
-        self.laser = 'Blue' if laser is None else laser
-        self.laserPower = [0,0.84] if power is None else power
-        if split:
+    def setLaserParams(self,laser='Blue',power=[0,0.94],split=True):
+        if laser is not None and split:
             self.laser2 = 'Blue LED'
             self.laser2Power = 2.6
         protocol = self.__module__
         if protocol=='makeGratings':
-            self.postTime = 180
+            if laser is not None:
+                self.postTime = 180
         elif protocol=='MovingCheckerboard':
-            self.interTrialInterval = [4,4]
+            if laser is not None:
+                self.interTrialInterval = [4,4]
             self.bckgndSpeed = [0,20,80]
             self.patchSpeed = [0,20,80]
         elif protocol=='loom':
-            self.interTrialInterval = 240
+            if laser is not None:
+                self.interTrialInterval = 240
             self.colors = [-1]
 
 def saveParameters(fileOut,paramDict,dictName=None):
