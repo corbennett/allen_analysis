@@ -223,7 +223,7 @@ def kmodes(data,k,iterations=100,plot=False):
     return clustID,centroids
 
     
-def cluster(data,nClusters=None,method='ward',metric='euclidean',plot=False,colors=None):
+def cluster(data,nClusters=None,method='ward',metric='euclidean',plot=False,colors=None,nreps=1000):
     # data is n samples x m parameters
     linkageMat = scipy.cluster.hierarchy.linkage(data,method=method,metric=metric)
     if nClusters is None:
@@ -241,28 +241,30 @@ def cluster(data,nClusters=None,method='ward',metric='euclidean',plot=False,colo
         ax.set_yticks([])
         for side in ('right','top','left','bottom'):
             ax.spines[side].set_visible(False)
-            
-        n = 1000
-        randLinkage = np.zeros((n,linkageMat.shape[0]))
-        rdata = data.copy()
-        for i in range(n):
-            for j in range(data.shape[1]):
-                rdata[:,j] = data[np.random.permutation(data.shape[0]),j]
-            _,m = cluster(rdata)
-            randLinkage[i] = m[::-1,2]
+        plt.tight_layout()
         
-        plt.figure(facecolor='w')
-        ax = plt.subplot(1,1,1)
-        k = np.arange(linkageMat.shape[0])+2
-        ax.plot(k,np.percentile(randLinkage,1,axis=0),'k--')
-        ax.plot(k,np.percentile(randLinkage,99,axis=0),'k--')
-        ax.plot(k,linkageMat[::-1,2],'k')
-        ax.set_xlim([0,data.shape[0]])
-        ax.set_xlabel('# Clusters')
-        ax.set_ylabel('Minimum Linkage Distance')
-        for side in ('right','top'):
-            ax.spines[side].set_visible(False)
-        ax.tick_params(direction='out',top=False,right=False)
+        if nreps>0:
+            randLinkage = np.zeros((nreps,linkageMat.shape[0]))
+            shuffledData = data.copy()
+            for i in range(nreps):
+                for j in range(data.shape[1]):
+                    shuffledData[:,j] = data[np.random.permutation(data.shape[0]),j]
+                _,m = cluster(shuffledData,method=method,metric=metric)
+                randLinkage[i] = m[::-1,2]
+            
+            plt.figure(facecolor='w')
+            ax = plt.subplot(1,1,1)
+            k = np.arange(linkageMat.shape[0])+2
+            ax.plot(k,np.percentile(randLinkage,1,axis=0),'k--')
+            ax.plot(k,np.percentile(randLinkage,99,axis=0),'k--')
+            ax.plot(k,linkageMat[::-1,2],'ko-',mfc='none',ms=12,mew=1)
+            ax.set_xlim([0,k+1])
+            ax.set_xlabel('Cluster')
+            ax.set_ylabel('Linkage Distance')
+            for side in ('right','top'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out',top=False,right=False)
+            plt.tight_layout()
         
 #        plotPseudoF(data,method='ward')
 #        plotMeanSilhouetteValue(data,method='ward')
