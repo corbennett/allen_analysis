@@ -223,7 +223,7 @@ def kmodes(data,k,iterations=100,plot=False):
     return clustID,centroids
 
     
-def cluster(data,nClusters=None,method='ward',metric='euclidean',plot=False,colors=None,nreps=1000):
+def cluster(data,nClusters=None,method='ward',metric='euclidean',plot=False,colors=None,nreps=1000,labels=None):
     # data is n samples x m parameters
     linkageMat = scipy.cluster.hierarchy.linkage(data,method=method,metric=metric)
     if nClusters is None:
@@ -236,7 +236,8 @@ def cluster(data,nClusters=None,method='ward',metric='euclidean',plot=False,colo
         colorThresh = 0 if nClusters<2 else linkageMat[::-1,2][nClusters-2]
         if colors is not None:
             scipy.cluster.hierarchy.set_link_color_palette(list(colors))
-        scipy.cluster.hierarchy.dendrogram(linkageMat,ax=ax,color_threshold=colorThresh,above_threshold_color='k')
+        noLabels = True if labels=='off' else False
+        scipy.cluster.hierarchy.dendrogram(linkageMat,ax=ax,color_threshold=colorThresh,above_threshold_color='k',no_labels=noLabels)
         scipy.cluster.hierarchy.set_link_color_palette(None)
         ax.set_yticks([])
         for side in ('right','top','left','bottom'):
@@ -257,8 +258,8 @@ def cluster(data,nClusters=None,method='ward',metric='euclidean',plot=False,colo
             k = np.arange(linkageMat.shape[0])+2
             ax.plot(k,np.percentile(randLinkage,1,axis=0),'k--')
             ax.plot(k,np.percentile(randLinkage,99,axis=0),'k--')
-            ax.plot(k,linkageMat[::-1,2],'ko-',mfc='none',ms=12,mew=1)
-            ax.set_xlim([0,k+1])
+            ax.plot(k,linkageMat[::-1,2],'ko-',mfc='none',ms=10,mew=2,linewidth=2)
+            ax.set_xlim([0,k[-1]+1])
             ax.set_xlabel('Cluster')
             ax.set_ylabel('Linkage Distance')
             for side in ('right','top'):
