@@ -17,7 +17,7 @@ from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib import patches
 from matplotlib import cm
-from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
+#from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
 
 
 class popProbeData():
@@ -1054,7 +1054,7 @@ class popProbeData():
         plt.tight_layout()
                 
     
-    def makeVolume(self, data=None, region=None, padding=10, sigma=3, weighted=False, maskNoData=True, cmap='jet'):
+    def makeVolume(self, data=None, region=None, padding=10, sigma=3, weighted=False, maskNoData=True, cmap='jet', alphaMap=False):
         
         cellsInRegion = self.getCellsInRegion(region)
         
@@ -1100,32 +1100,50 @@ class popProbeData():
             mask = probeData.gaussianConvolve3D((counts>0).astype(float),sigma=sigma)
             dataMap_s[mask<maskThresh] = np.nan
         
-        if cmap=='jet':
+        if cmap in ('jet','gray'):
             minVal = np.nanmin(dataMap_s)
-            maxVal = np.nanmax(dataMap_s-minVal)
+            maxVal = np.nanmax(dataMap_s)
+            if abs(minVal)>abs(maxVal):
+                minVal,maxVal = maxVal,minVal
+            maxVal -= minVal
         elif cmap=='bwr':
-            maxVal = np.nanmax(np.absolute(dataMap_s))
+            maxVal = np.nanmax(np.absolute(dataMap_s))    
         
-        colorMap = np.full(dataMap.shape+(3,),np.nan)
+        shape = dataMap.shape
+        if cmap!='gray':
+            shape += (3,)
+        colorMap = np.full(shape,np.nan)
         for y in xrange(colorMap.shape[0]):
             for x in xrange(colorMap.shape[1]):
                 for z in xrange(colorMap.shape[2]):
-                    if cmap=='jet':
-                        thisVox = (dataMap_s[y,x,z]-minVal)/maxVal
-                    elif cmap=='bwr':
-                        thisVox = (dataMap_s[y,x,z]/maxVal+1)*0.5
-                    if not np.isnan(thisVox):
-                        if cmap=='jet':
-                            RGB = cm.jet(thisVox)
+                    if not np.isnan(dataMap_s[y,x,z]):
+                        if cmap in ('jet','gray'):
+                            thisVox = (dataMap_s[y,x,z]-minVal)/maxVal
                         elif cmap=='bwr':
-                            RGB = cm.bwr(thisVox)
-                        for i in (0,1,2):
-                            colorMap[y, x, z, i] = RGB[i]
+                            thisVox = (dataMap_s[y,x,z]/maxVal+1)*0.5
+                        if cmap=='gray':
+                            colorMap[y,x,z] = thisVox
+                        else:
+                            if cmap=='jet':
+                                RGB = cm.jet(thisVox)
+                            elif cmap=='bwr':
+                                RGB = cm.bwr(thisVox)
+                            for i in (0,1,2):
+                                colorMap[y, x, z, i] = RGB[i]
         
-        fullShape = self.getInRegion('LP')[0].shape+(4,)
+        fullShape = self.getInRegion('LP')[0].shape
+        if alphaMap:
+            fullShape += (4,)
+        elif cmap!='gray':
+            fullShape += (3,)
         fullMap = np.zeros(fullShape,dtype=np.uint8)
-        fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],:3] = colorMap*255
-        fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],3][~np.isnan(colorMap[:,:,:,0])] = 255
+        if cmap!='gray' or alphaMap:
+            fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],:3] = colorMap*255
+        else:
+            fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMap*255
+        if alphaMap:
+            ch = colorMap if cmap=='gray' else colorMap[...,0]
+            fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],3][~np.isnan(ch)] = 255
 
         return fullMap, dataMap_s
     
@@ -1455,7 +1473,7 @@ class popProbeData():
         laserMax = laserRespMat.max(axis=(1,2))
         omi = (laserMax-controlMax)/(laserMax+controlMax)
         
-        zthresh = 10
+        zthresh = 5
         spontRateMean = np.array(controlData.spontRateMean)
         spontRateStd = np.array(controlData.spontRateStd)
         respZ = (controlRespMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
