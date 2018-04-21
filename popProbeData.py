@@ -12,12 +12,10 @@ import numpy as np
 import pandas as pd
 from xml.dom import minidom
 import scipy.stats
-from scipy.spatial.distance import euclidean
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib import patches
 from matplotlib import cm
-#from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
 
 
 class popProbeData():
@@ -255,10 +253,12 @@ class popProbeData():
             if a==0:
                 x,y = y,x
                 cx,cy = cy,cx
-                scx,scy = scy,scx
+                if region=='LP':
+                    scx,scy = scy,scx
             fig = plt.figure(facecolor='w')
             ax = fig.add_subplot(1,1,1)
-            ax.add_patch(patches.Polygon(np.stack((scx,scy)).T,color='0.5',alpha=0.25))
+            if region=='LP':
+                ax.add_patch(patches.Polygon(np.stack((scx,scy)).T,color='0.5',alpha=0.25))
             ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
             ax.plot(x,y,'ko',markersize=5)
             ax.set_aspect('equal')
@@ -334,6 +334,16 @@ class popProbeData():
         return []
         
         
+    def getAnnotationLabel(self,structureID):
+        if self.annotationStructures is None:
+            f = fileIO.getFile('Choose annotation structures file','*.xml')
+            self.annotationStructures = minidom.parse(f)
+        for ind,structID in enumerate(self.annotationStructures.getElementsByTagName('id')):
+            if int(structID.childNodes[0].nodeValue)==structureID:
+                structLabel = self.annotationStructures.getElementsByTagName('structure')[ind].childNodes[7].childNodes[0].nodeValue[1:-1]
+                return structLabel
+        
+        
     def getInRegion(self,regionLabel,padding=None):
         if self.annotationData is None:
             self.getAnnotationData()
@@ -353,10 +363,25 @@ class popProbeData():
         self.annotationData = nrrd.read(f)[0].transpose((1,2,0))
         
         
-    def getIsPhotoTagged(self):
+    def getIsPhotoTaggedFromLabel(self):
         i = np.array(self.data.index.get_level_values('photoTag').tolist())
         i[np.isnan(i)] = 0
         isPhotoTagged = i.astype(bool)
+        notPhotoTagged = self.data.index.get_level_values('genotype')=='Ntsr1 Cre x Ai32'
+        notPhotoTagged[isPhotoTagged] = False
+        return isPhotoTagged,notPhotoTagged
+        
+        
+    def getIsPhotoTaggedFromResponse(self,nonMU=True,pthresh=0.05,rateThresh=None,zthresh=5):
+        if self.experimentFiles is None:
+            self.getExperimentFiles()
+        isPhotoTagged = np.zeros(self.data.shape[0],dtype=bool)
+        for exp in self.experimentFiles:
+            p = self.getProbeDataObj(exp)
+            expDate,animalID = p.getExperimentInfo()
+            ind = (self.data.index.get_level_values('experimentDate')==expDate) & (self.data.index.get_level_values('animalID')==animalID)
+            if np.all(self.data.index.get_level_values('genotype')[ind]=='Ntsr1 Cre x Ai32'):
+                isPhotoTagged[ind] = p.getIsPhotoTagged(units=None,nonMU=nonMU,pthresh=pthresh,rateThresh=rateThresh,zthresh=zthresh)
         notPhotoTagged = self.data.index.get_level_values('genotype')=='Ntsr1 Cre x Ai32'
         notPhotoTagged[isPhotoTagged] = False
         return isPhotoTagged,notPhotoTagged
@@ -2664,15 +2689,13 @@ class popProbeData():
         return tempShifted, peakToTrough
     
     def findRegions(self, ccfCoords, tolerance=100):
-        mcc = MouseConnectivityCache(manifest_file='connectivity/mouse_connectivity_manifest.json')
-        struct_df = mcc.get_structures()
-        
         if self.annotationData is None:
             self.getAnnotationData()
         
-        ccf = np.copy(ccfCoords)
-        ccf /= 25
-        ccf = np.round(ccf).astype(int)
+        if np.any(np.isnan(ccfCoords)):
+            return ''
+
+        ccf = np.round(ccfCoords/25).astype(int)
         regionID = self.annotationData[ccf[1], ccf[0], ccf[2]]
         if regionID!=218:
 
@@ -2695,9 +2718,8 @@ class popProbeData():
 #                    regionID=218
 #                    break
         
-        return struct_df[struct_df['id']==regionID]['acronym'].tolist()[0]
-        
-#        def getUnitsByWaveform(self, cellType = 'FS'):
+        return self.getAnnotationLabel(regionID)
+
                 
         
 def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):
