@@ -57,10 +57,10 @@ class probeData():
         return datDict
         
         
-    def loadExperiment(self, loadRunningData=False, loadUnits=True):
-        self.kwdFileList, self.nsamps = getKwdInfo()
+    def loadExperiment(self, dirPath=None, loadRunningData=False, loadUnits=True, loadWaveforms=False):
+        self.kwdFileList, self.nsamps = getKwdInfo(dirPath)
         filelist = self.kwdFileList
-        filePaths = [os.path.dirname(f) for f in filelist]        
+        filePaths = [os.path.dirname(f) for f in filelist]            
         
         self._d = []
         for index, f in enumerate(filelist):
@@ -73,40 +73,47 @@ class probeData():
                     
         if loadUnits:
             self.getSingleUnits(fileDir=os.path.dirname(filePaths[0]))
-        self.mapChannels()
-        self.visstimData = {}
-        self.behaviorData = {}
-        self.TTL = {}
-        for pro, proPath in enumerate(filePaths):
-            files = os.listdir(proPath)
-            
-            visStimFound = False
-            eyeDataFound = False
-            self.behaviorData[str(pro)] = {}
-            for f in files:
-                if 'VisStim' in f:
-                    self.getVisStimData(os.path.join(proPath, f), protocol=pro)
-                    visStimFound = True
-                    continue
-            
-                #load eye tracking data
-                if 'MouseEyeTracker' in f:  
-                    self.getEyeTrackData(os.path.join(proPath, f), protocol=pro)
-                    eyeDataFound = True
-                    continue
+        if loadRunningData:
+            self.mapChannels()
+            self.visstimData = {}
+            self.behaviorData = {}
+            self.TTL = {}
+            for pro, proPath in enumerate(filePaths):
+                files = os.listdir(proPath)
                 
-            ttlFile = [f for f in files if f.endswith('kwe')][0]             
-            self.getTTLData(filePath=os.path.join(proPath, ttlFile), protocol=pro)
+                visStimFound = False
+                eyeDataFound = False
+                self.behaviorData[str(pro)] = {}
+                for f in files:
+                    if 'VisStim' in f:
+                        self.getVisStimData(os.path.join(proPath, f), protocol=pro)
+                        visStimFound = True
+                        continue
+                
+                    #load eye tracking data
+                    if 'MouseEyeTracker' in f:  
+                        self.getEyeTrackData(os.path.join(proPath, f), protocol=pro)
+                        eyeDataFound = True
+                        continue
+                    
+                ttlFile = [f for f in files if f.endswith('kwe')][0]             
+                self.getTTLData(filePath=os.path.join(proPath, ttlFile), protocol=pro)
+                
+                if loadRunningData:
+                    wd = self._d[pro]['data'][:, self.wheelChannel]*self._d[pro]['gains'][self.wheelChannel]
+                    wd = wd[::500]
+                    self.behaviorData[str(pro)]['running'] = self.decodeWheel(wd)
+                if not visStimFound:
+                    print('No vis stim data found for ' + os.path.basename(proPath))
+                if not eyeDataFound:
+                    print('No eye tracking data found for ' + os.path.basename(proPath))
             
-            if loadRunningData:
-                wd = self._d[pro]['data'][:, self.wheelChannel]*self._d[pro]['gains'][self.wheelChannel]
-                wd = wd[::500]
-                self.behaviorData[str(pro)]['running'] = self.decodeWheel(wd)
-            if not visStimFound:
-                print('No vis stim data found for ' + os.path.basename(proPath))
-            if not eyeDataFound:
-                print('No eye tracking data found for ' + os.path.basename(proPath))
+            for i, pro in enumerate(self.kwdFileList):
+                if 'laser' in pro:
+                    self.findAnalogPulses(self.blueLaserChannel, i)
             
+            if loadWaveforms:
+                self.getWaveforms()
     
     def getTTLData(self, filePath=None, protocol=0):
         
@@ -218,12 +225,12 @@ class probeData():
 
         smoothFactor = sampleRate/60.0       
         angularWheelData = np.arctan2(np.sin(wheelData), np.cos(wheelData))
-        angularWheelData = np.convolve(angularWheelData, np.ones(smoothFactor), 'same')/smoothFactor
+        angularWheelData = np.convolve(angularWheelData, np.ones(int(smoothFactor)), 'same')/smoothFactor
 
         artifactThreshold = (100.0/sampleRate)/7.6      #reasonable bound for how far (in radians) a mouse could move in one sample point (assumes top speed of 100 cm/s)
         angularDisplacement = (np.diff(angularWheelData) + np.pi)%(2*np.pi) - np.pi
         angularDisplacement[np.abs(angularDisplacement) > artifactThreshold ] = 0
-        wheelData = np.convolve(angularDisplacement, np.ones(kernelLength*sampleRate), 'same')/(kernelLength*sampleRate)
+        wheelData = np.convolve(angularDisplacement, np.ones(int(kernelLength*sampleRate)), 'same')/(kernelLength*sampleRate)
         wheelData *= 7.6*sampleRate
         wheelData = np.insert(wheelData, 0, wheelData[0])
 
@@ -382,7 +389,7 @@ class probeData():
         return spikesPerTrial
         
             
-    def findRF(self, units=None, adjustForPupil=False, usePeakResp=True, sigma=1, plot=True, minLatency=0.05, maxLatency=0.15, trials=None, protocol=None, fit=True, saveTag='', useCache=False):
+    def findRF(self, units=None, adjustForPupil=False, usePeakResp=True, sigma=1, plot=True, minLatency=0.05, maxLatency=0.15, trials=None, protocol=None, fit=True, saveTag='', useCache=False, cmap='Blues'):
 
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -712,7 +719,7 @@ class probeData():
                                 ax.set_title('Unit '+str(unit),fontsize='medium')
                         
                         ax = fig.add_subplot(gs[row,col+1])
-                        im = ax.imshow(resp, cmap='jet', clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
+                        im = ax.imshow(resp, cmap=cmap, clim=(minVal,maxVal), interpolation = 'none', origin = 'lower', extent = [gridExtent[0], gridExtent[2], gridExtent[1], gridExtent[3]])
                         if not np.all(np.isnan(fitParams)):
                             ax.plot(fitParams[0],fitParams[1],'kx',markeredgewidth=2)
                             fitX,fitY = getEllipseXY(*fitParams[:-2])
@@ -973,7 +980,7 @@ class probeData():
         return sdfMeans
      
               
-    def analyzeGratings(self, units=None, trials=None, responseLatency=0.25, usePeakResp=False, plot=True, protocol=None, protocolType='stf', fit=True, showLaserPreFrames=False, saveTag='', useCache=False):
+    def analyzeGratings(self, units=None, trials=None, responseLatency=0.25, usePeakResp=False, sdfSigma = 0.02, plot=True, protocol=None, protocolType='stf', fit=True, saveTag='', useCache=False):
     
         units, unitsYPos = self.getOrderedUnits(units) 
             
@@ -1028,12 +1035,18 @@ class probeData():
         trialEndSamples = self.visstimData[protocol]['frameSamples'][trialStartFrame+trialDuration]
         
         preTime = self.visstimData[protocol]['preTime']/self.visstimData[protocol]['frameRate']
-        if showLaserPreFrames:
-            preTime = preTime+self.visstimData[protocol]['laserPreFrames']/self.visstimData[protocol]['frameRate']
         stimTime = self.visstimData[protocol]['stimTime']/self.visstimData[protocol]['frameRate']
         postTime = self.visstimData[protocol]['postTime']/self.visstimData[protocol]['frameRate']
-        sdfSamples = round((preTime+stimTime+postTime)*self.sampleRate)
-        sdfSigma = 0.02
+        if 'laserPreFrames' in self.visstimData[protocol]:
+            laserPreTime = self.visstimData[protocol]['laserPreFrames']/self.visstimData[protocol]['frameRate']
+            laserPostTime = self.visstimData[protocol]['laserPostFrames']/self.visstimData[protocol]['frameRate']
+        else:
+            laserPreTime = 0
+            laserPostTime = 0
+        if 'laserPreFrames' in self.visstimData[protocol]:        
+            sdfSamples = round((laserPreTime+preTime+stimTime+postTime+laserPostTime)*self.sampleRate)
+        else:
+            sdfSamples = round((preTime+stimTime+postTime)*self.sampleRate)
         sdfSampInt = 0.001
         inAnalysisWindow = None
         
@@ -1075,7 +1088,7 @@ class probeData():
                         if any(trialIndex):
                             respMat[tfInd,sfInd,oriInd] = np.mean(trialResp[trialIndex])
                             preTrialMat[tfInd,sfInd,oriInd] = np.mean(preTrialRate[trialIndex])
-                            sdf[tfInd,sfInd,oriInd,:],sdfTime = self.getSDF(spikes,trialStartSamples[trialIndex]-int(preTime*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
+                            sdf[tfInd,sfInd,oriInd,:],sdfTime = self.getSDF(spikes,trialStartSamples[trialIndex]-int((preTime+laserPreTime)*self.sampleRate),sdfSamples,sigma=sdfSigma,sampInt=sdfSampInt)
                             if inAnalysisWindow is None:
                                 inAnalysisWindow = np.logical_and(sdfTime>preTime+responseLatency,sdfTime<preTime+stimTime)
                             s = sdf[tfInd,sfInd,oriInd,inAnalysisWindow]
@@ -1328,7 +1341,7 @@ class probeData():
                     ax.set_ylabel('Pref '+oriOrDir+' Count')
 
                                     
-    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, laser=False, latency=0.25, usePeakResp=True, plot=True, saveTag='', useCache=False):
+    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, laser=False, latency=0.25, sdfSigma = 0.02, usePeakResp=True, plot=True, saveTag='', useCache=False):
         
         units, unitsYPos = self.getOrderedUnits(units)
         
@@ -1377,7 +1390,6 @@ class probeData():
         bckgndSpeed = np.concatenate((-p['bckgndSpeed'][:0:-1],p['bckgndSpeed']))
         patchSpeed = np.concatenate((-p['patchSpeed'][:0:-1],p['patchSpeed']))
         
-        sdfSigma = 0.1
         sdfSampInt = 0.001
         sdfTime = np.arange(0,2*minInterTrialTime+maxTrialDuration/self.sampleRate,sdfSampInt)
         
@@ -1886,7 +1898,7 @@ class probeData():
                 wd = -self.behaviorData[str(pro)]['running']
                 fh, _ = np.histogram(spikes, np.arange(0, (wd.size+1)*int(wheelBinSize), int(wheelBinSize)))
                 fh *= int(wheelSampleRate)
-                frc = np.convolve(fh, np.ones(kernelWidth),'same')/kernelWidth
+                frc = np.convolve(fh, np.ones(int(round(kernelWidth))),'same')/kernelWidth
                 
                 binnedSpeed = np.digitize(wd, speedBins)
                 for sbin, _ in enumerate(speedBins):
@@ -2498,7 +2510,7 @@ class probeData():
         return peaks
     
     
-    def plotRaster(self,unit,protocol,startSamples=None,offset=0,windowDur=None,paramNames=None,paramColors=None,grid=False,axes=None,labels=''):
+    def plotRaster(self,unit,protocol,startSamples=None,offset=0,windowDur=None,paramNames=None,paramColors=None,grid=False,axes=None):
         # offset and windowDur input in seconds then converted to samples
         offset = int(offset*self.sampleRate)
         params = []
@@ -2561,7 +2573,7 @@ class probeData():
             else:
                 ax.set_xlabel('Time (s)')
                 ax.set_ylabel('Trial')
-        axes[-1].set_title('Unit '+str(unit)+', '+self.getProtocolLabel(protocol)+', '+labels)
+        axes[-1].set_title('Unit '+str(unit)+', '+self.getProtocolLabel(protocol))
          
          
     def parseRaster(self,axes,spikes,startSamples,offset,windowDur,params,paramColors,paramIndex=0,trialsIn=None,rows=[0],grid=False,gs=None,grow=None,gcol=0):
@@ -2606,7 +2618,7 @@ class probeData():
             units = [units]
         laserProtocols = [protocol for protocol,label in enumerate(self.kwdFileList) if 'laser' in label]
         if len(laserProtocols)>0:
-            for uindex,u in enumerate(units):
+            for u in units:
                 if figNum is not None:
                     figNum += 1
                 f = plt.figure(num=figNum,figsize=(10,10))
@@ -2614,44 +2626,9 @@ class probeData():
                     ax = f.add_subplot(len(laserProtocols),1,ind+1)
                     laserStartSamples = self.behaviorData[str(protocol)]['137_pulses'][0]
                     self.plotRaster(u,str(protocol),laserStartSamples,offset=-2,windowDur=6,axes=ax)
-                    
-    
-    def getIsPhotoTagged(self,units=None,nonMU=False,pthresh=0.05,rateThresh=None,zthresh=5):
-        if units is None:
-            if nonMU:
-                units,_ = self.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
-            else:
-                units,_ = self.getOrderedUnits()
-        elif not isinstance(units,(list,tuple)):
-            units = [units]
-        isPhototagged = np.zeros(len(units),dtype=bool)
-        laserProtocols = [protocol for protocol,label in enumerate(self.kwdFileList) if 'laser' in label]
-        for uindex,u in enumerate(units):
-            preSpikeRate = []
-            postSpikeRate = []
-            for protocol in laserProtocols:
-                pulseStarts,pulseEnds,pulseAmps = self.behaviorData[str(protocol)]['137_pulses']
-                spikes = self.units[str(u)]['times'][str(protocol)]
-                for start,end in zip(pulseStarts,pulseEnds):
-                    windowSamples = (end-start)//2
-                    preSpikeRate.append(np.sum(np.logical_and(spikes>start-windowSamples,spikes<start))/windowSamples*self.sampleRate)
-                    postSpikeRate.append(np.sum(np.logical_and(spikes>end-windowSamples,spikes<end))/windowSamples*self.sampleRate)
-            if pthresh is not None:
-                _,pval = scipy.stats.wilcoxon(preSpikeRate,postSpikeRate)
-                if pval>=pthresh:
-                    continue
-            if rateThresh is not None:
-                if (np.mean(postSpikeRate)-np.mean(preSpikeRate))<=rateThresh:
-                    continue
-            if zthresh is not None:
-                std = np.std(preSpikeRate)
-                if std>0 and (np.mean(postSpikeRate)-np.mean(preSpikeRate))/np.std(preSpikeRate)<=zthresh:
-                    continue
-            isPhototagged[uindex] = 1
-        return isPhototagged
     
     
-    def runAllAnalyses(self, units=None, protocolsToRun=None, splitRunning=False, useCache=False, plot=True):
+    def runAllAnalyses(self, units=None, protocolsToRun=None, splitRunning=False, useCache=False, plot=True, ttx=False):
         if protocolsToRun is None:
             protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard', 'loom']
         for pro in protocolsToRun:
@@ -2703,8 +2680,20 @@ class probeData():
                     else:
                         self.analyzeGratings(units, protocol = protocol, useCache=useCache, protocolType='ori', plot=plot)
     
-                elif 'sparseNoise' in pro:
-                    if splitRunning:
+                elif 'sparseNoise' in pro:                                            
+                    if ttx:
+                        controlTrials, controlProtocol, ttxTrials, ttxProtocol = self.findTTXTrials(pro)
+                        for pid, trials, tag in zip((controlProtocol, ttxProtocol), (controlTrials, ttxTrials), ('_control', '_ttx')):
+                            trialStarts, trialEnds = self.getTrialStartsEnds(pid)
+                            statTrials, runTrials, _ = self.parseRunning(pid, trialStarts=trialStarts, trialEnds=trialEnds)
+                            sTrials = np.intersect1d(statTrials, trials).astype(np.int)
+                            rTrials = np.intersect1d(runTrials, trials).astype(np.int)
+                            aTrials = trials.astype(np.int)
+                            self.findRF(units, protocol=pid, trials=sTrials, saveTag=tag+'_stat', plot=plot)
+                            self.findRF(units, protocol=pid, trials=rTrials, saveTag=tag+'_run', plot=plot)
+                            self.findRF(units, protocol=pid, trials=aTrials, saveTag=tag+'_allTrials', plot=plot)
+                        
+                    elif splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
                         laserTrials, controlTrials = self.findLaserTrials(protocol)
                         laserCondition = [controlTrials, laserTrials]
@@ -2719,6 +2708,8 @@ class probeData():
                             self.findRF(units, protocol=protocol, trials=sTrials, saveTag=laserTag+'_stat', plot=plot)
                             self.findRF(units, protocol=protocol, trials=rTrials, saveTag=laserTag+'_run', plot=plot)
                             self.findRF(units, protocol=protocol, trials=aTrials, saveTag=laserTag+'_allTrials', plot=plot)
+
+                            
                             
                     else:                    
                         self.findRF(units, protocol=protocol, useCache=useCache, plot=plot)
@@ -2740,7 +2731,19 @@ class probeData():
                         self.analyzeSpots(units, protocol=protocol, useCache=useCache, plot=plot)
                         
                 elif 'checkerboard' in pro:
-                    if splitRunning:
+                    if ttx:
+                        controlTrials, controlProtocol, ttxTrials, ttxProtocol = self.findTTXTrials(pro)
+                        for pid, trials, tag in zip((controlProtocol, ttxProtocol), (controlTrials, ttxTrials), ('_control', '_ttx')):
+                            trialStarts, trialEnds = self.getTrialStartsEnds(pid)
+                            statTrials, runTrials, _ = self.parseRunning(pid, trialStarts=trialStarts, trialEnds=trialEnds)
+                            sTrials = np.intersect1d(statTrials, trials).astype(np.int)
+                            rTrials = np.intersect1d(runTrials, trials).astype(np.int)
+                            aTrials = trials.astype(np.int)
+                            self.analyzeCheckerboard(units, protocol=pid, trials=sTrials, saveTag=tag+'_stat', plot=plot)
+                            self.analyzeCheckerboard(units, protocol=pid, trials=rTrials, saveTag=tag+'_run', plot=plot)
+                            self.analyzeCheckerboard(units, protocol=pid, trials=aTrials, saveTag=tag+'_allTrials', plot=plot)
+                            
+                    elif splitRunning:
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)
                         hasLaser = True if 'trialLaserPower' in self.visstimData[str(protocol)] else False
                         analyzeLaserTrials = (False,True) if hasLaser and np.any(self.visstimData[str(protocol)]['laserPower']>0) else (False,)
@@ -3115,7 +3118,16 @@ class probeData():
             for u in self.units:
                 self.units[str(u)]['CCFCoords'] = np.full(3,np.nan)
             print('Could not find CCF Tip or Entry positions')
-            
+           
+        if 'TTX_protocols' in table.columns:
+            ttxPros = [a for a in table['TTX_protocols'] if not isinstance(a, float)]
+            self.ttxDict = {}
+            for i, pro in enumerate(ttxPros):
+                self.ttxDict[pro] =     {'control_start': table['control_start'][i],
+                                         'control_end': table['control_end'][i],
+                                         'ttx_start' : table['TTX_start'][i],
+                                         'ttx_end' : table['TTX_end'][i]}
+                
 
     def getUnitsByLabel(self, labelID, criterion, notFlag=False):
         units = []
@@ -3156,7 +3168,7 @@ class probeData():
             self.units[str(unit)]['CCFCoords'] = pos
             
     
-    def comparisonPlot(self, unit, tagsToPlot=['stat', 'run'], protocolsToPlot=['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard'], colors = ['k', 'r', 'b', 'g']):
+    def comparisonPlot(self, unit, tagsToPlot=['stat', 'run'], protocolsToPlot=['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard'], colors = ['k', 'r', 'b', 'g'], cmap='bwr'):
         ### Tags to plot should be in order so that the reference tag is listed first. The reference tag will establish which trial conditions to use (usually, best conditions for that tag)
         data = self.units[str(unit)]
         for pro in protocolsToPlot:
@@ -3242,12 +3254,11 @@ class probeData():
                         axCreated = True
                         respMat = data['gratings_stf' + saveTag]['respMat']
                         ax = fig.add_subplot(gs[0, it])
-                        im = ax.imshow(respMat[:, :, maxInd], clim=[centerPoints[it]-max(cLims), centerPoints[it]+max(cLims)], cmap='bwr', interpolation='none', origin='lower')
+                        im = ax.imshow(respMat[:, :, maxInd], clim=[centerPoints[it]-max(cLims), centerPoints[it]+max(cLims)], cmap=cmap, interpolation='none', origin='lower')
                         ax.set_title(str(unit)+' gratings stf: '+tag + ': ' + str(numTrials) + ' trials', fontdict={'size':10})
                         axes.append(ax)
-                        if it==len(tagsToPlot)-1:
-                            cb = plt.colorbar(im,ax=axes,fraction=0.05,pad=0.04,shrink=0.5)
-                            cb.ax.tick_params(length=0,labelsize='x-small')                            
+                        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
+                        cb.ax.tick_params(length=0,labelsize='x-small')                            
 
             if pro is 'gratings_ori':
                 fig = plt.figure(facecolor='w')
@@ -3338,7 +3349,7 @@ class probeData():
                 axCreated = False
                 patchSpeed = data['checkerboard_' + tagsToPlot[0]]['patchSpeed']
                 bckgndSpeed = data['checkerboard_' + tagsToPlot[0]]['bckgndSpeed']
-                respMats = [data['checkerboard' + tg]['respMat'] for tg in ['_control', '_laser']]
+                respMats = [data['checkerboard_' + tg]['respMat'] for tg in tagsToPlot]
                 centerPoints = [rMat[patchSpeed==0,bckgndSpeed==0][0] if not np.isnan(rMat[patchSpeed==0,bckgndSpeed==0][0]) else np.nanmedian(rMat) for rMat in respMats]
                 cLims = [np.nanmax(abs(rMat-centerPoints[r])) for r, rMat in enumerate(respMats)]
                 for it, tag in enumerate(tagsToPlot):
@@ -3353,8 +3364,7 @@ class probeData():
                             sdfMax = np.nanmax(data[pro +'_'+tag]['_sdf'])
                             sdfMin = np.nanmin(data[pro +'_'+tag]['_sdf'])
                         sdfTime = data['checkerboard' + saveTag]['_sdfTime']    
-                        if it==0:
-                            maxInd = data['checkerboard' + saveTag]['bestPatchRespInd']    
+                        maxInd = data['checkerboard' + saveTag]['bestPatchRespInd']    
                         bestSDF = sdf[:,:,maxInd[1], maxInd[2]]
                         ax = None
                         if it > 0 and axCreated:
@@ -3363,7 +3373,7 @@ class probeData():
                         axCreated = True
                         respMat = data['checkerboard' + saveTag]['respMat']
                         ax = fig.add_subplot(gs[0, it])
-                        im = ax.imshow(respMat,cmap='bwr',clim=(centerPoints[it]-max(cLims),centerPoints[it]+ max(cLims)),interpolation='none',origin='lower')
+                        im = ax.imshow(respMat,cmap=cmap,clim=(centerPoints[it]-max(cLims),centerPoints[it]+ max(cLims)),interpolation='none',origin='lower')
                         ax.set_title(str(unit)+' checkerboard: '+tag + ': ' + str(numTrials) + ' trials', fontdict={'size':10})
                         ax.set_xticks(range(bckgndSpeed.size))
                         ax.set_xticklabels(bckgndSpeed)
@@ -3373,10 +3383,37 @@ class probeData():
                         if it==0:
                             ax.set_ylabel('Patch Speed')
                         axes.append(ax)
-                        if it==len(tagsToPlot)-1:
-                            cb = plt.colorbar(im,ax=axes,fraction=0.05,pad=0.04,shrink=0.5)
+                        
+                        cb = plt.colorbar(im,ax=ax,fraction=0.05,pad=0.04,shrink=0.5)
 #                            cb = plt.colorbar(im, ax=axes)
-                            cb.ax.tick_params(length=0,labelsize='x-small')
+                        cb.ax.tick_params(length=0,labelsize='x-small')
+                if pro is 'loom':
+                    fig = plt.figure(facecolor='w')
+                    ax = fig.add_subplot(111)
+                    trialConditions = data['loom_'+tagsToPlot[0]]['trialConditions']
+                    lvRatio = trialConditions[:, 0]                    
+                    xpos = trialConditions[:,1]
+                    ypos = trialConditions[:, 2]
+                    loomColors = trialConditions[:,3]
+                    
+                    sdfs = [data['loom_' + tg]['_sdf'] for tg in tagsToPlot]
+                    maxResp = max([np.nanmax(sdf) for sdf in sdfs])
+                    maxSDF = np.argmax([np.nanmax(sdf) for sdf in sdfs])
+                    bestCondition = np.argmax([np.nanmax(sdf) for sdf in sdfs[maxSDF]])
+                    conditionsToPlot = [tc for tc in trialConditions if (tc[1:] == trialConditions[bestCondition][1:]).all()]
+                    for it, tag in enumerate(tagsToPlot):
+                        alphas = np.linspace(0.2, 1, np.unique(lvRatio).size)
+                        sdf = sdfs[it]
+                        for ic, c in enumerate(conditionsToPlot):
+                            linecolor = colors[it]
+                            alpha = alphas[ic]
+                            thiscond = np.where([(c==tc).all() for tc in trialConditions])[0][0]
+                            ax.plot(sdf[thiscond], color=linecolor, alpha=alpha)
+                    ax.set_ylim([0, 1.1*maxResp])
+                    ylims = ax.get_ylim()
+                    ax.plot([sdf.shape[1]-400, sdf.shape[1]-400], [ylims[0], ylims[1]], 'k--')
+                    formatFigure(fig, ax)
+    
 
                             
     def getWaveforms(self):
@@ -3400,19 +3437,19 @@ class probeData():
             self.units[u]['ypos'] = imec_p2_positions[minChannel, 1]               
 
     
-    def findAnalogPulses(self, channel, protocol, threshold=1000):
+    def findAnalogPulses(self, channel, protocol, threshold=1000, refractoryPeriod=1000):
         data = self._d[protocol]['data'][:, channel]
         dataThresh = data>threshold
         
         pulseOn = np.where(dataThresh[1:]>dataThresh[:-1])[0]
-        goodPoints = np.where(pulseOn[1:] - pulseOn[:-1] > 1000)[0]
+        goodPoints = np.where(pulseOn[1:] - pulseOn[:-1] > refractoryPeriod)[0]
         goodPoints += 1
         goodPoints = np.insert(goodPoints, 0, 0)
         pulseStarts = pulseOn[goodPoints]
         
         dataThresh_rev = dataThresh[::-1]
         pulseOff = np.where(dataThresh_rev[1:]>dataThresh_rev[:-1])[0]
-        goodPoints = np.where(pulseOff[1:] - pulseOff[:-1] > 1000)[0]
+        goodPoints = np.where(pulseOff[1:] - pulseOff[:-1] > refractoryPeriod)[0]
         goodPoints += 1
         goodPoints = np.insert(goodPoints, 0, 0)
         pulseEnds = (dataThresh.size - pulseOff[goodPoints])[::-1]
@@ -3441,6 +3478,29 @@ class probeData():
         key = 'trialStartFrame' if protocol=='checkerboard' else 'stimStartFrames'
         controlTrials = np.setdiff1d(np.arange(v[key].size), laserTrials)
         return laserTrials, controlTrials
+    
+    def findTTXTrials(self, protocolName):
+        controlProtocol = self.getProtocolIndex(protocolName)
+        ttxProtocol = self.getProtocolIndex(protocolName+'_TTX')
+        if ttxProtocol is None:
+            ttxProtocol = controlProtocol
+        
+        key = 'trialStartFrame' if protocolName=='checkerboard' else 'stimStartFrames'
+        totalTrials = self.visstimData[str(controlProtocol)][key].size
+        
+        ttxDict = self.ttxDict[protocolName]
+        controlStart = ttxDict['control_start'] if ttxDict['control_start']>0 else 0
+        controlEnd = ttxDict['control_end'] if ttxDict['control_end']>0 else totalTrials
+        controlTrials = np.arange(controlStart, controlEnd)
+        
+        totalTrials = self.visstimData[str(ttxProtocol)][key].size
+        ttxStart = ttxDict['ttx_start'] if ttxDict['ttx_start']>0 else 0
+        ttxEnd = ttxDict['ttx_end'] if ttxDict['ttx_end']>0 else totalTrials
+        ttxTrials = np.arange(ttxStart, ttxEnd)
+        
+        return controlTrials, controlProtocol, ttxTrials, ttxProtocol
+                
+        
         
 # utility functions
 
@@ -3632,6 +3692,45 @@ def formatFigure(fig, ax, title=None, xLabel=None, yLabel=None, xTickLabels=None
     if saveName is not None:
         fig.savefig(saveName, facecolor=fig.get_facecolor())
 
+
+def runningAverage(data, bins=10, xDataLabel = '', yDataLabel = '', plot=True):
+    #if data is 1D take the index as x data
+    if data.ndim == 1:
+        xData = np.arange(len(data))
+        yData = data
+    elif data.ndim ==2:
+        xData = data[:, 0]
+        yData = data[:, 1]
+    else:
+        print('Data must be 1D or 2D (nX2)')
+#        return
+    xMin = np.nanmin(xData)
+    xMax = np.nanmax(xData)
+    stepSize = (xMax-xMin)/bins
+    xBinned = np.digitize(xData, np.arange(xMin, xMax, stepSize))
+    
+    runningAverageY = []
+    runningAverageX = []
+    runningSEM = []
+    for ib, b in enumerate(np.unique(xBinned)):
+        thisBinIndex = xBinned == b
+        runningAverageY.append(np.nanmean(yData[thisBinIndex]))
+        runningSEM.append(np.nanstd(yData[thisBinIndex])/np.sum(~np.isnan(yData[thisBinIndex]))**0.5)
+        runningAverageX.append(np.arange(xMin, xMax, stepSize)[ib] + stepSize/2)
+    
+    if plot:
+        fig, ax = plt.subplots()
+        ax.plot(data[:,0], data[:,1], 'ko', alpha=0.2)
+        ax.plot(runningAverageX, runningAverageY, 'ko')
+#        ax.plot(runningAverageX, runningAverageY, 'k')
+        ax.errorbar(runningAverageX, runningAverageY, runningSEM, color='k')
+        formatFigure(fig, ax, '', xDataLabel, yDataLabel)
+    
+    return runningAverageX, runningAverageY, runningSEM, xBinned
+
+    
+    
+    
     
 
 

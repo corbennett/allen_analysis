@@ -12,10 +12,15 @@ import numpy as np
 import pandas as pd
 from xml.dom import minidom
 import scipy.stats
+import scipy.spatial.distance
+from scipy.spatial.distance import euclidean
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib import patches
 from matplotlib import cm
+from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
+import matplotlib as mpl
+mpl.rcParams['pdf.fonttype'] = 42
 
 
 class popProbeData():
@@ -60,14 +65,17 @@ class popProbeData():
         return expDate,anmID
         
         
-    def analyzeExperiments(self,exps=None,protocols=None,save=False):
+    def analyzeExperiments(self,exps=None,protocols=None,ttx=False,save=False):
         if exps is None:
             exps = self.experimentFiles
         for ind,exp in enumerate(exps):
             print('Analyzing experiment '+str(ind+1)+' of '+str(len(exps)))
             p = self.getProbeDataObj(exp)
             self.getUnitLabels(p)
-            p.runAllAnalyses(protocolsToRun=protocols,splitRunning=True,plot=False)
+            if ttx:
+                p.runAllAnalyses(protocolsToRun=protocols,splitRunning=False, ttx=True, plot=False)
+            else:
+                p.runAllAnalyses(protocolsToRun=protocols,splitRunning=True,plot=False)
             if save:
                 p.saveHDF5(exp)
         
@@ -102,7 +110,7 @@ class popProbeData():
             np.save(os.path.join(d,expDate+'_'+anmID+'.npy'),pts)
     
     
-    def makeDataFrame(self,analyzeExperiments=False,findRegion=True):
+    def makeDataFrame(self,analyzeExperiments=False,findRegion=True, perturbation='laser'):
         # determine which experiments to append to dataframe
         if self.experimentFiles is None:
             self.getExperimentFiles()
@@ -132,25 +140,35 @@ class popProbeData():
         region = []
         photoTag = []
         
+        if perturbation == 'laser':
+            pState = 'laserState'
+            plabels = ('laserOff','laserOn')
+        elif perturbation == 'ttx':
+            pState = 'laserState'
+            plabels = ('laserOff','laserOn')
+        
         # dataFrame columns
-        columnNames = ('laserState','runState','paramType','paramName')
-        laserState = []
+        columnNames = (pState,'runState','paramType','paramName')
+        perturbationState = []
         runState = []
         paramType = []
         paramName = []
         
-        # data is dictionary of paramter type (protocol) dictionaries that are converted to dataframe
+        # data is dictionary of parameter type (protocol) dictionaries that are converted to dataframe
         # each parameter type dictionary has keys corresponding to parameters
         # the value for each parameter is a len(units) list
-        laserLabels = ('laserOff','laserOn')
+        if perturbation=='ttx':
+            perturbationLabels = ('control', 'ttx')
+        else:
+            perturbationLabels = plabels
         runLabels = ('allTrials','stat','run')
         protocols = ('sparseNoise','gratings','gratings_ori','checkerboard','loom')
-        data = {laserLabel: {runLabel: {protocol: {} for protocol in protocols} for runLabel in runLabels} for laserLabel in laserLabels}
-        data['laserOff']['allTrials']['waveform']= {'waveform':[]}
+        data = {plabel: {runLabel: {protocol: {} for protocol in protocols} for runLabel in runLabels} for plabel in plabels}
+        data[plabels[0]]['allTrials']['waveform']= {'waveform':[]}
         for exp in exps:
             p = self.getProbeDataObj(exp)
             expDate,anmID = p.getExperimentInfo()
-            units,ypos = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
+            units,ypos = p.getUnitsByLabel('label',('on','off','on off','supp','noRF', 'mu'))
             for u in units:
                 experimentDate.append(expDate)
                 animalID.append(anmID)
@@ -178,36 +196,36 @@ class popProbeData():
                     w = w[:, maxChan]
                 else:
                     w = np.full(82, np.nan)
-                data['laserOff']['allTrials']['waveform']['waveform'].append(w)
+                data[plabels[0]]['allTrials']['waveform']['waveform'].append(w)
                 
-                for laserLabel in laserLabels:
+                for perturbationLabel, plabel in zip(perturbationLabels, plabels):
                     for runLabel in runLabels:
                         for protocol in protocols:
                             tag = 'gratings_stf' if protocol=='gratings' else protocol
-                            tag += '_'+laserLabel+'_'+runLabel
+                            tag += '_'+perturbationLabel+'_'+runLabel
                             if tag not in p.units[u]:
-                                for prm in data[laserLabel][runLabel][protocol]:
-                                    data[laserLabel][runLabel][protocol][prm].append(np.nan)
+                                for prm in data[plabel][runLabel][protocol]:
+                                    data[plabel][runLabel][protocol][prm].append(np.nan)
                             else:
                                 for prm,val in p.units[u][tag].items():
-                                    if prm not in data[laserLabel][runLabel][protocol]:
-                                        laserState.append(laserLabel)
+                                    if prm not in data[plabel][runLabel][protocol]:
+                                        perturbationState.append(plabel)
                                         runState.append(runLabel)
                                         paramType.append(protocol)
                                         paramName.append(prm)
-                                        data[laserLabel][runLabel][protocol][prm] = [np.nan for _ in range(len(unitID)-1)]
-                                    data[laserLabel][runLabel][protocol][prm].append(val)
+                                        data[plabel][runLabel][protocol][prm] = [np.nan for _ in range(len(unitID)-1)]
+                                    data[plabel][runLabel][protocol][prm].append(val)
                             
         
         # build dataframe
         rows = pd.MultiIndex.from_arrays([experimentDate,animalID,genotype,unitID,unitLabel,ccfX,ccfY,ccfZ,region,photoTag],names=rowNames)
-        cols = pd.MultiIndex.from_arrays([laserState,runState,paramType,paramName],names=columnNames)
+        cols = pd.MultiIndex.from_arrays([perturbationState,runState,paramType,paramName],names=columnNames)
         dframe = pd.DataFrame(index=rows,columns=cols)
-        for laserLabel in data:
-            for runLabel in data[laserLabel]:
-                for prmType in data[laserLabel][runLabel]:
-                    for prmName in data[laserLabel][runLabel][prmType]:
-                        dframe[laserLabel,runLabel,prmType,prmName] = data[laserLabel][runLabel][prmType][prmName]
+        for perturbationLabel in data:
+            for runLabel in data[perturbationLabel]:
+                for prmType in data[perturbationLabel][runLabel]:
+                    for prmName in data[perturbationLabel][runLabel][prmType]:
+                        dframe[perturbationLabel,runLabel,prmType,prmName] = data[perturbationLabel][runLabel][prmType][prmName]
         
         self.data = dframe if self.data is None else pd.concat((self.data,dframe))
     
@@ -226,15 +244,17 @@ class popProbeData():
         self.data.to_hdf(filePath,'table')
         
         
-    def showUnitPositions(self,region,padding=10,expDate=None,animalID=None):
-        cellsInRegion = self.getCellsInRegion(region,inSCAxons=None,inACAxons=None)
+    def showUnitPositions(self, cellsInRegion=None, region = 'LP', padding=10, ccfCoords = None, expDate=None,animalID=None, figs=None, axes=None, color='k'):
+        if cellsInRegion is None:
+            cellsInRegion = np.ones(len(self.data)).astype('bool')
         if expDate is not None:
             cellsInRegion[self.data.index.get_level_values('experimentDate')!=expDate] = False
         if animalID is not None:
             cellsInRegion[self.data.index.get_level_values('animalID')!=animalID] = False
         inRegion,rng = self.getInRegion(region,padding=padding)
         rangeSlice = tuple(slice(r[0],r[1]) for r in rng)
-        ccfCoords = self.getCCFCoords(cellsInRegion)
+        if ccfCoords is None:
+            ccfCoords = self.getCCFCoords(cellsInRegion)
         for a in range(3):
             ind = [0,1,2]
             ind.remove(a)
@@ -250,17 +270,25 @@ class popProbeData():
                 s = [s.shape[0] for s in scAxons]
                 scAxons = scAxons[s.index(max(s))]
                 scx,scy = np.squeeze(scAxons).T
-            if a==0:
-                x,y = y,x
-                cx,cy = cy,cx
-                if region=='LP':
+                if a==0:
+                    x,y = y,x
+                    cx,cy = cy,cx
                     scx,scy = scy,scx
-            fig = plt.figure(facecolor='w')
-            ax = fig.add_subplot(1,1,1)
+            else:
+                if a==0:
+                    x,y = y,x
+                    cx,cy = cy,cx
+            
+            if figs is None:
+                fig = plt.figure(facecolor='w')
+                ax = fig.add_subplot(1,1,1)
+            else:
+                fig = figs[a]
+                ax = axes[a]
             if region=='LP':
                 ax.add_patch(patches.Polygon(np.stack((scx,scy)).T,color='0.5',alpha=0.25))
             ax.plot(np.append(cx,cx[0]),np.append(cy,cy[0]),'k',linewidth=2)
-            ax.plot(x,y,'ko',markersize=5)
+            ax.plot(x,y, color +'o',markersize=5)
             ax.set_aspect('equal')
             ax.axis('off')
             ax.set_xlim([cx.min()-padding,cx.max()+padding])
@@ -334,16 +362,6 @@ class popProbeData():
         return []
         
         
-    def getAnnotationLabel(self,structureID):
-        if self.annotationStructures is None:
-            f = fileIO.getFile('Choose annotation structures file','*.xml')
-            self.annotationStructures = minidom.parse(f)
-        for ind,structID in enumerate(self.annotationStructures.getElementsByTagName('id')):
-            if int(structID.childNodes[0].nodeValue)==structureID:
-                structLabel = self.annotationStructures.getElementsByTagName('structure')[ind].childNodes[7].childNodes[0].nodeValue[1:-1]
-                return structLabel
-        
-        
     def getInRegion(self,regionLabel,padding=None):
         if self.annotationData is None:
             self.getAnnotationData()
@@ -363,25 +381,10 @@ class popProbeData():
         self.annotationData = nrrd.read(f)[0].transpose((1,2,0))
         
         
-    def getIsPhotoTaggedFromLabel(self):
+    def getIsPhotoTagged(self):
         i = np.array(self.data.index.get_level_values('photoTag').tolist())
         i[np.isnan(i)] = 0
         isPhotoTagged = i.astype(bool)
-        notPhotoTagged = self.data.index.get_level_values('genotype')=='Ntsr1 Cre x Ai32'
-        notPhotoTagged[isPhotoTagged] = False
-        return isPhotoTagged,notPhotoTagged
-        
-        
-    def getIsPhotoTaggedFromResponse(self,nonMU=True,pthresh=0.05,rateThresh=None,zthresh=5):
-        if self.experimentFiles is None:
-            self.getExperimentFiles()
-        isPhotoTagged = np.zeros(self.data.shape[0],dtype=bool)
-        for exp in self.experimentFiles:
-            p = self.getProbeDataObj(exp)
-            expDate,animalID = p.getExperimentInfo()
-            ind = (self.data.index.get_level_values('experimentDate')==expDate) & (self.data.index.get_level_values('animalID')==animalID)
-            if np.all(self.data.index.get_level_values('genotype')[ind]=='Ntsr1 Cre x Ai32'):
-                isPhotoTagged[ind] = p.getIsPhotoTagged(units=None,nonMU=nonMU,pthresh=pthresh,rateThresh=rateThresh,zthresh=zthresh)
         notPhotoTagged = self.data.index.get_level_values('genotype')=='Ntsr1 Cre x Ai32'
         notPhotoTagged[isPhotoTagged] = False
         return isPhotoTagged,notPhotoTagged
@@ -500,9 +503,7 @@ class popProbeData():
             plt.tight_layout()
             
             
-    def getRFData(self,data,useBestSize=False):
-        minRFCutoff = 100
-        maxRFCutoff = 5000
+    def getRFData(self,data,useBestSize=False, minRFCutoff=100, maxRFCutoff=5000):
         minAspectCutoff = 0.25
         maxAspectCutoff = 4
         isOnOff = data.index.get_level_values('unitLabel')=='on off'
@@ -552,14 +553,14 @@ class popProbeData():
         return sizeUsedOn,sizeUsedOff,onFit,offFit,onArea,offArea,onAspect,offAspect,minRFCutoff,maxRFCutoff,minAspectCutoff,maxAspectCutoff
         
             
-    def analyzeRF(self):
-        
-        region = 'LP'
+    def analyzeRF(self, cellsInRegion = None, region = 'LP'):
        
         if region is None:
-            cellsInRegion = np.ones(len(self.data)).astype('bool')
+            if cellsInRegion is None:
+                cellsInRegion = np.ones(len(self.data)).astype('bool')
         else:
-            cellsInRegion = self.getCellsInRegion(region,inSCAxons=None,inACAxons=None)
+            if cellsInRegion is None:
+                cellsInRegion = self.getCellsInRegion(region,inSCAxons=None,inACAxons=None)
         
         inSCAxons = self.getSCAxons()[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
@@ -1019,6 +1020,58 @@ class popProbeData():
             ax.set_ylim(-45, 85)
             fig.tight_layout()
             
+    def plotRFdistanceVsDistance(self, cellsInRegion, plot=True, fit=True):
+        expDates = self.data.index.get_level_values('experimentDate')
+        animalID = self.data.index.get_level_values('animalID')
+        fullID = [e + '_' + a for e,a in zip(expDates, animalID)]
+        
+        allRFDist = []
+        allDist = []
+        for i, fid in enumerate(np.unique(fullID)):
+            eDate, aid = fid.split('_')
+            thisInsertion = np.copy(cellsInRegion)
+            thisInsertion[expDates != eDate] = False
+            thisInsertion[animalID != aid] = False
+            CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)[thisInsertion]
+            
+            data = self.data.laserOff.allTrials.sparseNoise[thisInsertion]
+            isOnOff = data.index.get_level_values('unitLabel')=='on off'
+            isOn = data.index.get_level_values('unitLabel')=='on'
+            isOff = data.index.get_level_values('unitLabel')=='off'  
+            noRF = np.logical_not(isOnOff | isOn | isOff) 
+            
+            
+            onVsOff = data.onVsOff
+            onVsOff[noRF] = np.nan
+            
+            sizeUsedOn,sizeUsedOff,onFit,offFit = self.getRFData(data,useBestSize=True)[:4]
+            rfCenter = np.copy(onFit[:, :2])
+            rfCenter[isOff] = np.copy(offFit[isOff, :2])
+            rfCenter[isOnOff&(onVsOff<=0)] = np.copy(offFit[isOnOff&(onVsOff<=0), :2])
+            rfnan = np.isnan(rfCenter[:, 0])
+    
+            dist = scipy.spatial.distance.pdist(CCFCoords[~rfnan])
+            rfDist = scipy.spatial.distance.pdist(rfCenter[~rfnan])
+            
+            print(np.sum(thisInsertion))
+            print len(dist)
+            allDist.extend(dist)
+            allRFDist.extend(rfDist)
+        
+        allDist = np.array(allDist)
+        allRFDist = np.array(allRFDist)
+        if plot:
+            fig, ax = plt.subplots()
+            ax.plot(allDist, allRFDist, 'ko', alpha=0.2)
+            rVal, pVal = scipy.stats.pearsonr(allDist, allRFDist)
+            ax.text(1.1*allDist.min(), 0.9*allRFDist.max(), str(rVal))
+            probeData.formatFigure(fig, ax, '', 'Distance, um', 'RF distance, deg')
+            
+            if fit:
+                linFit = np.polyfit(allDist, allRFDist, 1)
+                xs = np.arange(0, allDist.max())
+                ax.plot(xs, linFit[0]*xs + linFit[1], 'k')
+            return allDist, allRFDist
             
     def compareAdjustedRFArea(self):
         rfAreaAdjusted = []
@@ -1079,7 +1132,7 @@ class popProbeData():
         plt.tight_layout()
                 
     
-    def makeVolume(self, data=None, region=None, padding=10, sigma=3, weighted=False, maskNoData=True, cmap='jet', alphaMap=False):
+    def makeVolume(self, data=None, region=None, padding=10, sigma=3, weighted=False, maskNoData=True, cmap='jet'):
         
         cellsInRegion = self.getCellsInRegion(region)
         
@@ -1092,8 +1145,19 @@ class popProbeData():
         
         if data is None: # make elevation map
             d = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]
+            isOnOff = d.index.get_level_values('unitLabel')=='on off'
+            isOn = d.index.get_level_values('unitLabel')=='on'
+            isOff = d.index.get_level_values('unitLabel')=='off'  
+            noRF = np.logical_not(isOnOff | isOn | isOff)
+            onVsOff = d.onVsOff
             sizeUsedOn,sizeUsedOff,onFit,offFit = self.getRFData(d,useBestSize=True)[:4]
-            data = np.nanmean(np.stack((onFit[:,1],offFit[:,1])),axis=0)
+            
+            rfElev = np.copy(onFit[:, 1])
+            rfElev[isOff] = offFit[isOff, 1]
+            rfElev[isOnOff&(onVsOff<=0)] =  offFit[isOnOff&(onVsOff<=0), 1]           
+            rfElev[noRF] = np.nan
+            
+            data = rfElev
             
         counts = np.zeros([r[1]-r[0] for r in rng])
         dataMap = np.zeros_like(counts)
@@ -1110,6 +1174,7 @@ class popProbeData():
         if not weighted:
             dataMap /= counts
         
+        
         dataMap_s = probeData.gaussianConvolve3D(dataMap,sigma)
         dataMap_s *= LPmask
         
@@ -1125,50 +1190,32 @@ class popProbeData():
             mask = probeData.gaussianConvolve3D((counts>0).astype(float),sigma=sigma)
             dataMap_s[mask<maskThresh] = np.nan
         
-        if cmap in ('jet','gray'):
+        if cmap=='jet':
             minVal = np.nanmin(dataMap_s)
-            maxVal = np.nanmax(dataMap_s)
-            if abs(minVal)>abs(maxVal):
-                minVal,maxVal = maxVal,minVal
-            maxVal -= minVal
+            maxVal = np.nanmax(dataMap_s-minVal)
         elif cmap=='bwr':
-            maxVal = np.nanmax(np.absolute(dataMap_s))    
+            maxVal = np.nanmax(np.absolute(dataMap_s))
         
-        shape = dataMap.shape
-        if cmap!='gray':
-            shape += (3,)
-        colorMap = np.full(shape,np.nan)
+        colorMap = np.full(dataMap.shape+(3,),np.nan)
         for y in xrange(colorMap.shape[0]):
             for x in xrange(colorMap.shape[1]):
                 for z in xrange(colorMap.shape[2]):
-                    if not np.isnan(dataMap_s[y,x,z]):
-                        if cmap in ('jet','gray'):
-                            thisVox = (dataMap_s[y,x,z]-minVal)/maxVal
+                    if cmap=='jet':
+                        thisVox = (dataMap_s[y,x,z]-minVal)/maxVal
+                    elif cmap=='bwr':
+                        thisVox = (dataMap_s[y,x,z]/maxVal+1)*0.5
+                    if not np.isnan(thisVox):
+                        if cmap=='jet':
+                            RGB = cm.jet(thisVox)
                         elif cmap=='bwr':
-                            thisVox = (dataMap_s[y,x,z]/maxVal+1)*0.5
-                        if cmap=='gray':
-                            colorMap[y,x,z] = thisVox
-                        else:
-                            if cmap=='jet':
-                                RGB = cm.jet(thisVox)
-                            elif cmap=='bwr':
-                                RGB = cm.bwr(thisVox)
-                            for i in (0,1,2):
-                                colorMap[y, x, z, i] = RGB[i]
+                            RGB = cm.bwr(thisVox)
+                        for i in (0,1,2):
+                            colorMap[y, x, z, i] = RGB[i]
         
-        fullShape = self.getInRegion('LP')[0].shape
-        if alphaMap:
-            fullShape += (4,)
-        elif cmap!='gray':
-            fullShape += (3,)
+        fullShape = self.getInRegion('LP')[0].shape+(4,)
         fullMap = np.zeros(fullShape,dtype=np.uint8)
-        if cmap!='gray' or alphaMap:
-            fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],:3] = colorMap*255
-        else:
-            fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1]] = colorMap*255
-        if alphaMap:
-            ch = colorMap if cmap=='gray' else colorMap[...,0]
-            fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],3][~np.isnan(ch)] = 255
+        fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],:3] = colorMap*255
+        fullMap[yRange[0]:yRange[1],xRange[0]:xRange[1],zRange[0]:zRange[1],3][~np.isnan(colorMap[:,:,:,0])] = 255
 
         return fullMap, dataMap_s
     
@@ -1204,7 +1251,7 @@ class popProbeData():
                 laserOnResp = self.data.laserOn.allTrials.gratings[cellsInRegion].respMat[u]
                 laserOnRespMat[respInd] = laserOnResp[:,:,bestOriInd]
                 
-        zthresh = 10
+        zthresh = 2
         spontRateMean = laserOffData.spontRateMean[hasGratings]
         spontRateStd = laserOffData.spontRateStd[hasGratings]
         respZ = (laserOffRespMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
@@ -1221,7 +1268,7 @@ class popProbeData():
         r = respMat-spontRateMean[hasResp,None,None]
         normRespMat = r/np.nanmax(r,axis=(1,2))[:,None,None]
         meanRespMat = np.nanmean(normRespMat,axis=0)
-        meanRespMat = np.nanmean(r,axis=0)
+#        meanRespMat = np.nanmean(r,axis=0)
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
         im = plt.imshow(meanRespMat,clim=(0,meanRespMat.max()),cmap='gray',interpolation='none',origin='lower')
@@ -1498,7 +1545,7 @@ class popProbeData():
         laserMax = laserRespMat.max(axis=(1,2))
         omi = (laserMax-controlMax)/(laserMax+controlMax)
         
-        zthresh = 5
+        zthresh = 10
         spontRateMean = np.array(controlData.spontRateMean)
         spontRateStd = np.array(controlData.spontRateStd)
         respZ = (controlRespMat-spontRateMean[:,None,None])/spontRateStd[:,None,None]
@@ -2626,8 +2673,7 @@ class popProbeData():
         for expInd, exp in enumerate(self.experimentFiles):
             print('Analyzing ' + str(expInd) + ' of ' + str(len(self.experimentFiles)) + ' experiments')
             p = self.getProbeDataObj(exp)
-            units = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
-            units, _ = p.getOrderedUnits(units)
+            units, _ = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
             expD, expID = p.getExperimentInfo()   
             pIndex = p.getProtocolIndex(protocol)
             if str(pIndex) in p.behaviorData and 'running' in p.behaviorData[str(pIndex)]:
@@ -2689,13 +2735,15 @@ class popProbeData():
         return tempShifted, peakToTrough
     
     def findRegions(self, ccfCoords, tolerance=100):
+        mcc = MouseConnectivityCache(manifest_file='connectivity/mouse_connectivity_manifest.json')
+        struct_df = mcc.get_structures()
+        
         if self.annotationData is None:
             self.getAnnotationData()
         
-        if np.any(np.isnan(ccfCoords)):
-            return ''
-
-        ccf = np.round(ccfCoords/25).astype(int)
+        ccf = np.copy(ccfCoords)
+        ccf /= 25
+        ccf = np.round(ccf).astype(int)
         regionID = self.annotationData[ccf[1], ccf[0], ccf[2]]
         if regionID!=218:
 
@@ -2718,8 +2766,9 @@ class popProbeData():
 #                    regionID=218
 #                    break
         
-        return self.getAnnotationLabel(regionID)
-
+        return struct_df[struct_df['id']==regionID]['acronym'].tolist()[0]
+        
+#        def getUnitsByWaveform(self, cellType = 'FS'):
                 
         
 def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):
