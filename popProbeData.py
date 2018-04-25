@@ -18,7 +18,7 @@ from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib import patches
 from matplotlib import cm
-#from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
+from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
 import matplotlib as mpl
 mpl.rcParams['pdf.fonttype'] = 42
 
@@ -341,7 +341,10 @@ class popProbeData():
             cellsInRegion = np.ones(len(self.data)).astype('bool')
         else:
             cellRegions = self.data.index.get_level_values('region')
-            cellsInRegion = cellRegions==region
+            if region=='SC':
+                cellsInRegion = np.in1d(cellRegions,('SCsg','SCop','SCig'))
+            else:
+                cellsInRegion = cellRegions==region
         if inSCAxons is not None:
             if inSCAxons:
                 cellsInRegion = cellsInRegion & self.getSCAxons()
@@ -403,7 +406,7 @@ class popProbeData():
         return isPhotoTagged,notPhotoTagged
         
         
-    def getIsPhotoTaggedFromResponse(self,nonMU=True,pthresh=0.05,rateThresh=None,zthresh=5):
+    def getIsPhotoTaggedFromResponse(self,nonMU=False,pthresh=None,rateThresh=None,zthresh=5):
         if self.experimentFiles is None:
             self.getExperimentFiles()
         isPhotoTagged = np.zeros(self.data.shape[0],dtype=bool)
@@ -412,7 +415,7 @@ class popProbeData():
             expDate,animalID = p.getExperimentInfo()
             ind = (self.data.index.get_level_values('experimentDate')==expDate) & (self.data.index.get_level_values('animalID')==animalID)
             if np.all(self.data.index.get_level_values('genotype')[ind]=='Ntsr1 Cre x Ai32'):
-                isPhotoTagged[ind] = p.getIsPhotoTagged(units=None,nonMU=nonMU,pthresh=pthresh,rateThresh=rateThresh,zthresh=zthresh)
+                isPhotoTagged[ind] = p.getIsPhotoTagged(nonMU=nonMU,pthresh=pthresh,rateThresh=rateThresh,zthresh=zthresh)
         notPhotoTagged = self.data.index.get_level_values('genotype')=='Ntsr1 Cre x Ai32'
         notPhotoTagged[isPhotoTagged] = False
         return isPhotoTagged,notPhotoTagged
@@ -531,27 +534,27 @@ class popProbeData():
             plt.tight_layout()
             
             
-    def getRFData(self,data,useBestSize=False, minRFCutoff=100, maxRFCutoff=5000):
-        minAspectCutoff = 0.25
-        maxAspectCutoff = 4
-        isOnOff = data.index.get_level_values('unitLabel')=='on off'
-        isOn = data.index.get_level_values('unitLabel')=='on'
-        isOff = data.index.get_level_values('unitLabel')=='off'  
-        noRF = np.logical_not(isOnOff | isOn | isOff) 
+    def getRFData(self,cellsToUse,useBestSize=False,minRFCutoff=100,maxRFCutoff=5000,minAspectCutoff=0.25,maxAspectCutoff=4):
+        assert(isinstance(cellsToUse,np.ndarray) and cellsToUse.dtype==bool and cellsToUse.size==self.data.shape[0])
+        hasRFData = self.data.laserOff.allTrials.sparseNoise.trials.notnull()
+        data = self.data.laserOff.allTrials.sparseNoise[cellsToUse & hasRFData]
+        zthresh = 5
+        isOnOff = np.zeros(data.shape[0],dtype=bool)
+        isOn = isOnOff.copy()
+        isOff = isOnOff.copy()
         onFit = np.full((data.shape[0],7),np.nan)
         offFit = onFit.copy()
-        sizeUsedOn = np.full(data.shape[0],np.nan)
-        sizeUsedOff = sizeUsedOn.copy()
+        sizeIndOn = np.full(data.shape[0],np.nan)
+        sizeIndOff = sizeIndOn.copy()
+        hasAllSizes = np.zeros(data.shape[0],dtype=bool)
         for u in range(data.shape[0]):
             if useBestSize:
                 boxSize = data.boxSize[u]
                 boxSizeInd = np.where(boxSize<25)[0]
-                sizeInd = data.sizeTuningOn[u][boxSizeInd].argmax()
-                sizeUsedOn[u] = boxSize[sizeInd]
-                onFit[u] = data.onFit[u][sizeInd]
-                sizeInd = data.sizeTuningOff[u][boxSizeInd].argmax()
-                sizeUsedOff[u] = boxSize[sizeInd]
-                offFit[u] = data.offFit[u][sizeInd]
+                sizeIndOn[u] = data.sizeTuningOn[u][boxSizeInd].argmax()
+                onFit[u] = data.onFit[u][sizeIndOn[u]]
+                sizeIndOff[u] = data.sizeTuningOff[u][boxSizeInd].argmax()
+                offFit[u] = data.offFit[u][sizeIndOff[u]]
             else:
                 for size in (10,5,20):
                     sizeInd = data.boxSize[u]==size
@@ -559,26 +562,55 @@ class popProbeData():
                         onFit[u] = data.onFit[u][sizeInd]
                         offFit[u] = data.offFit[u][sizeInd]
                         if not np.all(np.isnan(onFit[u])) or not np.all(np.isnan(offFit[u])):
-                            sizeUsedOn[u] = size
-                            sizeUsedOff[u] = size
+                            sizeInd = np.where(sizeInd)[0][0]
+                            sizeIndOn[u] = sizeInd
+                            sizeIndOff[u] = sizeInd
                             break
-        sizeUsedOn[noRF] = np.nan
-        sizeUsedOff[noRF] = np.nan
+            zon = (data.onRespRaw[u][int(sizeIndOn[u])].max()-data.spontRateMean[u])/data.spontRateStd[u]
+            hasOn = False if (np.all(np.isnan(onFit[u])) or zon<zthresh) else True
+            zoff = (data.offRespRaw[u][int(sizeIndOff[u])].max()-data.spontRateMean[u])/data.spontRateStd[u]
+            hasOff = False if (np.all(np.isnan(offFit[u])) or zoff<zthresh) else True
+            if hasOn and hasOff:
+                isOnOff[u] = True
+            elif hasOn:
+                isOn[u] = True
+            elif hasOff:
+                isOff[u] = True
+            if data.sizeTuningOff[u].size>3:
+                hasAllSizes[u] = True
+        
+        noRF = np.logical_not(isOnOff | isOn | isOff) 
         onFit[isOff | noRF,:] = np.nan
         offFit[isOn | noRF,:] = np.nan
+        
         onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
         onAspect = onFit[:,2]/onFit[:,3]
         badOn = (onArea<minRFCutoff) | (onArea>maxRFCutoff) | (onAspect<minAspectCutoff) | (onAspect>maxAspectCutoff)
         onFit[badOn,:] = np.nan
         onArea[badOn] = np.nan
-        onAspect[badOn] = np.nan
+        
         offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
         offAspect = offFit[:,2]/offFit[:,3]
         badOff = (offArea<minRFCutoff) | (offArea>maxRFCutoff) | (offAspect<minAspectCutoff) | (offAspect>maxAspectCutoff)
         offFit[badOff,:] = np.nan        
         offArea[badOff] = np.nan
-        offAspect[badOff] = np.nan
-        return sizeUsedOn,sizeUsedOff,onFit,offFit,onArea,offArea,onAspect,offAspect,minRFCutoff,maxRFCutoff,minAspectCutoff,maxAspectCutoff
+        
+        onVsOff = data.onVsOff
+        rfArea = offArea.copy()
+        rfArea[onVsOff>0] = onArea[onVsOff>0].copy()
+        
+        sizeTuning = np.full((rfArea.size,4),np.nan)
+        useOn = ~np.isnan(rfArea) & hasAllSizes & (isOn | (onVsOff>0)) 
+        sizeTuning[useOn] = np.stack(data.sizeTuningOn[useOn])
+        useOff = ~np.isnan(rfArea) & hasAllSizes & (isOff | (onVsOff<=0)) 
+        sizeTuning[useOff] = np.stack(data.sizeTuningOff[useOff])
+        
+        rfAreaAll = np.full(self.data.shape[0],np.nan)
+        rfAreaAll[cellsToUse & hasRFData] = rfArea
+        sizeTuningAll = np.full((self.data.shape[0],4),np.nan)
+        sizeTuningAll[cellsToUse & hasRFData] = sizeTuning
+        
+        return rfAreaAll,sizeTuningAll
         
             
     def analyzeRF(self, cellsInRegion = None, region = 'LP'):
@@ -1164,9 +1196,10 @@ class popProbeData():
         plt.tight_layout()
                 
     
-    def makeVolume(self, data=None, region=None, padding=10, sigma=3, weighted=False, maskNoData=True, cmap='jet', alphaMap=False):
+    def makeVolume(self, data=None, cellsInRegion=None, region=None, padding=10, sigma=3, weighted=False, maskNoData=True, cmap='jet', alphaMap=False):
         
-        cellsInRegion = self.getCellsInRegion(region)
+        if cellsInRegion is None:
+            cellsInRegion = self.getCellsInRegion(region)
         
         inLP,rng = self.getInRegion(region,padding=padding)
         LPmask = inLP.astype(float)

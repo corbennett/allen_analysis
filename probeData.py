@@ -2627,7 +2627,7 @@ class probeData():
                     laserStartSamples = self.behaviorData[str(protocol)]['137_pulses'][0]
                     self.plotRaster(u,str(protocol),laserStartSamples,offset=-2,windowDur=6,axes=ax)
                     
-    def getIsPhotoTagged(self,units=None,nonMU=False,pthresh=0.05,rateThresh=None,zthresh=5):
+    def getIsPhotoTagged(self,units=None,nonMU=False,pthresh=0.05,rateThresh=10,zthresh=5):
         if units is None:
             if nonMU:
                 units,_ = self.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
