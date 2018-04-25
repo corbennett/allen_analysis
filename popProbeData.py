@@ -18,7 +18,7 @@ from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib import patches
 from matplotlib import cm
-from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
+#from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
 import matplotlib as mpl
 mpl.rcParams['pdf.fonttype'] = 42
 
@@ -306,31 +306,34 @@ class popProbeData():
     
     
     def getSCAxons(self):
-        y,x,z = self.getCCFCoords()
-        if self.inSCAxonsVol is None:
-            filePath = fileIO.getFile('Select SC axons file','*.npz')
-            inSCAxonsVol = np.load(filePath)
-            self.inSCAxonsVol = inSCAxonsVol[inSCAxonsVol.keys()[0]]
-        inSCAxons = np.array([self.inSCAxonsVol[int(i//25),int(j//25),int(k//25)] for i,j,k in zip(y,x,z)])
-        return inSCAxons
-
-# code used to make in SC and in AC convex hull volumes
-#ahull = a.copy()
-#for i in range(a.shape[2]):
-#    _,contours,_ = cv2.findContours(a[:,:,i].copy(order='C'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-#    h = [cv2.convexHull(c) for c in contours if c.shape[0]>=3]
-#    img = np.zeros(a.shape[:2],dtype=np.uint8)
-#    cv2.drawContours(img,h,-1,1,-1,cv2.LINE_AA)
-#    ahull[:,:,i] = img
+        return self.getCellsInAxons('SC')
         
     def getACAxons(self):
-        y,x,z = self.getCCFCoords()
-        if self.inACAxonsVol is None:
-            filePath = fileIO.getFile('Select AC axons file','*.npz')
-            inACAxonsVol = np.load(filePath)
-            self.inACAxonsVol = inACAxonsVol[inACAxonsVol.keys()[0]]
-        inACAxons = np.array([self.inACAxonsVol[int(i//25),int(j//25),int(k//25)] for i,j,k in zip(y,x,z)])
-        return inACAxons
+        return self.getCellsInAxons('AC')
+        
+    def getCellsInAxons(self,axonSource='SC'):
+        if axonSource not in ('SC','AC'):
+            raise Exception('axonSource must be SC or AC')
+        if (axonSource=='SC' and self.inSCAxonsVol is None) or (axonSource=='AC' and self.inACAxonsVol is None):
+            filePath = fileIO.getFile('Select '+axonSource+' axons file','*.npz')
+            d = np.load(filePath)
+            d = d[d.keys()[0]]
+            if axonSource=='SC':
+                self.inSCAxonsVol = d
+            else:
+                self.inACAxonsVol = d
+        inAxons = self.inSCAxonsVol if axonSource=='SC' else self.inACAxonsVol
+        inLP = self.getInRegion('LP')[0]
+        LPindex = np.array(np.where(inLP)).T
+        y,x,z = ((c/25).astype(int) for c in self.getCCFCoords())
+        cellsInAxons = np.zeros(self.data.shape[0],dtype=bool)
+        for ind,(i,j,k) in enumerate(zip(y,x,z)):
+            if inLP[i,j,k]:
+                cellsInAxons[ind] = inAxons[i,j,k]
+            else:
+                dist = np.sum((LPindex-[i,j,k])**2,axis=1)**0.5
+                cellsInAxons[ind] = inAxons[tuple(LPindex[np.argmin(dist)])]
+        return cellsInAxons
         
         
     def getCellsInRegion(self,region=None,inSCAxons=None,inACAxons=None):
