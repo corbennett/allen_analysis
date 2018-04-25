@@ -307,11 +307,11 @@ class popProbeData():
     
     def getSCAxons(self):
         y,x,z = self.getCCFCoords()
-        inSCAxons = (x<=170*25) & (z>=300*25)
         if self.inSCAxonsVol is None:
-            filePath = fileIO.getFile('Select SC axons file','*.npy')
-            self.inSCAxonsVol = np.load(filePath)
-        inSCAxons = inSCAxons | np.array([self.inSCAxonsVol[int(i//25),int(j//25),int(k//25)] for i,j,k in zip(y,x,z)])
+            filePath = fileIO.getFile('Select SC axons file','*.npz')
+            inSCAxonsVol = np.load(filePath)
+            self.inSCAxonsVol = inSCAxonsVol[inSCAxonsVol.keys()[0]]
+        inSCAxons = np.array([self.inSCAxonsVol[int(i//25),int(j//25),int(k//25)] for i,j,k in zip(y,x,z)])
         return inSCAxons
 
 # code used to make in SC and in AC convex hull volumes
@@ -325,11 +325,11 @@ class popProbeData():
         
     def getACAxons(self):
         y,x,z = self.getCCFCoords()
-        inACAxons = (x>=190*25) | (z<=280*25)
         if self.inACAxonsVol is None:
-            filePath = fileIO.getFile('Select AC axons file','*.npy')
-            self.inACAxonsVol = np.load(filePath)
-        inACAxons = inACAxons | np.array([self.inACAxonsVol[int(i//25),int(j//25),int(k//25)] for i,j,k in zip(y,x,z)])
+            filePath = fileIO.getFile('Select AC axons file','*.npz')
+            inACAxonsVol = np.load(filePath)
+            self.inACAxonsVol = inACAxonsVol[inACAxonsVol.keys()[0]]
+        inACAxons = np.array([self.inACAxonsVol[int(i//25),int(j//25),int(k//25)] for i,j,k in zip(y,x,z)])
         return inACAxons
         
         
@@ -562,6 +562,9 @@ class popProbeData():
             if cellsInRegion is None:
                 cellsInRegion = self.getCellsInRegion(region,inSCAxons=None,inACAxons=None)
         
+        hasRF = self.data.laserOff.allTrials.sparseNoise.trials.notnull()
+        cellsInRegion = cellsInRegion & hasRF
+        
         inSCAxons = self.getSCAxons()[cellsInRegion]
         ccfY,ccfX,ccfZ = self.getCCFCoords(cellsInRegion)
         data = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]        
@@ -570,6 +573,7 @@ class popProbeData():
         isOn = data.index.get_level_values('unitLabel')=='on'
         isOff = data.index.get_level_values('unitLabel')=='off'  
         noRF = np.logical_not(isOnOff | isOn | isOff) 
+        
         
         onVsOff = data.onVsOff
         onVsOff[noRF] = np.nan
