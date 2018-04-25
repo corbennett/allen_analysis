@@ -2626,6 +2626,40 @@ class probeData():
                     ax = f.add_subplot(len(laserProtocols),1,ind+1)
                     laserStartSamples = self.behaviorData[str(protocol)]['137_pulses'][0]
                     self.plotRaster(u,str(protocol),laserStartSamples,offset=-2,windowDur=6,axes=ax)
+                    
+    def getIsPhotoTagged(self,units=None,nonMU=False,pthresh=0.05,rateThresh=None,zthresh=5):
+        if units is None:
+            if nonMU:
+                units,_ = self.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
+            else:
+                units,_ = self.getOrderedUnits()
+        elif not isinstance(units,(list,tuple)):
+            units = [units]
+        isPhototagged = np.zeros(len(units),dtype=bool)
+        laserProtocols = [protocol for protocol,label in enumerate(self.kwdFileList) if 'laser' in label]
+        for uindex,u in enumerate(units):
+            preSpikeRate = []
+            postSpikeRate = []
+            for protocol in laserProtocols:
+                pulseStarts,pulseEnds,pulseAmps = self.behaviorData[str(protocol)]['137_pulses']
+                spikes = self.units[str(u)]['times'][str(protocol)]
+                for start,end in zip(pulseStarts,pulseEnds):
+                    windowSamples = (end-start)//2
+                    preSpikeRate.append(np.sum(np.logical_and(spikes>start-windowSamples,spikes<start))/windowSamples*self.sampleRate)
+                    postSpikeRate.append(np.sum(np.logical_and(spikes>end-windowSamples,spikes<end))/windowSamples*self.sampleRate)
+            if pthresh is not None:
+                _,pval = scipy.stats.wilcoxon(preSpikeRate,postSpikeRate)
+                if pval>=pthresh:
+                    continue
+            if rateThresh is not None:
+                if (np.mean(postSpikeRate)-np.mean(preSpikeRate))<=rateThresh:
+                    continue
+            if zthresh is not None:
+                std = np.std(preSpikeRate)
+                if std>0 and (np.mean(postSpikeRate)-np.mean(preSpikeRate))/np.std(preSpikeRate)<=zthresh:
+                    continue
+            isPhototagged[uindex] = 1
+        return isPhototagged
     
     
     def runAllAnalyses(self, units=None, protocolsToRun=None, splitRunning=False, useCache=False, plot=True, ttx=False):
