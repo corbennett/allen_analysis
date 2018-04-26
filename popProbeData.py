@@ -106,7 +106,7 @@ class popProbeData():
             entry = p.CCFLPEntryPosition
             tip= p.CCFTipPosition
             pts = np.stack((entry,tip))/25+1
-            expDate,anmID = p.getExperimentInfo()
+            expDate,anmID,probeN = p.getExperimentInfo()
             np.save(os.path.join(d,expDate+'_'+anmID+'.npy'),pts)
     
     
@@ -167,7 +167,7 @@ class popProbeData():
         data[plabels[0]]['allTrials']['waveform']= {'waveform':[]}
         for exp in exps:
             p = self.getProbeDataObj(exp)
-            expDate,anmID = p.getExperimentInfo()
+            expDate,anmID,probeN = p.getExperimentInfo()
             units,ypos = p.getUnitsByLabel('label',('on','off','on off','supp','noRF', 'mu'))
             for u in units:
                 experimentDate.append(expDate)
@@ -231,16 +231,18 @@ class popProbeData():
     
     
     def loadDataFrame(self, filePath=None):
-        filePath = fileIO.getFile(fileType='*.hdf5')
-        if filePath=='':
-            return
+        if filePath is None:
+            filePath = fileIO.getFile('Choose dataframe','*.hdf5')
+            if filePath=='':
+                return
         self.data = pd.read_hdf(filePath,'table')
     
     
     def saveDataFrame(self, filePath=None):
-        filePath = fileIO.saveFile(fileType='*.hdf5')
-        if filePath=='':
-            return
+        if filePath is None:
+            filePath = fileIO.saveFile(fileType='*.hdf5')
+            if filePath=='':
+                return
         self.data.to_hdf(filePath,'table')
         
         
@@ -412,7 +414,7 @@ class popProbeData():
         isPhotoTagged = np.zeros(self.data.shape[0],dtype=bool)
         for exp in self.experimentFiles:
             p = self.getProbeDataObj(exp)
-            expDate,animalID = p.getExperimentInfo()
+            expDate,animalID,probeN = p.getExperimentInfo()
             ind = (self.data.index.get_level_values('experimentDate')==expDate) & (self.data.index.get_level_values('animalID')==animalID)
             if np.all(self.data.index.get_level_values('genotype')[ind]=='Ntsr1 Cre x Ai32'):
                 isPhotoTagged[ind] = p.getIsPhotoTagged(nonMU=nonMU,pthresh=pthresh,rateThresh=rateThresh,zthresh=zthresh)
@@ -431,7 +433,7 @@ class popProbeData():
         figNumStart = 0
         for exp in self.experimentFiles:
             p = self.getProbeDataObj(exp)
-            expDate,animalID = p.getExperimentInfo()
+            expDate,animalID,probeN = p.getExperimentInfo()
             table = pd.read_excel(self.excelFile,sheetname=expDate+'_'+animalID)
             if 'Genotype' not in table.keys() or table.Genotype[0]=='Ntsr1 Cre x Ai32':
                 p.plotLaserRaster(figNum=figNumStart,nonMU=True)
@@ -534,17 +536,16 @@ class popProbeData():
             plt.tight_layout()
             
             
-    def getRFData(self,cellsToUse,useBestSize=False,minRFCutoff=100,maxRFCutoff=5000,minAspectCutoff=0.25,maxAspectCutoff=4):
+    def getRFData(self,cellsToUse,zthresh=5,useBestSize=False,minRFCutoff=100,maxRFCutoff=5000,minAspectCutoff=0.25,maxAspectCutoff=4):
         assert(isinstance(cellsToUse,np.ndarray) and cellsToUse.dtype==bool and cellsToUse.size==self.data.shape[0])
         hasRFData = self.data.laserOff.allTrials.sparseNoise.trials.notnull()
         data = self.data.laserOff.allTrials.sparseNoise[cellsToUse & hasRFData]
-        zthresh = 5
         isOnOff = np.zeros(data.shape[0],dtype=bool)
         isOn = isOnOff.copy()
         isOff = isOnOff.copy()
         onFit = np.full((data.shape[0],7),np.nan)
         offFit = onFit.copy()
-        sizeIndOn = np.full(data.shape[0],np.nan)
+        sizeIndOn = np.zeros(data.shape[0],dtype=int)
         sizeIndOff = sizeIndOn.copy()
         hasAllSizes = np.zeros(data.shape[0],dtype=bool)
         for u in range(data.shape[0]):
@@ -566,10 +567,12 @@ class popProbeData():
                             sizeIndOn[u] = sizeInd
                             sizeIndOff[u] = sizeInd
                             break
-            zon = (data.onRespRaw[u][int(sizeIndOn[u])].max()-data.spontRateMean[u])/data.spontRateStd[u]
-            hasOn = False if (np.all(np.isnan(onFit[u])) or zon<zthresh) else True
-            zoff = (data.offRespRaw[u][int(sizeIndOff[u])].max()-data.spontRateMean[u])/data.spontRateStd[u]
-            hasOff = False if (np.all(np.isnan(offFit[u])) or zoff<zthresh) else True
+            azim = data.azim[u]
+            elev = data.elev[u]
+            zon =  0 if np.all(np.isnan(onFit[u])) else self.getRFZscore(data.onRespRaw[u][sizeIndOn[u]],onFit[u],azim,elev)
+            hasOn = zon>zthresh
+            zoff =  0 if np.all(np.isnan(offFit[u])) else self.getRFZscore(data.offRespRaw[u][sizeIndOff[u]],offFit[u],azim,elev)
+            hasOff = zoff>zthresh
             if hasOn and hasOff:
                 isOnOff[u] = True
             elif hasOn:
@@ -596,21 +599,39 @@ class popProbeData():
         offArea[badOff] = np.nan
         
         onVsOff = data.onVsOff
+        
+        rfXY = (onFit[:,:2]+offFit[:,:2])/2
+        rfXY[isOn] = onFit[isOn,:2]
+        rfXY[isOff] = offFit[isOff,:2]        
+        
         rfArea = offArea.copy()
-        rfArea[onVsOff>0] = onArea[onVsOff>0].copy()
+        useOn = isOn | (isOnOff & (onVsOff>0))
+        rfArea[useOn] = onArea[useOn].copy()
         
         sizeTuning = np.full((rfArea.size,4),np.nan)
-        useOn = ~np.isnan(rfArea) & hasAllSizes & (isOn | (onVsOff>0)) 
+        useOn = ~np.isnan(rfArea) & hasAllSizes & (isOn | (isOnOff & (onVsOff>0))) 
         sizeTuning[useOn] = np.stack(data.sizeTuningOn[useOn])
-        useOff = ~np.isnan(rfArea) & hasAllSizes & (isOff | (onVsOff<=0)) 
+        useOff = ~np.isnan(rfArea) & hasAllSizes & (isOff | (isOnOff & (onVsOff<=0))) 
         sizeTuning[useOff] = np.stack(data.sizeTuningOff[useOff])
         
+        rfXYAll = np.full((self.data.shape[0],2),np.nan)
+        rfXYAll[cellsToUse & hasRFData] = rfXY
         rfAreaAll = np.full(self.data.shape[0],np.nan)
         rfAreaAll[cellsToUse & hasRFData] = rfArea
         sizeTuningAll = np.full((self.data.shape[0],4),np.nan)
         sizeTuningAll[cellsToUse & hasRFData] = sizeTuning
         
-        return rfAreaAll,sizeTuningAll
+        return rfXYAll,rfAreaAll,sizeTuningAll
+        
+        
+    def getRFZscore(self,resp,fit,azim,elev):
+        z = probeData.gauss2D((azim,elev),*fit).reshape(elev.size,azim.size)
+        z -= z.min()
+        z /= z.max()
+        outInd = z<0.134 # 0.603 (1 SD), 0.322 (1.5 SD), 0.134 (2 SD)
+        outMean = resp[outInd].mean()
+        outStd = resp[outInd].std()
+        return (resp.max()-outMean)/outStd
         
             
     def analyzeRF(self, cellsInRegion = None, region = 'LP'):
@@ -1196,7 +1217,7 @@ class popProbeData():
         plt.tight_layout()
                 
     
-    def makeVolume(self, data=None, cellsInRegion=None, region=None, padding=10, sigma=3, weighted=False, maskNoData=True, cmap='jet', alphaMap=False):
+    def makeVolume(self, data=None, cellsInRegion=None, region='LP', padding=10, sigma=3, weighted=False, maskNoData=True, cmap='jet', alphaMap=False):
         
         if cellsInRegion is None:
             cellsInRegion = self.getCellsInRegion(region)
@@ -1206,12 +1227,12 @@ class popProbeData():
         LPmask[LPmask==0] = np.nan
         yRange,xRange,zRange = rng
         
-        CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)[cellsInRegion]
-        
         if data is None: # make elevation map
-            d = self.data.laserOff.allTrials.sparseNoise[cellsInRegion]
-            sizeUsedOn,sizeUsedOff,onFit,offFit = self.getRFData(d,useBestSize=True)[:4]
-            data = np.nanmean(np.stack((onFit[:,1],offFit[:,1])),axis=0)
+            rfXY = self.getRFData(cellsInRegion,useBestSize=True)[0]
+            cellsInRegion = ~np.isnan(rfXY[:,0])
+            data = rfXY[cellsInRegion,1]
+            
+        CCFCoords = np.stack((self.data.index.get_level_values(c) for c in ('ccfX','ccfY','ccfZ')),axis=1)[cellsInRegion]
             
         counts = np.zeros([r[1]-r[0] for r in rng])
         dataMap = np.zeros_like(counts)
@@ -2725,7 +2746,7 @@ class popProbeData():
     def runningHistograms(self):
          for exp in self.experimentFiles:
             p = self.getProbeDataObj(exp)
-            expD, expID = p.getExperimentInfo()
+            expD, expID, probeN = p.getExperimentInfo()
             fig = plt.figure('Running Distribution for '+expD+'_'+expID, facecolor='w', figsize=[ 13.725 ,   8.8625])
             gs = gridspec.GridSpec(2,int(np.ceil(len(p.kwdFileList)/2)))
             for pro, _ in enumerate(p.kwdFileList):  
@@ -2745,7 +2766,7 @@ class popProbeData():
             print('Analyzing ' + str(expInd) + ' of ' + str(len(self.experimentFiles)) + ' experiments')
             p = self.getProbeDataObj(exp)
             units, _ = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
-            expD, expID = p.getExperimentInfo()   
+            expD, expID, probeN = p.getExperimentInfo()   
             pIndex = p.getProtocolIndex(protocol)
             if str(pIndex) in p.behaviorData and 'running' in p.behaviorData[str(pIndex)]:
                 tuningCurves = p.analyzeRunning(pIndex, units=units, plot=False)

@@ -156,7 +156,7 @@ class probeData():
     
     
     def getEyeTrackData(self):
-        expDate,anmID = self.getExperimentInfo()
+        expDate,anmID,probeN = self.getExperimentInfo()
         dirPath = os.path.join('\\\\aibsdata2\\nc-ophys\\corbettb\\Probe',expDate+'_'+anmID,'EyeTrackAnalysis')
         if not os.path.isdir(dirPath):
             print('could not find '+dirPath)
@@ -2125,7 +2125,7 @@ class probeData():
             return
         protocol = self.getProtocolIndex(protocolName)
         if protocol is None:
-            expDate,anmID = self.getExperimentInfo()
+            expDate,anmID,probeN = self.getExperimentInfo()
             print('no '+protocolName+' for '+expDate+'_'+anmID)
             return
         else:
@@ -2666,7 +2666,11 @@ class probeData():
         if protocolsToRun is None:
             protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard', 'loom']
         for pro in protocolsToRun:
-            protocol = self.getProtocolIndex(pro)
+            if isinstance(pro,int):
+                protocol = pro
+                pro = self.getProtocolLabel(protocol)
+            else:
+                protocol = self.getProtocolIndex(pro)
             if protocol is None:
                 print(pro+ ' not found')
             elif 'loom' in pro and 'lvHistory' not in self.visstimData[str(protocol)]:
@@ -3114,14 +3118,18 @@ class probeData():
         expName = ntpath.basename(ntpath.dirname(ntpath.dirname(self.kwdFileList[0])))
         if isinstance(expName,bytes):
             expName = expName.decode('utf8')
-        date,animalID = expName.split('_')[:2]
-        return date,animalID
+        labels = expName.split('_')
+        date,animalID = labels[:2]
+        probe = labels[2] if len(labels)>2 else 0
+        return date,animalID,probe
 
 
     def readExcelFile(self, sheetname = None, fileName = None):
         if sheetname is None:            
-            expDate,animalID = self.getExperimentInfo()
+            expDate,animalID,probeN = self.getExperimentInfo()
             sheetname = expDate+'_'+animalID
+            if probeN>0:
+                sheetname += '_'+str(probeN)
         if fileName is None:        
             fileName = fileIO.getFile()
             if fileName=='':
