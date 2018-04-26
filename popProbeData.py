@@ -569,9 +569,9 @@ class popProbeData():
                             break
             azim = data.azim[u]
             elev = data.elev[u]
-            zon =  0 if np.all(np.isnan(onFit[u])) else self.getRFZscore(data.onRespRaw[u][sizeIndOn[u]],onFit[u],azim,elev)
+            zon =  0 if np.all(np.isnan(onFit[u])) else self.getRFZscore(data.onResp[u][sizeIndOn[u]],onFit[u],azim,elev)
             hasOn = zon>zthresh
-            zoff =  0 if np.all(np.isnan(offFit[u])) else self.getRFZscore(data.offRespRaw[u][sizeIndOff[u]],offFit[u],azim,elev)
+            zoff =  0 if np.all(np.isnan(offFit[u])) else self.getRFZscore(data.offResp[u][sizeIndOff[u]],offFit[u],azim,elev)
             hasOff = zoff>zthresh
             if hasOn and hasOff:
                 isOnOff[u] = True
@@ -610,9 +610,9 @@ class popProbeData():
         
         sizeTuning = np.full((rfArea.size,4),np.nan)
         useOn = ~np.isnan(rfArea) & hasAllSizes & (isOn | (isOnOff & (onVsOff>0))) 
-        sizeTuning[useOn] = np.stack(data.sizeTuningOn[useOn])
+        sizeTuning[useOn] = np.stack(data.sizeTuningOn[useOn])-data.spontRateMean[useOn][:,None]
         useOff = ~np.isnan(rfArea) & hasAllSizes & (isOff | (isOnOff & (onVsOff<=0))) 
-        sizeTuning[useOff] = np.stack(data.sizeTuningOff[useOff])
+        sizeTuning[useOff] = np.stack(data.sizeTuningOff[useOff])-data.spontRateMean[useOff][:,None]
         
         rfXYAll = np.full((self.data.shape[0],2),np.nan)
         rfXYAll[cellsToUse & hasRFData] = rfXY
@@ -628,7 +628,7 @@ class popProbeData():
         z = probeData.gauss2D((azim,elev),*fit).reshape(elev.size,azim.size)
         z -= z.min()
         z /= z.max()
-        outInd = z<0.134 # 0.603 (1 SD), 0.322 (1.5 SD), 0.134 (2 SD)
+        outInd = z<0.13 # 0.60 (1 SD), 0.32 (1.5 SD), 0.13 (2 SD)
         outMean = resp[outInd].mean()
         outStd = resp[outInd].std()
         return (resp.max()-outMean)/outStd
