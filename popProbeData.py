@@ -569,9 +569,9 @@ class popProbeData():
                             break
             azim = data.azim[u]
             elev = data.elev[u]
-            zon =  0 if np.all(np.isnan(onFit[u])) else self.getRFZscore(data.onResp[u][sizeIndOn[u]],onFit[u],azim,elev)
+            zon =  0 if np.all(np.isnan(onFit[u])) else self.getRFZscore(data.onRespRaw[u][sizeIndOn[u]],onFit[u],azim,elev)
             hasOn = zon>zthresh
-            zoff =  0 if np.all(np.isnan(offFit[u])) else self.getRFZscore(data.offResp[u][sizeIndOff[u]],offFit[u],azim,elev)
+            zoff =  0 if np.all(np.isnan(offFit[u])) else self.getRFZscore(data.offRespRaw[u][sizeIndOff[u]],offFit[u],azim,elev)
             hasOff = zoff>zthresh
             if hasOn and hasOff:
                 isOnOff[u] = True
@@ -605,8 +605,10 @@ class popProbeData():
         rfXY[isOff] = offFit[isOff,:2]        
         
         rfArea = offArea.copy()
+        rfFit = offFit.copy()
         useOn = isOn | (isOnOff & (onVsOff>0))
         rfArea[useOn] = onArea[useOn].copy()
+        rfFit[useOn] = onFit[useOn].copy()
         
         sizeTuning = np.full((rfArea.size,4),np.nan)
         useOn = ~np.isnan(rfArea) & hasAllSizes & (isOn | (isOnOff & (onVsOff>0))) 
@@ -618,10 +620,12 @@ class popProbeData():
         rfXYAll[cellsToUse & hasRFData] = rfXY
         rfAreaAll = np.full(self.data.shape[0],np.nan)
         rfAreaAll[cellsToUse & hasRFData] = rfArea
+        rfFitAll = np.full((self.data.shape[0],rfFit.shape[1]),np.nan)
+        rfFitAll[cellsToUse & hasRFData] = rfFit
         sizeTuningAll = np.full((self.data.shape[0],4),np.nan)
         sizeTuningAll[cellsToUse & hasRFData] = sizeTuning
         
-        return rfXYAll,rfAreaAll,sizeTuningAll
+        return rfXYAll,rfAreaAll,rfFitAll,sizeTuningAll
         
         
     def getRFZscore(self,resp,fit,azim,elev):
