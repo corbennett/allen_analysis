@@ -2656,7 +2656,7 @@ class probeData():
                     continue
             if zthresh is not None:
                 std = np.std(preSpikeRate)
-                if std>0 and (np.mean(postSpikeRate)-np.mean(preSpikeRate))/np.std(preSpikeRate)<=zthresh:
+                if postSpikeRate==0 or (std>0 and (np.mean(postSpikeRate)-np.mean(preSpikeRate))/np.std(preSpikeRate)<=zthresh):
                     continue
             isPhototagged[uindex] = 1
         return isPhototagged

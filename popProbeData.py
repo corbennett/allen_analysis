@@ -408,7 +408,7 @@ class popProbeData():
         return isPhotoTagged,notPhotoTagged
         
         
-    def getIsPhotoTaggedFromResponse(self,nonMU=False,pthresh=None,rateThresh=None,zthresh=5):
+    def getIsPhotoTaggedFromResponse(self,nonMU=False,pthresh=None,rateThresh=0,zthresh=5):
         if self.experimentFiles is None:
             self.getExperimentFiles()
         isPhotoTagged = np.zeros(self.data.shape[0],dtype=bool)
