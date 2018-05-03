@@ -1341,7 +1341,7 @@ class probeData():
                     ax.set_ylabel('Pref '+oriOrDir+' Count')
 
                                     
-    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, laser=False, latency=0.25, sdfSigma = 0.02, usePeakResp=True, plot=True, saveTag='', useCache=False):
+    def analyzeCheckerboard(self, units=None, protocol=None, trials=None, laser=False, latency=0.25, sdfSigma=0.1, usePeakResp=True, plot=True, saveTag='', useCache=False):
         
         units, unitsYPos = self.getOrderedUnits(units)
         
