@@ -255,9 +255,12 @@ class VisStimControl():
                 self._laser2AnalogControl.Write(np.array([0.0]))
                 
     def setLaserParams(self,laser='Blue',power=[0,0.94],split=True):
-        if laser is not None and split:
-            self.laser2 = 'Blue LED'
-            self.laser2Power = 2.6
+        if laser is not None:
+            self.laser = laser
+            self.laserPower = power
+            if split:
+                self.laser2 = 'Blue LED'
+                self.laser2Power = 2.6
         protocol = self.__module__
         if protocol=='makeGratings':
             if laser is not None:
