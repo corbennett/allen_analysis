@@ -589,14 +589,16 @@ class popProbeData():
         onArea = np.pi*np.prod(onFit[:,2:4],axis=1)
         onAspect = onFit[:,2]/onFit[:,3]
         badOn = (onArea<minRFCutoff) | (onArea>maxRFCutoff) | (onAspect<minAspectCutoff) | (onAspect>maxAspectCutoff)
-        onFit[badOn,:] = np.nan
         onArea[badOn] = np.nan
+        onAspect[badOn] = np.nan
+        onFit[badOn,:] = np.nan
         
         offArea = np.pi*np.prod(offFit[:,2:4],axis=1)
         offAspect = offFit[:,2]/offFit[:,3]
         badOff = (offArea<minRFCutoff) | (offArea>maxRFCutoff) | (offAspect<minAspectCutoff) | (offAspect>maxAspectCutoff)
-        offFit[badOff,:] = np.nan        
         offArea[badOff] = np.nan
+        offAspect[badOff] = np.nan
+        offFit[badOff,:] = np.nan
         
         onVsOff = data.onVsOff
         
@@ -605,9 +607,11 @@ class popProbeData():
         rfXY[isOff] = offFit[isOff,:2]        
         
         rfArea = offArea.copy()
+        rfAspect = offAspect.copy()
         rfFit = offFit.copy()
         useOn = isOn | (isOnOff & (onVsOff>0))
         rfArea[useOn] = onArea[useOn].copy()
+        rfAspect[useOn] = onAspect[useOn].copy()
         rfFit[useOn] = onFit[useOn].copy()
         
         sizeTuning = np.full((rfArea.size,4),np.nan)
@@ -620,12 +624,14 @@ class popProbeData():
         rfXYAll[cellsToUse & hasRFData] = rfXY
         rfAreaAll = np.full(self.data.shape[0],np.nan)
         rfAreaAll[cellsToUse & hasRFData] = rfArea
+        rfAspectAll = np.full(self.data.shape[0],np.nan)
+        rfAspectAll[cellsToUse & hasRFData] = rfAspect
         rfFitAll = np.full((self.data.shape[0],rfFit.shape[1]),np.nan)
         rfFitAll[cellsToUse & hasRFData] = rfFit
         sizeTuningAll = np.full((self.data.shape[0],4),np.nan)
         sizeTuningAll[cellsToUse & hasRFData] = sizeTuning
         
-        return rfXYAll,rfAreaAll,rfFitAll,sizeTuningAll
+        return rfXYAll,rfAreaAll,rfAspect,rfFitAll,sizeTuningAll
         
         
     def getRFZscore(self,resp,fit,azim,elev):
