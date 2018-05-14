@@ -162,7 +162,7 @@ class popProbeData():
         else:
             perturbationLabels = plabels
         runLabels = ('allTrials','stat','run')
-        protocols = ('sparseNoise','gratings','gratings_ori','checkerboard','loom')
+        protocols = ('sparseNoise','gratings','gratings_ori','checkerboard','loom','spots')
         data = {plabel: {runLabel: {protocol: {} for protocol in protocols} for runLabel in runLabels} for plabel in plabels}
         data[plabels[0]]['allTrials']['waveform']= {'waveform':[]}
         for exp in exps:
@@ -2837,8 +2837,12 @@ class popProbeData():
         return tempShifted, peakToTrough
     
     def findRegions(self, ccfCoords, tolerance=100):
-        mcc = MouseConnectivityCache(manifest_file='connectivity/mouse_connectivity_manifest.json')
-        struct_df = mcc.get_structures()
+        try:
+            mcc = MouseConnectivityCache(manifest_file='connectivity/mouse_connectivity_manifest.json')
+            struct_df = mcc.get_structures()
+            useMCC = True
+        except:
+            useMCC = False
         
         if self.annotationData is None:
             self.getAnnotationData()
@@ -2868,9 +2872,12 @@ class popProbeData():
 #                    regionID=218
 #                    break
         
-        return struct_df[struct_df['id']==regionID]['acronym'].tolist()[0]
-        
-#        def getUnitsByWaveform(self, cellType = 'FS'):
+        if useMCC:
+            region = struct_df[struct_df['id']==regionID]['acronym'].tolist()[0]
+        else:
+            region = self.getAnnotationLabel(regionID)
+        return region
+
                 
         
 def findPeakToTrough(waveformArray, sampleRate=30000, plot=True):

@@ -1647,20 +1647,19 @@ class probeData():
                                                         'bestConditionPeakTimes': bestCondPeakTimes}
                                                             
             
-    def analyzeSpots(self, units=None, protocol = None, plot=True, trials=None, useCache=False, saveTag=''):
+    def analyzeSpots(self, units=None, protocol = None, sdfSigma=0.1, rfFit=True, plot=True, trials=None, useCache=False, saveTag=''):
          
         units, unitsYPos = self.getOrderedUnits(units) 
          
         if protocol is None:
             protocol = self.getProtocolIndex('spots')
         protocol = str(protocol)
-         
-        if plot:        
-            plt.figure(figsize = (10, 4*len(units)))
-            gs = gridspec.GridSpec(2*len(units), 4)                        
-         
+        
+        allTrialsCount = self.visstimData[str(protocol)]['trialStartFrame'][:-1].size
         if trials is None:
-            trials = np.arange((self.visstimData[str(protocol)]['trialStartFrame'][:-1]).size)
+            trials = np.arange(allTrialsCount)
+        elif len(trials)<1:
+            return
          
         trialStartFrames = self.visstimData[str(protocol)]['trialStartFrame'][trials]
         trialDuration = (self.visstimData[str(protocol)]['trialNumFrames'][trials]).astype(np.int)
@@ -1668,6 +1667,12 @@ class probeData():
         frameSamples = self.visstimData[str(protocol)]['frameSamples']     
         trialStartSamples = frameSamples[trialStartFrames]
         trialEndSamples = frameSamples[trialEndFrames]
+        
+        recoveryPeriod = 10
+        interTrialIntervals = trialStartFrames[1:]- trialEndFrames[:-1]
+        interTrialStarts = trialEndFrames[:-1] + recoveryPeriod
+        interTrialEnds = trialEndFrames[:-1] + interTrialIntervals
+        interTrialDur = np.median(interTrialIntervals)
          
         trialPos = self.visstimData[str(protocol)]['trialSpotPos'][trials]
         trialColor = self.visstimData[str(protocol)]['trialSpotColor'][trials]
@@ -1679,178 +1684,114 @@ class probeData():
         spotSize = np.unique(trialSize)
         spotDir = np.unique(trialDir)
         spotSpeed = np.unique(trialSpeed)
-   
+        
+        rfTrials = (trialColor==-1) & (trialSize>=5) & (trialSize<=20)
         horzTrials = np.logical_or(trialDir==0, trialDir==180)
         vertTrials = np.logical_or(trialDir==270, trialDir==90)
-        azimuths = np.unique(trialPos[vertTrials])
-        elevs = np.unique(trialPos[horzTrials])
+        azimuth = np.unique(trialPos[vertTrials])
+        elevation = np.unique(trialPos[horzTrials])
         
-        numTrialTypes = spotSpeed.size*spotSize.size*(2*azimuths.size+elevs.size)*spotColor.size
-        maxTrialsPerType = math.ceil(trials.size/numTrialTypes)
-        resp = np.full((spotSpeed.size,spotSize.size,spotDir.size,spotPos.size,spotColor.size,maxTrialsPerType),np.nan)
+        numTrialTypes = spotSpeed.size*spotSize.size*(2*azimuth.size+elevation.size)*spotColor.size
+        maxTrialsPerType = int(math.ceil(allTrialsCount/numTrialTypes))
         
-        if plot:
-            plt.figure(figsize=(10,4*len(units)),facecolor='w')
-            gs = gridspec.GridSpec(len(units),3)        
-        
-        for uindex, unit in enumerate(units):
-            if ('spotResponse' + saveTag) in self.units[str(unit)] and useCache:
-                responseDict = self.units[str(unit)]['spotResponse' + saveTag]['spot_responseDict']
-                spotRF = responseDict['spotRF']
-                spontRate = responseDict['spontRate']
-            else:
-                self.units[str(unit)]['spotResponse' + saveTag] = {}
-                spikes = self.units[str(unit)]['times'][str(protocol)]
-         
-                # get RF         
-                spikesPerTrial = self.findSpikesPerTrial(trialStartSamples, trialEndSamples, spikes)
-                trialSpikeRate = spikesPerTrial/((1/self.visstimData[str(protocol)]['frameRate'])*trialDuration)
- 
-                azimuthSpikeRate = np.zeros(azimuths.size)        
-                elevSpikeRate = np.zeros(elevs.size)
-                azimuthTrialCount = np.zeros(azimuths.size)        
-                elevTrialCount = np.zeros(elevs.size)
-                for trial in range(trialPos.size):
-                    if horzTrials[trial]:
-                        elevIndex = np.where(trialPos[trial]==elevs)[0]
-                        elevSpikeRate[elevIndex] += trialSpikeRate[trial]
-                        elevTrialCount[elevIndex] += 1
-                    else:
-                        azimuthIndex = np.where(trialPos[trial]==azimuths)[0]
-                        azimuthSpikeRate[azimuthIndex] += trialSpikeRate[trial]
-                        azimuthTrialCount[azimuthIndex] += 1
-                 
-                elevSpikeRate /= elevTrialCount
-                azimuthSpikeRate /= azimuthTrialCount
-         
-                #get spontaneous rate
-                recoveryPeriod = 10
-                interTrialIntervals = trialStartFrames[1:]- trialEndFrames[:-1]
-                interTrialStarts = trialEndFrames[:-1] + recoveryPeriod
-                interTrialEnds = trialEndFrames[:-1] + interTrialIntervals        
-                itiSpikes = self.findSpikesPerTrial(frameSamples[interTrialStarts], frameSamples[interTrialEnds], spikes)
-                itiRate = itiSpikes/((1/60.0)*(interTrialEnds - interTrialStarts))
-                spontRate = itiRate.mean()
-                sdfSigma = 0.1
-                sdf,_ = self.getSDF(spikes,frameSamples[interTrialStarts],max(frameSamples[interTrialEnds]-frameSamples[interTrialStarts]),sigma=sdfSigma)
-                peakSpontRate = sdf.max()
-                 
-                #make tuning curves for various spot parameters        
-                responseDict = {}        
-                for param in ['trialSpotSize', 'trialSpotDir', 'trialSpotSpeed']:
-                    trialValues = self.visstimData[str(protocol)][param][trials]            
-                    possibleValues = np.unique(trialValues)
-                    responseDict[param] = {}
-                    meanResponse = np.zeros(possibleValues.size)
-                    semResponse = np.zeros(possibleValues.size)
-                    for ind, value in enumerate(possibleValues):
-                        relevantTrials = np.where(trialValues==value)[0]
-                        responseDict[param][value] = {}
-                        responseDict[param][value]['trials'] = relevantTrials
-                        responseDict[param][value]['response'] = np.zeros(relevantTrials.size)
-                        for index, trial in enumerate(relevantTrials):
-                            totalSpikes = spikesPerTrial[trial]
-                            spikeRate = totalSpikes/((1/60.0)*trialDuration[trial])            
-                            responseDict[param][value]['response'][index] = spikeRate
-                        meanResponse[ind] = np.mean(responseDict[param][value]['response'])
-                        semResponse[ind] = np.std(responseDict[param][value]['response'])/math.sqrt(relevantTrials.size)
-                    responseDict[param]['tuningCurve'] = {}
-                    responseDict[param]['tuningCurve']['paramValues'] = possibleValues
-                    responseDict[param]['tuningCurve']['meanResponse'] = meanResponse
-                    responseDict[param]['tuningCurve']['sem'] = semResponse                     
-                     
-                x,y = np.meshgrid(azimuthSpikeRate,elevSpikeRate)
-                spotRF = np.sqrt(abs(x*y))*np.sign(x+y)
-                responseDict['spontRate'] = spontRate
-                responseDict['spotRF'] = spotRF                
-                self.units[str(unit)]['spotResponse' + saveTag]['spot_responseDict'] = responseDict
-                
-                # speed x size x dir x pos x color matrix for mean and peak resp
-                peakResp = np.full(resp.shape[:-1],np.nan)
-                for speedInd,speed in enumerate(spotSpeed):
-                    speedTrials = trialSpeed==speed
-                    for sizeInd,size in enumerate(spotSize):
-                        sizeTrials = trialSize==size
-                        for dirInd,direction in enumerate(spotDir):
-                            dirTrials = trialDir==direction
-                            for posInd,pos in enumerate(spotPos):
-                                posTrials = trialPos==pos
-                                for colorInd,color in enumerate(spotColor):
-                                    trialInd = trialColor==color
-                                    for i in (speedTrials,sizeTrials,dirTrials,posTrials):
-                                        trialInd = np.logical_and(trialInd,i)
-                                    if any(trialInd):
-                                        resp[speedInd,sizeInd,dirInd,posInd,colorInd,:np.count_nonzero(trialInd)] = trialSpikeRate[trialInd]
-                                        sdf,_ = self.getSDF(spikes,trialStartSamples[trialInd],max(trialEndSamples[trialInd]-trialStartSamples[trialInd]),sigma=sdfSigma)
-                                        peakResp[speedInd,sizeInd,dirInd,posInd,colorInd] = sdf.max()
-                meanResp = np.nanmean(resp,axis=5)
-                resp[:] = np.nan
-                 
+        for unit in units:
+            spikes = self.units[str(unit)]['times'][str(protocol)]
+            spikesPerTrial = self.findSpikesPerTrial(trialStartSamples,trialEndSamples,spikes)
+            trialSpikeRate = spikesPerTrial/(trialDuration/self.visstimData[str(protocol)]['frameRate'])
+            
+            #get spontaneous rate
+            itiSpikes = self.findSpikesPerTrial(frameSamples[interTrialStarts], frameSamples[interTrialEnds], spikes)
+            itiRate = itiSpikes/((interTrialEnds - interTrialStarts)/60.0)
+            sampledItiRate = np.array([itiRate[np.random.choice(np.arange(itiRate.size),int(math.ceil(dur/interTrialDur)))].mean() for dur in trialDuration])
+            spontRateMean = sampledItiRate.mean()
+            spontRateStd = sampledItiRate.std()
+            
+            # speed x size x dir x pos x color matrix for mean and peak resp
+            resp = np.full((spotSpeed.size,spotSize.size,spotDir.size,spotPos.size,spotColor.size,maxTrialsPerType),np.nan)
+            for speedInd,speed in enumerate(spotSpeed):
+                speedTrials = trialSpeed==speed
+                for sizeInd,size in enumerate(spotSize):
+                    sizeTrials = trialSize==size
+                    for dirInd,direction in enumerate(spotDir):
+                        dirTrials = trialDir==direction
+                        for posInd,pos in enumerate(spotPos):
+                            posTrials = trialPos==pos
+                            for colorInd,color in enumerate(spotColor):
+                                trialInd = trialColor==color
+                                for i in (speedTrials,sizeTrials,dirTrials,posTrials):
+                                    trialInd = np.logical_and(trialInd,i)
+                                if any(trialInd):
+                                    resp[speedInd,sizeInd,dirInd,posInd,colorInd,:np.count_nonzero(trialInd)] = trialSpikeRate[trialInd]
+            meanResp = np.nanmean(resp,axis=5)
+            
+            # get RF
+            azimSpikeRate = np.zeros(azimuth.size)        
+            elevSpikeRate = np.zeros(elevation.size)
+            azimTrialCount = np.zeros(azimuth.size)        
+            elevTrialCount = np.zeros(elevation.size)
+            for trial in np.where(rfTrials)[0]:
+                if horzTrials[trial]:
+                    elevIndex = np.where(trialPos[trial]==elevation)[0]
+                    elevSpikeRate[elevIndex] += trialSpikeRate[trial]
+                    elevTrialCount[elevIndex] += 1
+                else:
+                    azimIndex = np.where(trialPos[trial]==azimuth)[0]
+                    azimSpikeRate[azimIndex] += trialSpikeRate[trial]
+                    azimTrialCount[azimIndex] += 1
+             
+            elevSpikeRate /= elevTrialCount
+            azimSpikeRate /= azimTrialCount
+            
+            elevResp = elevSpikeRate[:,None]-spontRateMean
+            azimResp = azimSpikeRate-spontRateMean
+            spotRF = np.sqrt(abs(elevResp*azimResp))*np.sign(elevResp+azimResp)
+            
+            rfFitParams = np.full(7,np.nan)
+            if rfFit:
+                if (len(azimuth)>2) & (len(elevation)>2) & (azimuth[0]<20) & (azimuth[-1]>80) & (elevation[0]<10) & (elevation[-1]>40):
+                    # params: x0 , y0, sigX, sigY, theta, amplitude, offset
+                    maxOffGrid = 10
+                    i,j = np.unravel_index(np.argmax(spotRF),spotRF.shape)
+                    sigmaGuess = (azimuth[1]-azimuth[0])*0.5*np.sqrt(np.count_nonzero(spotRF>spotRF.min()+0.5*(spotRF.max()-spotRF.min())))
+                    initialParams = (azimuth[j],elevation[i],sigmaGuess,sigmaGuess,0,spotRF.max(),np.percentile(spotRF,10))
+                    rfFitParams,rmse = fitRF(azimuth,elevation,spotRF,initialParams,maxOffGrid)
+            
+            self.units[str(unit)]['spots' + saveTag] = {'trials': trials,
+                                                       'spotPos': spotPos,
+                                                       'spotColor': spotColor,
+                                                       'spotSize': spotSize,
+                                                       'spotDir': spotDir,
+                                                       'spotSpeed': spotSpeed,
+                                                       'meanResp': meanResp,
+                                                       'spontRateMean': spontRateMean,
+                                                       'spontRateStd': spontRateStd,
+                                                       'elevation': elevation,
+                                                       'azimuth': azimuth,
+                                                       'elevSpikeRate': elevSpikeRate,
+                                                       'azimSpikeRate': azimSpikeRate,
+                                                       'spotRF': spotRF,
+                                                       'rfFitParams': rfFitParams}
+            
             if plot:
-                axInd = 0
-                for r,spRate in zip((meanResp,peakResp),(spontRate,peakSpontRate)):
-                    for m in ('mean','max'):
-                        # speed vs size
-                        ax = plt.subplot(gs[uindex*2,axInd])
-                        if m=='mean':
-                            speedSizeResp = np.nanmean(np.nanmean(np.nanmean(r,axis=4),axis=3),axis=2)
-                        else:
-                            speedSizeResp = np.nanmax(np.nanmax(np.nanmax(r,axis=4),axis=3),axis=2)
-                        centerPoint = spRate if not np.isnan(spRate) else np.nanmedian(speedSizeResp)
-                        cLim = np.nanmax(abs(speedSizeResp-centerPoint))
-                        plt.imshow(speedSizeResp,cmap='bwr',clim=(centerPoint-cLim,centerPoint+cLim),interpolation='none',origin='lower')
-                        ax.spines['left'].set_visible(False)
-                        ax.spines['right'].set_visible(False)
-                        ax.spines['bottom'].set_visible(False)
-                        ax.spines['top'].set_visible(False)
-                        ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
-                        ax.set_xticks(range(spotSize.size))
-                        ax.set_xticklabels([])
-                        ax.set_yticks(range(spotSpeed.size))
-                        ax.set_yticklabels([])
-                        if axInd==0:
-                            ax.set_yticklabels(spotSpeed)
-                            ylab = 'Unit '+str(unit)+'\nSpot Speed' if uindex==0 else 'Unit '+str(unit)
-                            ax.set_ylabel(ylab,fontsize='x-small')
-                        if uindex==len(units)-1 and axInd==0:
-                            ax.set_xticklabels(spotSize)
-                            ax.set_xlabel('Spot Size',fontsize='x-small')
-                        if uindex==0:
-                            if axInd==0:
-                                title = 'meanResp\nmean'
-                            elif axInd==1:
-                                title = 'meanResp\nmax'
-                            elif axInd==2:
-                                title = 'peakResp\nmean'
-                            else:
-                                title = 'peakResp\nmax'
-                            ax.set_title(title,fontsize='x-small')
-                        cb = plt.colorbar(fraction=0.05,pad=0.04,shrink=0.5)
-                        cb.set_ticks([math.ceil(centerPoint-cLim),round(centerPoint),math.floor(centerPoint+cLim)])
-                        cb.ax.tick_params(length=0,labelsize='xx-small')
-                        
-                        # direction
-                        ax = plt.subplot(gs[uindex*2+1,axInd])
-                        if m=='mean':
-                            dirResp = np.nanmean(np.nanmean(np.nanmean(np.nanmean(r,axis=4),axis=3),axis=1),axis=0)
-                        else:
-                            dirResp = np.nanmax(np.nanmax(np.nanmax(np.nanmax(r,axis=4),axis=3),axis=1),axis=0)
-                        plt.plot(spotDir,dirResp)
-                        ax.spines['right'].set_visible(False)
-                        ax.spines['top'].set_visible(False)
-                        ax.tick_params(direction='out',top=False,right=False,labelsize='xx-small')
-                        ax.set_xticks(spotDir)
-                        ax.set_xticklabels([])
-                        ax.set_xlim([spotDir[0],spotDir[-1]])
-                        ax.set_ylim([0,dirResp.max()+0.5])
-                        if axInd==0:
-                            ylab = 'Unit '+str(unit)+'\nSpikes/s' if uindex==0 else 'Unit '+str(unit)
-                            ax.set_ylabel(ylab,fontsize='x-small')
-                        if uindex==len(units)-1 and axInd==0:
-                            ax.set_xlabel('Direction',fontsize='x-small')
-                            ax.set_xticklabels(spotDir)
-                        
-                        axInd += 1
+                fig = plt.figure(facecolor='w')
+                ax = fig.add_subplot(1,1,1)
+                im = ax.imshow(spotRF,cmap='gray',interpolation='none',origin='lower',extent = [azimuth[0],azimuth[-1],elevation[0],elevation[-1]])
+                if not np.all(np.isnan(rfFitParams)):
+                    ax.plot(rfFitParams[0],rfFitParams[1],'rx',markeredgewidth=2)
+                    fitX,fitY = getEllipseXY(*rfFitParams[:-2])
+                    ax.plot(fitX,fitY,'r',linewidth=2)
+                    ax.set_xlim(azimuth[[0,azimuth.size-1]]-0.5)
+                    ax.set_ylim(elevation[[0,elevation.size-1]]-0.5)
+                for side in ('right','top'):
+                    ax.spines[side].set_visible(False)
+                ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+                ax.set_xticks(azimuth)
+                ax.set_yticks(elevation)
+                ax.set_xlabel('azimuth')
+                ax.set_ylabel('elevation')
+                ax.set_title(unit)
+                plt.tight_layout()
+                plt.colorbar(im)
     
     
     def parseRunning(self, protocol, runThresh = 5.0, statThresh = 1.0, trialStarts = None, trialEnds = None, wheelDownsampleFactor = 500.0):
@@ -2664,7 +2605,7 @@ class probeData():
     
     def runAllAnalyses(self, units=None, protocolsToRun=None, splitRunning=False, useCache=False, plot=True, ttx=False):
         if protocolsToRun is None:
-            protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard', 'loom']
+            protocolsToRun = ['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard', 'loom', 'spots']
         for pro in protocolsToRun:
             if isinstance(pro,int):
                 protocol = pro
