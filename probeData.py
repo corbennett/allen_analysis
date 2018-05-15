@@ -1754,7 +1754,9 @@ class probeData():
                     i,j = np.unravel_index(np.argmax(spotRF),spotRF.shape)
                     sigmaGuess = (azimuth[1]-azimuth[0])*0.5*np.sqrt(np.count_nonzero(spotRF>spotRF.min()+0.5*(spotRF.max()-spotRF.min())))
                     initialParams = (azimuth[j],elevation[i],sigmaGuess,sigmaGuess,0,spotRF.max(),np.percentile(spotRF,10))
-                    rfFitParams,rmse = fitRF(azimuth,elevation,spotRF,initialParams,maxOffGrid)
+                    fitParams,rmse = fitRF(azimuth,elevation,spotRF,initialParams,maxOffGrid)
+                    if fitParams is not None:
+                        rfFitParams = fitParams
             
             self.units[str(unit)]['spots' + saveTag] = {'trials': trials,
                                                        'spotPos': spotPos,
@@ -2698,6 +2700,7 @@ class probeData():
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                 
                         self.analyzeFlash(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
                         self.analyzeFlash(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag=laserTag+'_run', plot=plot)
+                        self.analyzeFlash(units, protocol=protocol, useCache=useCache, saveTag=laserTag+'_allTrials', plot=plot)
                     else:                    
                         self.analyzeFlash(units, protocol=protocol, useCache=useCache, plot=plot)
                         
@@ -2706,6 +2709,7 @@ class probeData():
                         statTrials, runTrials, _ = self.parseRunning(protocol, trialStarts=trialStarts, trialEnds=trialEnds)                    
                         self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=statTrials, saveTag=laserTag+'_stat', plot=plot)
                         self.analyzeSpots(units, protocol=protocol, useCache=useCache, trials=runTrials, saveTag=laserTag+'_run', plot=plot)
+                        self.analyzeSpots(units, protocol=protocol, useCache=useCache, saveTag=laserTag+'_allTrials', plot=plot)
                     else:
                         self.analyzeSpots(units, protocol=protocol, useCache=useCache, plot=plot)
                         

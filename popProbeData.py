@@ -2277,8 +2277,36 @@ class popProbeData():
             title = 'SC' if inSC else 'not SC'
             ax.set_title('r = '+str(fit[2])+', '+title,fontsize=20)
             plt.tight_layout()
+            
+            
+    def analayzeSpots(self,cellsInRegion):
+        data = self.data.laserOff.allTrials.spots[cellsInRegion]
+        hasSpots = data.spotRF.notnull()
+        spotRFFit = np.stack(data.rfFitParams[hasSpots])
+        hasSpotRF = ~np.isnan(spotRFFit[:,0])
         
-
+        rfXY,rfArea,rfAspect,rfFit,sizeTuning = self.getRFData(cellsInRegion)
+        
+        rfArea = rfArea[cellsInRegion][hasSpots][hasSpotRF]
+        hasFit = ~np.isnan(rfArea)
+        rfArea = rfArea[hasFit]
+        spotRFArea = np.pi*np.prod(spotRFFit[hasSpotRF][hasFit,2:4],axis=1)
+        
+        fig = plt.figure(facecolor='w')
+        ax = fig.add_subplot(1,1,1)
+        axMax = max(rfArea.max(),spotRFArea.max())
+        ax.plot([0,axMax],[0,axMax],'k--')
+        ax.plot(rfArea,spotRFArea,'ko')
+        for side in ('right','top'):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction='out',top=False,right=False,labelsize=18)
+        ax.set_xlim([0,axMax])
+        ax.set_ylim([0,axMax])
+        ax.set_xlabel('Sparse Noise RF Area',fontsize=20)
+        ax.set_ylabel('Moving Spots RF Area',fontsize=20)
+        plt.tight_layout()
+        
+        
     def plotSaccadeRate(self):
         protocolLabels = ('spontaneous','sparseNoise','gratings','checkerboard')
         saccadeRate = np.full((len(self.experimentFiles),len(protocolLabels)),np.nan)
