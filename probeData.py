@@ -1647,7 +1647,7 @@ class probeData():
                                                         'bestConditionPeakTimes': bestCondPeakTimes}
                                                             
             
-    def analyzeSpots(self, units=None, protocol = None, sdfSigma=0.1, rfFit=True, plot=True, trials=None, useCache=False, saveTag=''):
+    def analyzeSpots(self, units=None, protocol = None, sdfSigma=0.1, rfFit=True, sigma=1, plot=True, trials=None, useCache=False, saveTag=''):
          
         units, unitsYPos = self.getOrderedUnits(units) 
          
@@ -1690,6 +1690,8 @@ class probeData():
         vertTrials = np.logical_or(trialDir==270, trialDir==90)
         azimuth = np.unique(trialPos[vertTrials])
         elevation = np.unique(trialPos[horzTrials])
+        
+        gaussianKernel = Gaussian2DKernel(stddev=sigma)
         
         numTrialTypes = spotSpeed.size*spotSize.size*(2*azimuth.size+elevation.size)*spotColor.size
         maxTrialsPerType = int(math.ceil(allTrialsCount/numTrialTypes))
@@ -1744,17 +1746,18 @@ class probeData():
             
             elevResp = elevSpikeRate[:,None]-spontRateMean
             azimResp = azimSpikeRate-spontRateMean
-            spotRF = np.sqrt(abs(elevResp*azimResp))*np.sign(elevResp+azimResp)
+            spotRFRaw = np.sqrt(abs(elevResp*azimResp))*np.sign(elevResp+azimResp)
+            spotRFSmooth = convolve(spotRFRaw,gaussianKernel,boundary='extend')
             
             rfFitParams = np.full(7,np.nan)
             if rfFit:
                 if (len(azimuth)>2) & (len(elevation)>2) & (azimuth[0]<20) & (azimuth[-1]>80) & (elevation[0]<10) & (elevation[-1]>40):
                     # params: x0 , y0, sigX, sigY, theta, amplitude, offset
                     maxOffGrid = 10
-                    i,j = np.unravel_index(np.argmax(spotRF),spotRF.shape)
-                    sigmaGuess = (azimuth[1]-azimuth[0])*0.5*np.sqrt(np.count_nonzero(spotRF>spotRF.min()+0.5*(spotRF.max()-spotRF.min())))
-                    initialParams = (azimuth[j],elevation[i],sigmaGuess,sigmaGuess,0,spotRF.max(),np.percentile(spotRF,10))
-                    fitParams,rmse = fitRF(azimuth,elevation,spotRF,initialParams,maxOffGrid)
+                    i,j = np.unravel_index(np.argmax(spotRFSmooth),spotRFSmooth.shape)
+                    sigmaGuess = (azimuth[1]-azimuth[0])*0.5*np.sqrt(np.count_nonzero(spotRFSmooth>spotRFSmooth.min()+0.5*(spotRFSmooth.max()-spotRFSmooth.min())))
+                    initialParams = (azimuth[j],elevation[i],sigmaGuess,sigmaGuess,0,spotRFSmooth.max(),np.percentile(spotRFSmooth,10))
+                    fitParams,rmse = fitRF(azimuth,elevation,spotRFSmooth,initialParams,maxOffGrid)
                     if fitParams is not None:
                         rfFitParams = fitParams
             
@@ -1771,13 +1774,14 @@ class probeData():
                                                        'azimuth': azimuth,
                                                        'elevSpikeRate': elevSpikeRate,
                                                        'azimSpikeRate': azimSpikeRate,
-                                                       'spotRF': spotRF,
+                                                       'spotRFRaw': spotRFRaw,
+                                                       'spotRFSmooth': spotRFSmooth,
                                                        'rfFitParams': rfFitParams}
             
             if plot:
                 fig = plt.figure(facecolor='w')
                 ax = fig.add_subplot(1,1,1)
-                im = ax.imshow(spotRF,cmap='gray',interpolation='none',origin='lower',extent = [azimuth[0],azimuth[-1],elevation[0],elevation[-1]])
+                im = ax.imshow(spotRFSmooth,cmap='gray',interpolation='none',origin='lower',extent = [azimuth[0],azimuth[-1],elevation[0],elevation[-1]])
                 if not np.all(np.isnan(rfFitParams)):
                     ax.plot(rfFitParams[0],rfFitParams[1],'rx',markeredgewidth=2)
                     fitX,fitY = getEllipseXY(*rfFitParams[:-2])

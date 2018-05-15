@@ -2281,16 +2281,24 @@ class popProbeData():
             
     def analayzeSpots(self,cellsInRegion):
         data = self.data.laserOff.allTrials.spots[cellsInRegion]
-        hasSpots = data.spotRF.notnull()
+        hasSpots = data.rfFitParams.notnull()
         spotRFFit = np.stack(data.rfFitParams[hasSpots])
         hasSpotRF = ~np.isnan(spotRFFit[:,0])
         
         rfXY,rfArea,rfAspect,rfFit,sizeTuning = self.getRFData(cellsInRegion)
-        
         rfArea = rfArea[cellsInRegion][hasSpots][hasSpotRF]
         hasFit = ~np.isnan(rfArea)
         rfArea = rfArea[hasFit]
-        spotRFArea = np.pi*np.prod(spotRFFit[hasSpotRF][hasFit,2:4],axis=1)
+        rfXY = rfXY[cellsInRegion][hasSpots][hasSpotRF][hasFit]
+        
+        spotRFFit = spotRFFit[hasSpotRF][hasFit]
+        spotRFArea = np.pi*np.prod(spotRFFit[:,2:4],axis=1)
+        spotRFAspect = spotRFFit[:,2]/spotRFFit[:,3]
+        spotRFXY = spotRFFit[:,:2]
+        badFit = (spotRFArea<100) | (spotRFAspect<0.25) | (spotRFAspect>4) | (np.sqrt(np.sum((spotRFXY-rfXY)**2,axis=1))<20)
+        
+        rfArea = rfArea[~badFit]
+        spotRFArea = spotRFArea[~badFit]
         
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
