@@ -1570,20 +1570,7 @@ class probeData():
         
         for uindex, unit in enumerate(units):
             spikes = self.units[str(unit)]['times'][str(protocol)]
-            sdf = np.full((trialConditions.shape[0],int(round(sdfSamples/self.sampleRate/sdfSampInt))),np.nan)
-            peakTimeFromCollision = np.full(trialConditions.shape[0], np.nan)
-            peakResp = np.full(trialConditions.shape[0], np.nan)
-
-            for ic, c in enumerate(trialConditions):
-                condTrials = np.array([i for i,t in enumerate(trialParams) if all(t == c)])
-                if condTrials.size>0:
-                    thissdf, sdfTime = self.getSDF(spikes, trialEnds[condTrials] - np.median(trialSampleLengths[condTrials]), np.median(trialSampleLengths[condTrials]), sigma=sdfSigma)                    
-                    collision = timeToCollision[int(np.where(np.unique(trialLV)==c[0])[0])]
-                    thissdf = thissdf[:collision+sdfPadding]
-                    sdf[ic, -thissdf.size:] = thissdf
-                    peakTimeFromCollision[ic] = sdf.shape[1] - np.nanargmax(sdf[ic]) - sdfPadding
-                    peakResp[ic] = np.nanmax(sdf[ic])
-                
+            
             # get spont rate (defined as the first second of activity during the longest trial condition)
             nreps = 100
             spontRateDist = np.zeros(nreps)
@@ -1598,24 +1585,36 @@ class probeData():
                     spontRateDist[ind] = np.nanmean(np.nanmax(longsdf[:1000]))
                 spontRateMean = spontRateDist.mean()
                 spontRateStd = spontRateDist.std()
+            
+            sdf = np.full((trialConditions.shape[0],int(round(sdfSamples/self.sampleRate/sdfSampInt))),np.nan)
+            peakResp = np.full(trialConditions.shape[0], np.nan)
+            peakTimeFromCollision = peakResp.copy()
+            peakAtCollision = peakResp.copy()
+            onsetFromCollision = peakResp.copy()
+            onsetThresh = spontRateMean+3*spontRateStd
+            for ic, c in enumerate(trialConditions):
+                condTrials = np.array([i for i,t in enumerate(trialParams) if all(t == c)])
+                if condTrials.size>0:
+                    thissdf, sdfTime = self.getSDF(spikes, trialEnds[condTrials] - np.median(trialSampleLengths[condTrials]), np.median(trialSampleLengths[condTrials]), sigma=sdfSigma)                    
+                    collision = timeToCollision[int(np.where(np.unique(trialLV)==c[0])[0])]
+                    thissdf = thissdf[:collision+sdfPadding]
+                    sdf[ic, -thissdf.size:] = thissdf
+                    peakResp[ic] = np.nanmax(thissdf)
+                    peakTime = np.nanargmax(thissdf)
+                    peakTimeFromCollision[ic] = collision-peakTime
+                    peakAtCollision[ic] = np.nanmax(thissdf[collision:])
+                    if peakResp[ic]>onsetThresh:
+                        belowThresh = thissdf[:peakTime]<onsetThresh
+                        if np.any(belowThresh):
+                            lastThreshCross = np.where(belowThresh)[0][-1]+1
+                            onsetFromCollision[ic] = collision-lastThreshCross
                 
             bestCondition = np.argmax(peakResp)
             bestLVs = [i for i,t in enumerate(trialConditions) if all(t[1:] == trialConditions[bestCondition][1:])]
-            bestCondPeakResps = peakResp[bestLVs]
+            bestCondPeaks = peakResp[bestLVs]
             bestCondPeakTimes = peakTimeFromCollision[bestLVs]
-                
-#            #get mean responses for each LV value at best parameters
-            
-#            peakTimeFromCollision = np.full(numLVs, np.nan)
-#            peakResp = np.full(numLVs, np.nan)
-#            bestCond = np.copy(trialConditions[np.unravel_index(np.nanargmax(sdf), sdf.shape)[0]])
-#            lvCurves = []
-#            for ilv, lv in enumerate(np.unique(trialLV)):
-#                bestCond[0] = lv
-#                condition = np.array([i for i,t in enumerate(trialConditions) if all(t == bestCond)])
-#                lvCurves.append(sdf[condition].T)
-#                peakTimeFromCollision[ilv] = sdf.shape[1] - np.nanargmax(sdf[condition]) - sdfPadding
-#                peakResp = np.nanmax(sdf[condition])
+            bestCondPeakAtCollision = peakAtCollision[bestLVs]
+            bestCondOnsets = onsetFromCollision[bestLVs]
             
             if plot:
                 alphas = np.linspace(0.2, 1, lvRatio.size)
@@ -1633,18 +1632,21 @@ class probeData():
                     ylims = ax.get_ylim()
                     ax.plot([sdf.shape[1]-sdfPadding, sdf.shape[1]-sdfPadding], [ylims[0], ylims[1]], 'k--')
                     formatFigure(fig, ax)
-            
-            # cache results
+                    
             self.units[str(unit)]['loom' + saveTag] = {'trialConditions': trialConditions,
-                                                        '_sdf' : sdf,
-                                                        '_sdfTime': sdfTime,
-                                                        'trials': trials,
-                                                        'spontRateMean': spontRateMean,
-                                                        'spontRateStd': spontRateStd,
-                                                        'peakTimeFromCollision': peakTimeFromCollision,
-                                                        'peakResp': peakResp,
-                                                        'bestConditionPeaks': bestCondPeakResps,
-                                                        'bestConditionPeakTimes': bestCondPeakTimes}
+                                                       '_sdf' : sdf,
+                                                       '_sdfTime': sdfTime,
+                                                       'trials': trials,
+                                                       'spontRateMean': spontRateMean,
+                                                       'spontRateStd': spontRateStd,
+                                                       'peakResp': peakResp,
+                                                       'peakTimeFromCollision': peakTimeFromCollision,
+                                                       'peakAtCollision': peakAtCollision,
+                                                       'onsetFromCollision': onsetFromCollision,
+                                                       'bestConditionPeaks': bestCondPeaks,
+                                                       'bestConditionPeakTimes': bestCondPeakTimes,
+                                                       'bestConditionPeakATCollision': bestCondPeakAtCollision,
+                                                       'bestConditionOnsets': bestCondOnsets}
                                                             
             
     def analyzeSpots(self, units=None, protocol = None, sdfSigma=0.1, rfFit=True, sigma=1, plot=True, trials=None, useCache=False, saveTag=''):
