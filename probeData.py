@@ -1602,7 +1602,7 @@ class probeData():
                     peakResp[ic] = np.nanmax(thissdf)
                     peakTime = np.nanargmax(thissdf)
                     peakTimeFromCollision[ic] = collision-peakTime
-                    peakAtCollision[ic] = np.nanmax(thissdf[collision:])
+                    peakAtCollision[ic] = thissdf[collision]
                     if peakResp[ic]>onsetThresh:
                         belowThresh = thissdf[:peakTime]<onsetThresh
                         if np.any(belowThresh):
@@ -1645,7 +1645,7 @@ class probeData():
                                                        'onsetFromCollision': onsetFromCollision,
                                                        'bestConditionPeaks': bestCondPeaks,
                                                        'bestConditionPeakTimes': bestCondPeakTimes,
-                                                       'bestConditionPeakATCollision': bestCondPeakAtCollision,
+                                                       'bestConditionPeakAtCollision': bestCondPeakAtCollision,
                                                        'bestConditionOnsets': bestCondOnsets}
                                                             
             
