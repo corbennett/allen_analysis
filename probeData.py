@@ -1401,8 +1401,28 @@ class probeData():
             spikes = self.units[str(u)]['times'][protocol]
             spikesPerTrial = self.findSpikesPerTrial(trialStartSamples+latencySamples,trialEndSamples,spikes)
             trialSpikeRate = spikesPerTrial/((trialEndSamples-trialStartSamples-latencySamples)/self.sampleRate)
+            
+            # get spont rate and find best resp over all patch sizes and elevations
+            spontTrials = np.logical_and(p['trialBckgndSpeed'][trials]==0,p['trialPatchSpeed'][trials]==0)
+            if any(spontTrials):            
+                if usePeakResp:
+                    spontRateDist = self.getSDFNoise(spikes,trialStartSamples[spontTrials],max(trialEndSamples[spontTrials]-trialStartSamples[spontTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
+                else:
+                    nreps = 100
+                    spontRateDist = np.zeros(nreps)
+                    spontTrialInd = np.where(spontTrials)[0]
+                    for ind,_ in range(nreps):
+                        spontRateDist[ind] = np.nanmean(trialSpikeRate[np.random.choice(spontTrialInd,spontTrialInd.size)])
+                spontRateMean = spontRateDist.mean()
+                spontRateStd = spontRateDist.std()
+            else:
+                spontRateMean = spontRateStd = np.nan
+            
             meanResp = np.full((patchSpeed.size,bckgndSpeed.size,p['patchSize'].size,p['patchElevation'].size),np.nan)
-            peakResp = np.copy(meanResp)
+            peakResp = meanResp.copy()
+            respOnset = meanResp.copy()
+            respOffset = meanResp.copy()
+            onsetThresh = spontRateMean+3*spontRateStd
             sdf = np.full((meanResp.shape+(sdfTime.size,)),np.nan)
             maxTrialTypeDur = np.zeros_like(meanResp)
             for pchSpeedInd,pchSpeed in enumerate(patchSpeed):
@@ -1422,12 +1442,23 @@ class probeData():
                             if any(trialInd):
                                 meanResp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = trialSpikeRate[trialInd].mean()
                                 s,t = self.getSDF(spikes,trialStartSamples[trialInd]-minInterTrialSamples,2*minInterTrialSamples+max(trialEndSamples[trialInd]-trialStartSamples[trialInd]),sigma=sdfSigma,sampInt=sdfSampInt)
-                                maxTrialTypeDur[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = t[-1]-2*minInterTrialTime
-                                peakResp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = s[np.logical_and(t>minInterTrialTime+latency,t<t[-1]-minInterTrialTime)].max()
                                 sdf[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd,:s.size] = s
+                                maxTrialTypeDur[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = t[-1]-2*minInterTrialTime
+                                peakWindow = np.logical_and(t>minInterTrialTime+latency,t<t[-1]-minInterTrialTime)
+                                peakResp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = s[peakWindow].max() 
+                                peakInd = np.argmax(s[peakWindow])
+                                if peakResp[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd]>onsetThresh:
+                                    belowThresh = s[peakWindow][:peakInd]<onsetThresh
+                                    if np.any(belowThresh):
+                                        lastThreshCross = np.where(belowThresh)[0][-1]+1
+                                        respOnset[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = t[peakWindow][lastThreshCross]-latency
+                                    belowThresh = s[peakWindow][peakInd:]<onsetThresh
+                                    if np.any(belowThresh):
+                                        firstThreshCross = np.where(belowThresh)[0][0]
+                                        respOffset[pchSpeedInd,bckSpeedInd,pchSizeInd,pchElevInd] = t[peakWindow][peakInd+firstThreshCross]-latency
             
             # fill in resp for patch and bckgnd speeds not tested for every patch size and elevation
-            for r in (meanResp,peakResp,sdf,maxTrialTypeDur):
+            for r in (meanResp,peakResp,respOnset,respOffset,sdf,maxTrialTypeDur):
                 for pchSizeInd,_ in enumerate(p['patchSize']):
                     for pchElevInd,_ in enumerate(p['patchElevation']):
                         r[patchSpeed==0,:,pchSizeInd,pchElevInd] = r[patchSpeed==0,:,0,0]
@@ -1435,22 +1466,6 @@ class probeData():
                     for bckSpeedInd,bckSpeed in enumerate(bckgndSpeed):
                         if pchSpeed==bckSpeed:
                             r[pchSpeedInd,bckSpeedInd] = r[patchSpeed==0,bckSpeedInd]
-            
-            # get spont rate and find best resp over all patch sizes and elevations
-            spontTrials = np.logical_and(p['trialBckgndSpeed'][trials]==0,p['trialPatchSpeed'][trials]==0)
-            if any(spontTrials):            
-                if usePeakResp:
-                    spontRateDist = self.getSDFNoise(spikes,trialStartSamples[spontTrials],max(trialEndSamples[spontTrials]-trialStartSamples[spontTrials]),sigma=sdfSigma,sampInt=sdfSampInt)
-                else:
-                    nreps = 100
-                    spontRateDist = np.zeros(nreps)
-                    spontTrialInd = np.where(spontTrials)[0]
-                    for ind,_ in range(nreps):
-                        spontRateDist[ind] = np.nanmean(trialSpikeRate[np.random.choice(spontTrialInd,spontTrialInd.size)])
-                spontRateMean = spontRateDist.mean()
-                spontRateStd = spontRateDist.std()
-            else:
-                spontRateMean = spontRateStd = np.nan
             
             respMat = peakResp.copy() if usePeakResp else meanResp.copy()
             patchResp = respMat[patchSpeed!=0,bckgndSpeed==0,:,:]
@@ -1466,6 +1481,8 @@ class probeData():
                                                             'spontRateStd': spontRateStd,
                                                             'meanResp': meanResp,
                                                             'peakResp': peakResp,
+                                                            'respOnset': respOnset,
+                                                            'respOffset': respOffset,
                                                             'bestPatchRespInd': bestPatchRespInd,
                                                             'respMat': respMat,
                                                             'trials': trials,

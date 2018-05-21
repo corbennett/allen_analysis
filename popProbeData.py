@@ -11,6 +11,7 @@ import cv2, datetime, math, nrrd, os, re, itertools
 import numpy as np
 import pandas as pd
 from xml.dom import minidom
+import scipy.interpolate
 import scipy.stats
 import scipy.spatial.distance
 from scipy.spatial.distance import euclidean
@@ -620,18 +621,21 @@ class popProbeData():
         useOff = ~np.isnan(rfArea) & hasAllSizes & (isOff | (isOnOff & (onVsOff<=0))) 
         sizeTuning[useOff] = np.stack(data.sizeTuningOff[useOff])-data.spontRateMean[useOff][:,None]
         
+        ind = cellsToUse & hasRFData
         rfXYAll = np.full((self.data.shape[0],2),np.nan)
-        rfXYAll[cellsToUse & hasRFData] = rfXY
+        rfXYAll[ind] = rfXY
         rfAreaAll = np.full(self.data.shape[0],np.nan)
-        rfAreaAll[cellsToUse & hasRFData] = rfArea
+        rfAreaAll[ind] = rfArea
         rfAspectAll = np.full(self.data.shape[0],np.nan)
-        rfAspectAll[cellsToUse & hasRFData] = rfAspect
+        rfAspectAll[ind] = rfAspect
         rfFitAll = np.full((self.data.shape[0],rfFit.shape[1]),np.nan)
-        rfFitAll[cellsToUse & hasRFData] = rfFit
+        rfFitAll[ind] = rfFit
         sizeTuningAll = np.full((self.data.shape[0],4),np.nan)
-        sizeTuningAll[cellsToUse & hasRFData] = sizeTuning
+        sizeTuningAll[ind] = sizeTuning
+        useOnAll = np.zeros(self.data.shape[0],dtype=bool)
+        useOnAll[ind] = isOn | (isOnOff & (onVsOff>0))
         
-        return rfXYAll,rfAreaAll,rfAspect,rfFitAll,sizeTuningAll
+        return rfXYAll,rfAreaAll,rfAspect,rfFitAll,sizeTuningAll,useOnAll
         
         
     def getRFZscore(self,resp,fit,azim,elev):
@@ -2280,38 +2284,67 @@ class popProbeData():
             
             
     def analayzeSpots(self,cellsInRegion):
-        data = self.data.laserOff.allTrials.spots[cellsInRegion]
-        hasSpots = data.rfFitParams.notnull()
-        spotRFFit = np.stack(data.rfFitParams[hasSpots])
-        hasSpotRF = ~np.isnan(spotRFFit[:,0])
+        rfXY,rfArea,rfAspect,rfFit,sizeTuning,useOn = self.getRFData(cellsInRegion)
+        hasRFFit = ~np.isnan(rfXY[:,0])
         
-        rfXY,rfArea,rfAspect,rfFit,sizeTuning = self.getRFData(cellsInRegion)
-        rfArea = rfArea[cellsInRegion][hasSpots][hasSpotRF]
-        hasFit = ~np.isnan(rfArea)
-        rfArea = rfArea[hasFit]
-        rfXY = rfXY[cellsInRegion][hasSpots][hasSpotRF][hasFit]
+        spotData = self.data.laserOff.allTrials.spots
+        hasSpots = spotData.elevation.notnull()
         
-        spotRFFit = spotRFFit[hasSpotRF][hasFit]
-        spotRFArea = np.pi*np.prod(spotRFFit[:,2:4],axis=1)
-        spotRFAspect = spotRFFit[:,2]/spotRFFit[:,3]
-        spotRFXY = spotRFFit[:,:2]
-        badFit = (spotRFArea<100) | (spotRFAspect<0.25) | (spotRFAspect>4) | (np.sqrt(np.sum((spotRFXY-rfXY)**2,axis=1))<20)
+        for i in np.where(hasSpots)[0]:
+            elev = spotData.elevation[i]
+            azim = spotData.azimuth[i]
+            hasSpots[i] = (len(azim)>2) & (len(elev)>2) & (azim[0]<20) & (azim[-1]>80) & (elev[0]<10) & (elev[-1]>40)
         
-        rfArea = rfArea[~badFit]
-        spotRFArea = spotRFArea[~badFit]
+        cellsToUse = cellsInRegion & hasRFFit & hasSpots
         
+        noiseData = self.data.laserOff.allTrials.sparseNoise[cellsToUse]
+        spotData = spotData[cellsToUse]
+        
+        noiseHalfWidth = np.zeros((cellsToUse.sum(),2))
+        spotHalfWidth = noiseHalfWidth.copy()
+        for i in range(cellsToUse.sum()):
+            # sparse noise
+            resp = noiseData.onResp[i] if useOn[cellsToUse][i] else noiseData.offResp[i]
+            resp = resp.squeeze()
+            resp -= resp.min()
+            halfMax = 0.5*resp.max()
+            for j,(r,pos,rfCenter) in enumerate(zip((resp,resp.T),(noiseData.azim[i],noiseData.elev[i]),rfXY[cellsToUse].T)):
+                f = scipy.interpolate.interp1d(pos,r,kind='linear',axis=1)
+                respIntp = f(np.arange(pos[0],pos[-1]))
+                c = int(round(rfCenter[i]-pos[0]))
+                if c<0:
+                    c = 0
+                elif c>respIntp.shape[1]:
+                    c = respIntp.shape[1]-1
+                for p in respIntp:
+                    if p[c]>halfMax:
+                        leftBelowThresh = np.where(p[:c]<halfMax)[0]
+                        left = leftBelowThresh[-1]+1 if len(leftBelowThresh)>0 else c-1
+                        rightBelowThresh = np.where(p[c:]<halfMax)[0]
+                        right = c+rightBelowThresh[0] if len(rightBelowThresh)>0 else c+1
+                        noiseHalfWidth[i,j] = max(noiseHalfWidth[i,j],right-left)
+            # spots
+            for j,(r,pos) in enumerate(zip((spotData.azimSpikeRate[i],spotData.elevSpikeRate[i]),(spotData.azimuth[i],spotData.elevation[i]))):
+                respIntp = np.interp(np.arange(pos[0],pos[-1]),pos,r)
+                scipy.ndimage.filters.gaussian_filter1d(respIntp,sigma=10,output=respIntp)
+                respIntp -= respIntp.min()
+                halfMax = 0.5*respIntp.max()
+                aboveThresh = np.where(respIntp>halfMax)[0]
+                spotHalfWidth[i,j] = aboveThresh[-1]-aboveThresh[0]
+                
         fig = plt.figure(facecolor='w')
         ax = fig.add_subplot(1,1,1)
-        axMax = max(rfArea.max(),spotRFArea.max())
+        axMax = max(noiseHalfWidth.max(),spotHalfWidth.max())
         ax.plot([0,axMax],[0,axMax],'k--')
-        ax.plot(rfArea,spotRFArea,'ko')
+        for j,clr in enumerate('rb'):
+            ax.plot(noiseHalfWidth[:,j],spotHalfWidth[:,j],clr+'o')
         for side in ('right','top'):
             ax.spines[side].set_visible(False)
         ax.tick_params(direction='out',top=False,right=False,labelsize=18)
         ax.set_xlim([0,axMax])
         ax.set_ylim([0,axMax])
-        ax.set_xlabel('Sparse Noise RF Area',fontsize=20)
-        ax.set_ylabel('Moving Spots RF Area',fontsize=20)
+        ax.set_xlabel('Sparse Noise Halfwidth',fontsize=20)
+        ax.set_ylabel('Moving Spots Halfwidth',fontsize=20)
         plt.tight_layout()
         
         
