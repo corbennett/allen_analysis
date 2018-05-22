@@ -1896,6 +1896,7 @@ class probeData():
         
     def analyzeSaccades(self,units=None,protocol=0,preTime=1,postTime=1,analysisWindow=[0,0.2],sdfSigma=0.01,sdfSampInt=0.001,plot=True):
         units,_ = self.getOrderedUnits(units)        
+        
         protocol = str(protocol)
         if not hasattr(self,'behaviorData') or 'eyeTracking' not in self.behaviorData[protocol]:
             print('no eye tracking data for protocol '+protocol)

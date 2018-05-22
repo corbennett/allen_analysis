@@ -2386,7 +2386,6 @@ class popProbeData():
            
     def analyzeSaccades(self,protocol='sparseNoise'):
         # get data from all experiments
-        protocol = str(protocol)
         pupilX = []
         saccadeAmp = []
         preSaccadeSpikeCount = []
@@ -2399,10 +2398,9 @@ class popProbeData():
         for i,exp in enumerate(self.experimentFiles):
             print('analyzing experiment '+str(i+1)+' of '+str(len(self.experimentFiles)))
             p = self.getProbeDataObj(exp)
-            units = p.getUnitsByLabel('label',('on','off','on off','supp','noRF'))
-            units, _ = p.getOrderedUnits(units)
+            units, _ = p.getOrderedUnits()
             pIndex = p.getProtocolIndex(protocol)
-            saccadeData = p.analyzeSaccades(units,pIndex,analysisWindow=analysisWindow,plot=False)
+            saccadeData = None if pIndex is None else p.analyzeSaccades(units,pIndex,analysisWindow=analysisWindow,plot=False)
     
             if saccadeData is not None:
                 pupilX.append(saccadeData['pupilX'])
@@ -2476,21 +2474,20 @@ class popProbeData():
         ax = fig.add_subplot(1,1,1)
         maxRate = 0
         for preSpikes,postSpikes,isResp,pol in zip(preSaccadeSpikeCount,postSaccadeSpikeCount,hasResp,respPolarity):
-            if preSpikes is not None:
-                for u,_ in enumerate(preSpikes):
-                    for saccadeDirInd,clr in zip((0,1),('r','b')):
-                        preRate = np.mean(preSpikes[u][saccadeDirInd])/winDur
-                        postRate = np.mean(postSpikes[u][saccadeDirInd])/winDur
-                        mfc = clr if isResp[u,saccadeDirInd] else 'none'
-                        ax.plot(preRate,postRate,'o',mec=clr,mfc=mfc,alpha=0.5)
-                        maxRate = max(maxRate,postRate)
-                totalCount += isResp.shape[0]
-                isExcit = np.logical_and(isResp[:,:2],pol[:,:2]>0).any(axis=1)
-                isInhib = np.logical_and(isResp[:,:2],pol[:,:2]<0).any(axis=1)
-                isBoth = np.logical_and(isExcit,isInhib)
-                excitCount += np.logical_xor(isExcit,isBoth).sum()
-                inhibCount += np.logical_xor(isInhib,isBoth).sum()
-                bothCount += isBoth.sum()
+            for u,_ in enumerate(preSpikes):
+                for saccadeDirInd,clr in zip((0,1),('r','b')):
+                    preRate = np.mean(preSpikes[u][saccadeDirInd])/winDur
+                    postRate = np.mean(postSpikes[u][saccadeDirInd])/winDur
+                    mfc = clr if isResp[u,saccadeDirInd] else 'none'
+                    ax.plot(preRate,postRate,'o',mec=clr,mfc=mfc,alpha=0.5)
+                    maxRate = max(maxRate,postRate)
+            totalCount += isResp.shape[0]
+            isExcit = np.logical_and(isResp[:,:2],pol[:,:2]>0).any(axis=1)
+            isInhib = np.logical_and(isResp[:,:2],pol[:,:2]<0).any(axis=1)
+            isBoth = np.logical_and(isExcit,isInhib)
+            excitCount += np.logical_xor(isExcit,isBoth).sum()
+            inhibCount += np.logical_xor(isInhib,isBoth).sum()
+            bothCount += isBoth.sum()
         maxRate *= 1.05
         ax.plot([0,maxRate],[0,maxRate],'k--')
         ax.set_xlim([0,75])
