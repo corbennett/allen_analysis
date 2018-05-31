@@ -157,7 +157,7 @@ class probeData():
     
     def getEyeTrackData(self):
         expDate,anmID,probeN = self.getExperimentInfo()
-        dirPath = os.path.join('\\\\aibsdata2\\nc-ophys\\corbettb\\Probe',expDate+'_'+anmID,'EyeTrackAnalysis')
+        dirPath = os.path.join('\\\\allen\\programs\\braintv\\workgroups\\nc-ophys\\corbettb\\Probe',expDate+'_'+anmID,'EyeTrackAnalysis')
         if not os.path.isdir(dirPath):
             print('could not find '+dirPath)
             return
@@ -1911,7 +1911,8 @@ class probeData():
         posSaccades = posSaccades[posSaccades<eyeTrackSamples.size]
         posSaccades = posSaccades[~np.isnan(pupilX[posSaccades])]
         allSaccades = np.sort(np.concatenate((negSaccades,posSaccades)))
-        saccadeRate = allSaccades.size/(eyeTrackSamples[-1]-eyeTrackSamples[0])*self.sampleRate
+        saccadeNum = np.array([s.size for s in (negSaccades,posSaccades,allSaccades)])
+        saccadeRate = saccadeNum/(eyeTrackSamples[-1]-eyeTrackSamples[0])*self.sampleRate
         
         # get average saccade and saccade amplitudes
         preFrames = int(preTime*60)
@@ -1968,7 +1969,7 @@ class probeData():
                             hasResp[i,j] = True
         
         if not plot:
-            return {'pupilX':pupilX, 'saccadeRate':saccadeRate, 'negAmp':negAmp, 'posAmp':posAmp, 
+            return {'pupilX':pupilX, 'saccadeNum':saccadeNum, 'saccadeRate':saccadeRate, 'negAmp':negAmp, 'posAmp':posAmp, 
                     'preSaccadeSpikeCount':preSaccadeSpikeCount, 'postSaccadeSpikeCount':postSaccadeSpikeCount,
                     'hasResp':hasResp, 'respPolarity':respPolarity, 'peakRate':peakRate, 'latency':latency}
         
