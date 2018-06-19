@@ -236,8 +236,12 @@ def cluster(data,nClusters=None,method='ward',metric='euclidean',plot=False,colo
         colorThresh = 0 if nClusters<2 else linkageMat[::-1,2][nClusters-2]
         if colors is not None:
             scipy.cluster.hierarchy.set_link_color_palette(list(colors))
-        noLabels = True if labels=='off' else False
-        scipy.cluster.hierarchy.dendrogram(linkageMat,ax=ax,color_threshold=colorThresh,above_threshold_color='k',no_labels=noLabels)
+        if labels=='off':
+            labels=None
+            noLabels=True
+        else:
+            noLabels=False
+        scipy.cluster.hierarchy.dendrogram(linkageMat,ax=ax,color_threshold=colorThresh,above_threshold_color='k',labels=labels,no_labels=noLabels)
         scipy.cluster.hierarchy.set_link_color_palette(None)
         ax.set_yticks([])
         for side in ('right','top','left','bottom'):
