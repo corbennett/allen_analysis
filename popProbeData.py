@@ -635,7 +635,7 @@ class popProbeData():
         useOnAll = np.zeros(self.data.shape[0],dtype=bool)
         useOnAll[ind] = isOn | (isOnOff & (onVsOff>0))
         
-        return rfXYAll,rfAreaAll,rfAspect,rfFitAll,sizeTuningAll,useOnAll
+        return rfXYAll,rfAreaAll,rfAspectAll,rfFitAll,sizeTuningAll,useOnAll
         
         
     def getRFZscore(self,resp,fit,azim,elev):
