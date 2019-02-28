@@ -17,7 +17,6 @@ class CategoryMaskTask(TaskControl):
     
     def __init__(self):
         TaskControl.__init__(self)
-        self.taskType = 'noise' # gratings or noise
         self.interTrialFrames = 120
         self.maxTrialFrames = 240
         self.rewardDistance = 6 # degrees to move stim for reward
@@ -27,18 +26,24 @@ class CategoryMaskTask(TaskControl):
         self.moveStim = True
         self.preMoveFrames = 30 # number of frames after stimulus onset before stimulus moves
         
-        self.preStimMaskFrames = 0 # duration of forward mask
-        self.maskToStimFrames = 0 # frames between forward mask offset and target stimulus
-        self.stimToMaskFrames = 0 # frames between target stimulus offset and backward mask
-        self.postStimMaskFrames = 0 # duration of backward mask
-        
+        # stim params
+        self.stimType = 'gratings' # gratings or image
         self.stimSize = 10 # degrees
-        self.gratingsSF = [0.02,0.08] # cycles/deg
-        self.gratingsOri = [0,90]
-        self.noiseSquareSize = [0.1,0.3,1,3] # degrees
+        self.stimFrames = [15,60] # duration of target stimulus; ignored if moveStim is True
+        
+        self.gratingsSF = [1,1] # cycles/deg
+        self.gratingsOri = [-45,45] # clockwise degrees from vertical
+        
+        self.imageSquareSize = [0.1,0.3,1,3] # degrees; temp variable for testing numpy array stim
+        
+        # mask params
+        self.maskType = None # None, 'noise', or 'plaid'
+        self.maskShape = 'target' # 'target', 'surround', 'full'
+        self.maskOnset = [0,6,30] # frames >=0 relative to target stimulus onset
+        self.maskFrames = 30 # duration of mask
 
     def checkParameterValues(self):
-        pass # todo
+        pass # todo?
     
     def run(self):
         self.checkParameterValues()
@@ -48,30 +53,50 @@ class CategoryMaskTask(TaskControl):
         try:
             # create stim
             stimSizePix = int(self.stimSize*self.pixelsPerDeg)
-            if self.taskType=='gratings':
+            if self.stimType=='gratings':
                 categoryParams = (self.gratingsSF,self.gratingsOri)
                 stim = visual.GratingStim(win=self._win,
                                           units='pix',
-                                          mask='none',
+                                          mask='gauss',
                                           tex='sin',
                                           size=stimSizePix, 
                                           pos=(0,0))  
-            elif self.taskType=='noise':
-                categoryParams = (self.noiseSquareSize,)*2
+            elif self.stimType=='image':
+                categoryParams = (self.imageSquareSize,)*2
                 self._stimImage = np.zeros((stimSizePix,)*2,dtype=np.uint8)
                 stim  = ImageStimNumpyuByte(self._win,image=self._stimImage,size=self._stimImage.shape[::-1],pos=(0,0))
             
             assert(len(categoryParams)==2)
             assert(len(categoryParams[0])==len(categoryParams[1]))
             
+            # create mask
+            if self.maskType=='noise':
+                mask = [visual.NoiseStim(win=self._win,
+                                          units='pix',
+                                          mask='gauss',
+                                          noiseType='Filtered',
+                                          noiseFilterLower = 0/self.pixelsPerDeg,
+                                          noiseFilterUpper = 10/self.pixelsPerDeg,
+                                          size=stimSizePix, 
+                                          pos=(0,0))]
+            elif self.maskType=='plaid':
+                mask = [visual.GratingStim(win=self._win,
+                                           units='pix',
+                                           mask='gauss',
+                                           tex='sin',
+                                           size=stimSizePix, 
+                                           pos=(0,0),
+                                           ori=ori,
+                                           opacity=op)  for ori,op in zip((0,90),(1.0,0.5))]
+            
             # create list of trial parameter combinations
-            trialTypes = [list(i) for i in itertools.product(categoryParams[0],categoryParams[1])]
+            trialParams = [list(i) for i in itertools.product(categoryParams[0],categoryParams[1]),self.stimFrames,self.maskOnset]
             # add reward side to off diagonal elements of category parameter matrix
             # and remove combinations on diagonal
-            for params in trialTypes[:]: # looping through shallow copy of trialTypes
+            for params in trialParams[:]: # looping through shallow copy of trialTypes
                 i,j = (categoryParams[n].index(params[n])+1 for n in (0,1))
                 if i==j:
-                    trialTypes.remove(params)
+                    trialParams.remove(params)
                 elif i/j>1:
                     params.append(1)
                 else:
@@ -83,53 +108,58 @@ class CategoryMaskTask(TaskControl):
             self.trialStartFrame = []
             self.trialRewardSide = []
             self.trialRewarded = []
-            self.trialSF = []
-            self.trialOri = []
-            self.trialSquareSize = []
+            if self.taskType=='gratings':
+                self.trialSF = []
+                self.trialOri = []
+            elif self.taskType=='image':
+                self.trialSquareSize = []
             
             while True: # each loop is a frame flip
                 # start new trial
                 if trialFrame==0:
                     stimPos = 0
                     stim.pos = (stimPos,0)
-                    trialTypeIndex = len(self.trialStartFrame) % len(trialTypes)
-                    if trialTypeIndex==0:
-                        random.shuffle(trialTypes)
-                    if self.taskType=='gratings':
-                        sf,ori,rewardSide = trialTypes[trialTypeIndex]
+                    trialIndex = len(self.trialStartFrame) % len(trialParams)
+                    params = trialParams[trialIndex]
+                    stimFrames,maskOnset,rewardSide = params[2:]
+                    self.trialRewardSide.append(rewardSide)
+                    self.trialStartFrame.append(sessionFrame)
+                    if trialIndex==0:
+                        random.shuffle(trialParams)
+                    if self.stimType=='gratings':
+                        sf,ori = params[:2]
                         self.trialSF.append(sf)
                         self.trialOri.append(ori)
                         stim.sf = sf/self.pixelsPerDeg
                         stim.ori = ori
-                    elif self.taskType=='noise':
-                        squareSize,_,rewardSide = trialTypes[trialTypeIndex]
+                    elif self.stimType=='image':
+                        squareSize = params[0]
                         self.trialSquareSize.append(squareSize)
                         self._squareSizePix = squareSize*self.pixelsPerDeg
                         self.updateStimImage(random=True)
                         stim.setReplaceImage(self._stimImage)
-                    self.trialRewardSide.append(rewardSide)
-                    self.trialStartFrame.append(sessionFrame)
+                    if self.maskType=='noise':
+                        for m in mask:
+                            m.updateNoise()
                 
-                # update stimulus after intertrial gray screen period is complete
+                # update stimulus/mask after intertrial gray screen period is complete
                 if trialFrame > self.interTrialFrames:
                     # update stim position according to wheel encoder change
                     if self.moveStim and (trialFrame > self.interTrialFrames+self.preMoveFrames):
                         stimPos += self.translateEndoderChange()
                         stim.pos = (stimPos,0)
-                    
-                    # forward mask
-                    if trialFrame <= self.interTrialFrames+self.preStimMaskFrames:
-                        self.showMask()
-                    
-                    # target
-                    elif trialFrame <= self.interTrialFrames+self.preStimMaskFrames+self.maskToStimFrames:
-                        self.showTarget()
-                        
-                    # backward mask
-                    elif trialFrame <= self.interTrialFrames+self.preStimMaskFrames+self.maskToStimFrames+targetFrames:
-                        self.showMask()
-                    
-                    stim.draw()
+                        stim.draw()
+                    else:
+                        if trialFrame <= self.interTrialFrames+stimFrames:
+                            # show stim
+                            stim.draw()
+                        if self.interTrialFrames+maskOnset < trialFrame <= self.interTrialFrames+maskOnset+self.maskFrames:
+                            # show mask
+                            for m in mask:
+                                if self.stimType=='gratings':
+                                    m.sf = stim.sf
+                                m.draw()
+                     
                 self.visStimFlip()
                 trialFrame += 1
                 sessionFrame += 1
@@ -157,6 +187,7 @@ class CategoryMaskTask(TaskControl):
             
         
     def updateStimImage(self):
+        # temp function for testing numpy array stim
         numSquares = int(round(self._stimImage.shape[0]/self._squareSizePix))
         self._stimImage = self._numpyRandom.randint(0,2,(numSquares,)*2).astype(np.uint8)*255
         self._stimImage = np.repeat(self._stimImage,self._squareSizePix,0)
