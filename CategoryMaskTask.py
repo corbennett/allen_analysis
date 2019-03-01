@@ -18,7 +18,7 @@ class CategoryMaskTask(TaskControl):
     def __init__(self):
         TaskControl.__init__(self)
         self.interTrialFrames = 120
-        self.maxTrialFrames = 240
+        self.maxTrialFrames = 600
         self.rewardDistance = 6 # degrees to move stim for reward
         
         # mouse can move target stimulus with wheel for early training
@@ -34,16 +34,16 @@ class CategoryMaskTask(TaskControl):
         self.gratingsSF = [1,1] # cycles/deg
         self.gratingsOri = [-45,45] # clockwise degrees from vertical
         
-        self.imageSquareSize = [0.1,0.3,1,3] # degrees; temp variable for testing numpy array stim
+        self.noiseSquareSize = [0.1,0.3,1,3] # degrees; temp param for testing image stim
         
         # mask params
-        self.maskType = None # None, 'noise', or 'plaid'
+        self.maskType = 'noise' # None, 'noise', or 'plaid'
         self.maskShape = 'target' # 'target', 'surround', 'full'
         self.maskOnset = [0,6,30] # frames >=0 relative to target stimulus onset
         self.maskFrames = 30 # duration of mask
 
     def checkParameterValues(self):
-        pass # todo?
+        pass
     
     def run(self):
         self.checkParameterValues()
@@ -62,7 +62,7 @@ class CategoryMaskTask(TaskControl):
                                           size=stimSizePix, 
                                           pos=(0,0))  
             elif self.stimType=='image':
-                categoryParams = (self.imageSquareSize,)*2
+                categoryParams = (self.noiseSquareSize,)*2
                 self._stimImage = np.zeros((stimSizePix,)*2,dtype=np.uint8)
                 stim  = ImageStimNumpyuByte(self._win,image=self._stimImage,size=self._stimImage.shape[::-1],pos=(0,0))
             
@@ -90,10 +90,10 @@ class CategoryMaskTask(TaskControl):
                                            opacity=op)  for ori,op in zip((0,90),(1.0,0.5))]
             
             # create list of trial parameter combinations
-            trialParams = [list(i) for i in itertools.product(categoryParams[0],categoryParams[1]),self.stimFrames,self.maskOnset]
+            trialParams = [list(i) for i in itertools.product(categoryParams[0],categoryParams[1],self.stimFrames,self.maskOnset)]
             # add reward side to off diagonal elements of category parameter matrix
             # and remove combinations on diagonal
-            for params in trialParams[:]: # looping through shallow copy of trialTypes
+            for params in trialParams[:]: # loop through shallow copy of trialParams
                 i,j = (categoryParams[n].index(params[n])+1 for n in (0,1))
                 if i==j:
                     trialParams.remove(params)
@@ -101,6 +101,7 @@ class CategoryMaskTask(TaskControl):
                     params.append(1)
                 else:
                     params.append(-1)
+            print(trialParams)
             
             # run session
             sessionFrame = 0
@@ -108,10 +109,10 @@ class CategoryMaskTask(TaskControl):
             self.trialStartFrame = []
             self.trialRewardSide = []
             self.trialRewarded = []
-            if self.taskType=='gratings':
+            if self.stimType=='gratings':
                 self.trialSF = []
                 self.trialOri = []
-            elif self.taskType=='image':
+            elif self.stimType=='image':
                 self.trialSquareSize = []
             
             while True: # each loop is a frame flip
@@ -144,19 +145,17 @@ class CategoryMaskTask(TaskControl):
                 
                 # update stimulus/mask after intertrial gray screen period is complete
                 if trialFrame > self.interTrialFrames:
-                    # update stim position according to wheel encoder change
-                    if self.moveStim and (trialFrame > self.interTrialFrames+self.preMoveFrames):
-                        stimPos += self.translateEndoderChange()
-                        stim.pos = (stimPos,0)
-                        stim.draw()
+                    if self.moveStim:
+                        if trialFrame > self.interTrialFrames+self.preMoveFrames:
+                            stimPos += self.translateEndoderChange()
+                            stim.pos = (stimPos,0)
+                            stim.draw()
                     else:
                         if trialFrame <= self.interTrialFrames+stimFrames:
-                            # show stim
                             stim.draw()
-                        if self.interTrialFrames+maskOnset < trialFrame <= self.interTrialFrames+maskOnset+self.maskFrames:
-                            # show mask
+                        if self.maskType is not None and (self.interTrialFrames+maskOnset < trialFrame <= self.interTrialFrames+maskOnset+self.maskFrames):
                             for m in mask:
-                                if self.stimType=='gratings':
+                                if self.maskType=='plaid' and self.stimType=='gratings':
                                     m.sf = stim.sf
                                 m.draw()
                      

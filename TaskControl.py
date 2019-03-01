@@ -9,7 +9,7 @@ import math, os, random, time
 import h5py
 import numpy as np
 from psychopy import monitors, visual
-import ProjectorWindow
+import ProjectorWindow2
 import nidaq
 
 class TaskControl():
@@ -73,11 +73,11 @@ class TaskControl():
                                      gamma=self.monGamma)
         self._mon.setSizePix(self.monSizePix)
         self._mon.saveMon()
-        self._win =  ProjectorWindow.ProjectorWindow(monitor=self._mon,
+        self._win =  ProjectorWindow2.ProjectorWindow(monitor=self._mon,
                                                      screen=self._screen,
                                                      fullscr=True,
                                                      flipHorizontal=self._flipScreenHorz,
-                                                     warp=getattr(ProjectorWindow.Warp,self.warp),
+                                                     warp=getattr(ProjectorWindow2.Warp,self.warp),
                                                      warpfile=self.warpFile,
                                                      units='pix')      
         self._win.setRecordFrameIntervals(self.saveFrameIntervals)
