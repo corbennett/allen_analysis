@@ -19,7 +19,7 @@ from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from matplotlib import patches
 from matplotlib import cm
-from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
+#from allensdk.core.mouse_connectivity_cache import MouseConnectivityCache
 import matplotlib as mpl
 mpl.rcParams['pdf.fonttype'] = 42
 
@@ -371,10 +371,11 @@ class popProbeData():
         return []
         
         
-    def getAnnotationLabel(self,structureID):
+    def getAnnotationLabel(self,structureID, structFile=None):
         if self.annotationStructures is None:
             f = fileIO.getFile('Choose annotation structures file','*.xml')
             self.annotationStructures = minidom.parse(f)
+                
         for ind,structID in enumerate(self.annotationStructures.getElementsByTagName('id')):
             if int(structID.childNodes[0].nodeValue)==structureID:
                 structLabel = self.annotationStructures.getElementsByTagName('structure')[ind].childNodes[7].childNodes[0].nodeValue[1:-1]
@@ -395,10 +396,16 @@ class popProbeData():
         return inRegion,rng
         
         
-    def getAnnotationData(self):
-        f = fileIO.getFile('Choose annotation data file','*.nrrd')
-        self.annotationData = nrrd.read(f)[0].transpose((1,2,0))
+    def getAnnotationData(self, annoFile=None, structFile=None):
+        if annoFile is None:
+            annoFile = fileIO.getFile('Choose annotation data file','*.nrrd')
         
+        self.annotationData = nrrd.read(annoFile)[0].transpose((1,2,0))
+        
+        if structFile is None:
+            structFile = fileIO.getFile('Choose annotation structures file','*.xml')
+        
+        self.annotationStructures = minidom.parse(structFile)
         
     def getIsPhotoTaggedFromLabel(self):
         i = np.array(self.data.index.get_level_values('photoTag').tolist())

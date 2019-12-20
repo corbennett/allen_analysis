@@ -10,7 +10,7 @@ Added bootstrap and signaltonoise by Xiaoxuan Jia
 
 import numpy as np
 import os, fileIO, csv
-from scipy.stats import signaltonoise
+#from scipy.stats import signaltonoise
 
 def bootstrap_resample(X, n=None):
     """ Bootstrap resample an array.

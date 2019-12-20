@@ -3179,7 +3179,32 @@ class probeData():
             pos += tipPos
             self.units[str(unit)]['CCFCoords'] = pos
             
-    
+    def findChannelCCFCoords(self, tipPos=None, entryPos=None, tipProbePos=-1300):
+        if tipPos is None:
+            tipPos = self.CCFTipPosition
+        if entryPos is None:
+            entryPos = self.CCFLPEntryPosition      
+        
+        xRange = entryPos[0] - tipPos[0]
+        yRange = entryPos[1] - tipPos[1]
+        zRange = entryPos[2] - tipPos[2]
+        
+        trackLength = math.sqrt(xRange**2 + yRange**2 + zRange**2)
+        
+        xSlope = xRange/trackLength
+        ySlope = yRange/trackLength
+        zSlope = zRange/trackLength
+        
+        channelCoords = np.zeros([128, 3])
+        ypos = np.array(zip(np.arange(0, 1280, 20),np.arange(0, 1280, 20))).reshape(128,1) - 1260
+#        xpos = np.array([0, 10]*64).reshape(128,1)
+        for i, ch in enumerate(channelCoords):
+            distFromTip = ypos[i] - tipProbePos
+            pos = np.array([xSlope, ySlope, zSlope])*distFromTip
+            pos += tipPos
+            channelCoords[i] = pos
+        return channelCoords
+            
     def comparisonPlot(self, unit, tagsToPlot=['stat', 'run'], protocolsToPlot=['sparseNoise', 'flash', 'gratings', 'gratings_ori', 'checkerboard'], colors = ['k', 'r', 'b', 'g'], cmap='bwr'):
         ### Tags to plot should be in order so that the reference tag is listed first. The reference tag will establish which trial conditions to use (usually, best conditions for that tag)
         data = self.units[str(unit)]

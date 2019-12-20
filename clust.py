@@ -11,7 +11,7 @@ import scipy.cluster
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from sklearn.metrics import silhouette_samples, silhouette_score
-from kmodes import kmodes as km
+#from kmodes import kmodes as km
 from probeData import formatFigure
 
 
@@ -310,7 +310,9 @@ def getClustersFromHierarchy(clustIDHier,clustID=None,index=None):
     if len(clustIDHier)>1:
         maxID = clustID.max()
         for i,c in enumerate(clustIDHier[1:]):
-            if len(c)>0:
+            print(type(c))
+            if isinstance(c, (list, np.ndarray, tuple)) and len(c)>0:
+#            if len(c)>0:
                 _ = getClustersFromHierarchy(c,clustID,clustID==maxID-1+i)
     return clustID-clustID.min()+1 
 
